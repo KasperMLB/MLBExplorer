@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.streamlit/secrets.toml
+artifacts/
+statcast_*.csv
+statcast_clean.csv
+*.duckdb
+*.parquet
+*.jpg
+*.jpeg
+*.png

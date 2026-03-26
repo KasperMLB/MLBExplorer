@@ -1,0 +1,7 @@
+pandas>=2.2
+duckdb>=1.2
+streamlit>=1.44
+pyarrow>=19.0
+requests>=2.32
+huggingface_hub>=0.30
+Pillow>=11.0
