@@ -255,6 +255,54 @@ def _render_pitcher_tab(
     return export_sections
 
 
+def _build_pitcher_export_sections(
+    team_label: str,
+    pitcher_summary_by_hand: pd.DataFrame,
+    pitcher_arsenal: pd.DataFrame,
+    pitcher_by_hand: pd.DataFrame,
+    pitcher_count_usage: pd.DataFrame,
+) -> list[dict]:
+    export_sections: list[dict] = []
+    for side_key, side_label in BATTER_SIDE_LABELS.items():
+        summary_frame = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["batter_side_key"] == side_key]
+        if not summary_frame.empty:
+            export_sections.append(
+                {
+                    "title": f"{team_label} Summary {side_label}",
+                    "frame": summary_frame[PITCHER_SUMMARY_COLUMNS],
+                    "lower_is_better": PITCHER_LOWER_IS_BETTER,
+                    "higher_is_better": PITCHER_HIGHER_IS_BETTER,
+                }
+            )
+
+        side_arsenal = pitcher_arsenal if side_key == "all" else pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key]
+        if not side_arsenal.empty:
+            export_sections.append(
+                {
+                    "title": f"{team_label} Arsenal {side_label}",
+                    "frame": side_arsenal[ARSENAL_COLUMNS],
+                    "lower_is_better": {"hard_hit_pct", "xwoba_con"},
+                    "higher_is_better": {"usage_pct", "swstr_pct", "avg_release_speed", "avg_spin_rate"},
+                }
+            )
+
+        side_count = pitcher_count_usage.loc[pitcher_count_usage["batter_side_key"] == side_key]
+        if side_key == "all":
+            side_usage = pitcher_arsenal[["pitch_name", "usage_pct"]] if not pitcher_arsenal.empty else pd.DataFrame(columns=["pitch_name", "usage_pct"])
+        else:
+            side_usage = pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key, ["pitch_name", "usage_pct"]]
+        count_frame = pivot_count_usage(side_count, side_usage)
+        if not count_frame.empty:
+            export_sections.append(
+                {
+                    "title": f"{team_label} Count Usage {side_label}",
+                    "frame": count_frame[COUNT_USAGE_COLUMNS],
+                    "higher_is_better": set(COUNT_BUCKET_ORDER),
+                }
+            )
+    return export_sections
+
+
 def main() -> None:
     st.set_page_config(page_title="MLB Hosted Slate Companion", layout="wide")
     st.title("MLB Hosted Slate Companion")
@@ -560,6 +608,20 @@ def main() -> None:
                         )
 
             elif active_section == "Exports":
+                away_export_sections = _build_pitcher_export_sections(
+                    game["away_team"],
+                    away_summary_by_hand,
+                    away_arsenal,
+                    away_by_hand,
+                    away_count,
+                )
+                home_export_sections = _build_pitcher_export_sections(
+                    game["home_team"],
+                    home_summary_by_hand,
+                    home_arsenal,
+                    home_by_hand,
+                    home_count,
+                )
                 export_options = build_game_export_options(
                     game_title=f"{game['away_team']} @ {game['home_team']}",
                     away_team=game["away_team"],
