@@ -973,6 +973,17 @@ def render_export_hub(key: str, title: str, export_options: dict[str, list[dict]
     layout_options = ["Compact single poster", "Carousel"] if selected_option == "Full game" else ["Standard report"]
     selected_layout = st.selectbox("Export layout", layout_options, key=f"{key}-layout", label_visibility="collapsed")
     sections = export_options[selected_option]
+    prep_key = f"{key}-prepared"
+    current_signature = (selected_option, selected_layout)
+    if st.session_state.get(f"{prep_key}-signature") != current_signature:
+        st.session_state[prep_key] = False
+        st.session_state[f"{prep_key}-signature"] = current_signature
+
+    if not st.session_state.get(prep_key, False):
+        st.button("Prepare exports", key=f"{key}-prepare", use_container_width=True, on_click=lambda: st.session_state.__setitem__(prep_key, True))
+        st.caption("Exports are generated on demand to keep the hosted app fast and stable.")
+        return
+
     subtitle = f"{selected_option} | Generated from the Kasper matchup dashboard"
     png_slides = _build_export_bundle(title=title, subtitle=subtitle, sections=sections, layout_mode=selected_layout)
     jpg_slides = [png_to_jpg_bytes(slide) for slide in png_slides]

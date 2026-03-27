@@ -49,7 +49,7 @@ def _load_artifacts(
     day = target_date.isoformat()
     slate = pd.read_parquet(f"{base_url}/daily/{day}/slate.parquet")
     rosters = pd.read_parquet(f"{base_url}/daily/{day}/rosters.parquet")
-    hitters = load_remote_parquet(f"{base_url}/reusable", "hitter_metrics.parquet")
+    hitters = pd.read_parquet(f"{base_url}/daily/{day}/daily_hitter_metrics.parquet")
     pitchers = pd.read_parquet(f"{base_url}/daily/{day}/daily_pitcher_metrics.parquet")
     pitcher_summary_by_hand = pd.read_parquet(f"{base_url}/daily/{day}/daily_pitcher_summary_by_hand.parquet")
     arsenal = pd.read_parquet(f"{base_url}/daily/{day}/daily_pitcher_arsenal.parquet")
