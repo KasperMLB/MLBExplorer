@@ -314,10 +314,35 @@ def render_metric_grid(
     height: int = 320,
     lower_is_better: set[str] | None = None,
     higher_is_better: set[str] | None = None,
+    use_lightweight: bool = False,
 ) -> pd.DataFrame:
     if frame.empty:
         st.info("No data available for this selection.")
         return frame
+    if use_lightweight or not HAS_AGGRID:
+        display_frame = _display_frame(frame).copy()
+        source_by_label = {DISPLAY_LABELS.get(column, column): column for column in frame.columns}
+        formatters = {DISPLAY_LABELS.get(column, column): (lambda value, source=column: _format_value(source, value)) for column in frame.columns}
+        styles = pd.DataFrame("", index=display_frame.index, columns=display_frame.columns)
+        for source_column in frame.columns:
+            display_column = DISPLAY_LABELS.get(source_column, source_column)
+            if source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS:
+                styles[display_column] = [
+                    (
+                        f"background-color: {_background_hex(source_column, value, frame[source_column], lower_is_better=lower_is_better or LOWER_IS_BETTER, higher_is_better=higher_is_better or HIGHER_IS_BETTER)}; color: #1f1f1f"
+                        if _background_hex(source_column, value, frame[source_column], lower_is_better=lower_is_better or LOWER_IS_BETTER, higher_is_better=higher_is_better or HIGHER_IS_BETTER)
+                        else ""
+                    )
+                    for value in frame[source_column]
+                ]
+        st.dataframe(
+            display_frame.style.format(formatters).apply(lambda _: styles, axis=None),
+            hide_index=True,
+            use_container_width=True,
+            height=height,
+        )
+        return frame
+
     if not HAS_AGGRID:
         st.error("Install `streamlit-aggrid` to render the matchup tables.")
         return frame

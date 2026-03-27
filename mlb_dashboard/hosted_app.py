@@ -41,6 +41,37 @@ def _base_url() -> str:
     return os.getenv("MLB_HOSTED_BASE_URL", "").rstrip("/")
 
 
+def _is_mobile_request() -> bool:
+    try:
+        context = getattr(st, "context", None)
+        headers = getattr(context, "headers", None)
+        if headers is None:
+            return False
+        user_agent = headers.get("User-Agent", "") or headers.get("user-agent", "")
+        agent = str(user_agent).lower()
+        return any(token in agent for token in ("iphone", "android", "ipad", "mobile", "blackberry", "opera mini", "windows phone"))
+    except Exception:
+        return False
+
+
+def _render_hosted_grid(
+    frame: pd.DataFrame,
+    key: str,
+    mobile_safe: bool,
+    height: int = 320,
+    lower_is_better: set[str] | None = None,
+    higher_is_better: set[str] | None = None,
+) -> pd.DataFrame:
+    return render_metric_grid(
+        frame,
+        key=key,
+        height=height,
+        lower_is_better=lower_is_better,
+        higher_is_better=higher_is_better,
+        use_lightweight=mobile_safe,
+    )
+
+
 @st.cache_data(show_spinner=False)
 def _load_artifacts(
     base_url: str,
@@ -141,6 +172,7 @@ def _render_pitcher_tab(
     pitcher_arsenal: pd.DataFrame,
     pitcher_by_hand: pd.DataFrame,
     pitcher_count_usage: pd.DataFrame,
+    mobile_safe: bool,
 ) -> list[dict]:
     export_sections: list[dict] = []
     tab_summary, tab_arsenal, tab_count = st.tabs(["Summary", "Arsenal", "Count Usage"])
@@ -175,9 +207,10 @@ def _render_pitcher_tab(
                 if side_frame.empty:
                     st.info("No arsenal data available.")
                 else:
-                    arsenal_grid = render_metric_grid(
+                    arsenal_grid = _render_hosted_grid(
                         side_frame[ARSENAL_COLUMNS],
                         key=f"arsenal-{game_pk}-{team_label}-{side_key}",
+                        mobile_safe=mobile_safe,
                         height=250,
                         lower_is_better={"hard_hit_pct", "xwoba_con"},
                         higher_is_better={"usage_pct", "swstr_pct", "avg_release_speed", "avg_spin_rate"},
@@ -204,9 +237,10 @@ def _render_pitcher_tab(
                 if count_frame.empty:
                     st.info("No count-state usage data available.")
                 else:
-                    count_grid = render_metric_grid(
+                    count_grid = _render_hosted_grid(
                         count_frame[COUNT_USAGE_COLUMNS],
                         key=f"count-{game_pk}-{team_label}-{side_key}",
+                        mobile_safe=mobile_safe,
                         height=250,
                         higher_is_better=set(COUNT_BUCKET_ORDER),
                     )
@@ -230,6 +264,7 @@ def main() -> None:
         return
 
     target_date, split, recent_window, weighted_mode, min_pitch_count, min_bip, likely_only, hitter_preset = _sidebar()
+    mobile_safe = _is_mobile_request()
     try:
         slate, rosters, hitters, pitchers, pitcher_summary_by_hand, arsenal, arsenal_by_hand, usage_by_count, hitter_rolling, pitcher_rolling, batter_zone_profiles, pitcher_zone_profiles = _load_artifacts(base_url, target_date)
     except Exception as exc:  # pragma: no cover
@@ -282,9 +317,10 @@ def main() -> None:
     else:
         preset_columns = hitter_columns_for_preset(hitter_preset)
         ranked_hitters = all_hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
-        render_metric_grid(
+        _render_hosted_grid(
             ranked_hitters[["game"] + [column for column in preset_columns if column in all_hitters.columns]].head(10),
             key="top-slate-hitters-hosted",
+            mobile_safe=mobile_safe,
             height=320,
         )
 
@@ -294,9 +330,10 @@ def main() -> None:
         st.info("No pitcher data available for this slate.")
     else:
         ranked_pitchers = add_pitcher_rank_score(all_pitchers)
-        render_metric_grid(
+        _render_hosted_grid(
             ranked_pitchers[TOP_PITCHER_COLUMNS].head(10),
             key="top-slate-pitchers-hosted",
+            mobile_safe=mobile_safe,
             height=320,
             lower_is_better=PITCHER_LOWER_IS_BETTER,
             higher_is_better=PITCHER_HIGHER_IS_BETTER,
@@ -333,7 +370,7 @@ def main() -> None:
             )
             if active_section == "Matchup":
                 st.markdown("#### Best Matchups")
-                best_matchups = render_metric_grid(best_matchups[BEST_MATCHUP_COLUMNS], key=f"best-hosted-{game['game_pk']}", height=170)
+                best_matchups = _render_hosted_grid(best_matchups[BEST_MATCHUP_COLUMNS], key=f"best-hosted-{game['game_pk']}", mobile_safe=mobile_safe, height=170)
 
                 st.markdown("#### Pitchers")
                 pitcher_cols = st.columns(2)
@@ -346,6 +383,7 @@ def main() -> None:
                         away_arsenal,
                         away_by_hand,
                         away_count,
+                        mobile_safe,
                     )
                 with pitcher_cols[1]:
                     st.markdown(f"##### {game['home_team']} starter")
@@ -356,22 +394,25 @@ def main() -> None:
                         home_arsenal,
                         home_by_hand,
                         home_count,
+                        mobile_safe,
                     )
 
                 st.markdown("#### Hitters")
                 hitter_cols = st.columns(2)
                 with hitter_cols[0]:
                     st.caption(f"{game['away_team']} vs {game.get('home_probable_pitcher_name') or 'opposing starter'}")
-                    away_hitters = render_metric_grid(
+                    away_hitters = _render_hosted_grid(
                         away_hitters[[column for column in hitter_columns if column in away_hitters.columns]],
                         key=f"away-hitters-hosted-{game['game_pk']}",
+                        mobile_safe=mobile_safe,
                         height=360,
                     )
                 with hitter_cols[1]:
                     st.caption(f"{game['home_team']} vs {game.get('away_probable_pitcher_name') or 'opposing starter'}")
-                    home_hitters = render_metric_grid(
+                    home_hitters = _render_hosted_grid(
                         home_hitters[[column for column in hitter_columns if column in home_hitters.columns]],
                         key=f"home-hitters-hosted-{game['game_pk']}",
+                        mobile_safe=mobile_safe,
                         height=360,
                     )
 
@@ -389,9 +430,10 @@ def main() -> None:
                                 hitter_rolling["rolling_window"].eq(label)
                                 & hitter_rolling["player_name"].isin(sorted(away_hitter_names | home_hitter_names))
                             ]
-                            render_metric_grid(
+                            _render_hosted_grid(
                                 hitter_frame[[column for column in HITTER_ROLLING_COLUMNS if column in hitter_frame.columns]],
                                 key=f"h-roll-hosted-{game['game_pk']}-{label}",
+                                mobile_safe=mobile_safe,
                                 height=260,
                             )
                         with cols[1]:
@@ -399,9 +441,10 @@ def main() -> None:
                                 pitcher_rolling["rolling_window"].eq(label)
                                 & pitcher_rolling["player_name"].isin([name for name in [away_pitcher_name, home_pitcher_name] if name])
                             ]
-                            render_metric_grid(
+                            _render_hosted_grid(
                                 pitcher_frame[[column for column in PITCHER_ROLLING_COLUMNS if column in pitcher_frame.columns]],
                                 key=f"p-roll-hosted-{game['game_pk']}-{label}",
+                                mobile_safe=mobile_safe,
                                 height=260,
                                 lower_is_better=PITCHER_LOWER_IS_BETTER | {"barrel_bip_pct"},
                                 higher_is_better=PITCHER_HIGHER_IS_BETTER | {"avg_release_speed"},
@@ -452,9 +495,10 @@ def main() -> None:
                                     f"{selected_pitch} | Hitter damage x pitcher usage",
                                     overlay_map,
                                 )
-                            render_metric_grid(
+                            _render_hosted_grid(
                                 zone_frame[[column for column in PITCHER_ZONE_COLUMNS if column in zone_frame.columns]],
                                 key=f"p-zone-hosted-{game['game_pk']}-{team_label}",
+                                mobile_safe=mobile_safe,
                                 height=240,
                                 higher_is_better={"usage_rate"},
                             )
@@ -507,9 +551,10 @@ def main() -> None:
                                 f"{selected_pitch} | Hitter damage x pitcher usage",
                                 overlay_map,
                             )
-                        render_metric_grid(
+                        _render_hosted_grid(
                             hitter_detail[[column for column in BATTER_ZONE_COLUMNS if column in hitter_detail.columns]],
                             key=f"h-zone-hosted-{game['game_pk']}-{team_label}",
+                            mobile_safe=mobile_safe,
                             height=240,
                             higher_is_better={"hit_rate", "hr_rate", "damage_rate"},
                         )
