@@ -17,66 +17,67 @@ def is_barrel(frame: pd.DataFrame) -> pd.Series:
     launch_speed = pd.to_numeric(frame["launch_speed"], errors="coerce")
     launch_angle = pd.to_numeric(frame["launch_angle"], errors="coerce")
     capped_speed = launch_speed.clip(upper=116)
+    speed_bucket = np.floor(capped_speed)
 
     lower_band = pd.Series(np.nan, index=frame.index, dtype="float64")
     upper_band = pd.Series(np.nan, index=frame.index, dtype="float64")
 
-    lower_band = lower_band.mask(capped_speed.eq(98), 26)
-    upper_band = upper_band.mask(capped_speed.eq(98), 30)
+    lower_band = lower_band.mask(speed_bucket.eq(98), 26)
+    upper_band = upper_band.mask(speed_bucket.eq(98), 30)
 
-    lower_band = lower_band.mask(capped_speed.eq(99), 25)
-    upper_band = upper_band.mask(capped_speed.eq(99), 31)
+    lower_band = lower_band.mask(speed_bucket.eq(99), 25)
+    upper_band = upper_band.mask(speed_bucket.eq(99), 31)
 
-    lower_band = lower_band.mask(capped_speed.eq(100), 24)
-    upper_band = upper_band.mask(capped_speed.eq(100), 33)
+    lower_band = lower_band.mask(speed_bucket.eq(100), 24)
+    upper_band = upper_band.mask(speed_bucket.eq(100), 33)
 
-    lower_band = lower_band.mask(capped_speed.eq(101), 23)
-    upper_band = upper_band.mask(capped_speed.eq(101), 34)
+    lower_band = lower_band.mask(speed_bucket.eq(101), 23)
+    upper_band = upper_band.mask(speed_bucket.eq(101), 34)
 
-    lower_band = lower_band.mask(capped_speed.eq(102), 22)
-    upper_band = upper_band.mask(capped_speed.eq(102), 36)
+    lower_band = lower_band.mask(speed_bucket.eq(102), 22)
+    upper_band = upper_band.mask(speed_bucket.eq(102), 36)
 
-    lower_band = lower_band.mask(capped_speed.eq(103), 21)
-    upper_band = upper_band.mask(capped_speed.eq(103), 37)
+    lower_band = lower_band.mask(speed_bucket.eq(103), 21)
+    upper_band = upper_band.mask(speed_bucket.eq(103), 37)
 
-    lower_band = lower_band.mask(capped_speed.eq(104), 20)
-    upper_band = upper_band.mask(capped_speed.eq(104), 39)
+    lower_band = lower_band.mask(speed_bucket.eq(104), 20)
+    upper_band = upper_band.mask(speed_bucket.eq(104), 39)
 
-    lower_band = lower_band.mask(capped_speed.eq(105), 19)
-    upper_band = upper_band.mask(capped_speed.eq(105), 40)
+    lower_band = lower_band.mask(speed_bucket.eq(105), 19)
+    upper_band = upper_band.mask(speed_bucket.eq(105), 40)
 
-    lower_band = lower_band.mask(capped_speed.eq(106), 18)
-    upper_band = upper_band.mask(capped_speed.eq(106), 42)
+    lower_band = lower_band.mask(speed_bucket.eq(106), 18)
+    upper_band = upper_band.mask(speed_bucket.eq(106), 42)
 
-    lower_band = lower_band.mask(capped_speed.eq(107), 17)
-    upper_band = upper_band.mask(capped_speed.eq(107), 43)
+    lower_band = lower_band.mask(speed_bucket.eq(107), 17)
+    upper_band = upper_band.mask(speed_bucket.eq(107), 43)
 
-    lower_band = lower_band.mask(capped_speed.eq(108), 16)
-    upper_band = upper_band.mask(capped_speed.eq(108), 45)
+    lower_band = lower_band.mask(speed_bucket.eq(108), 16)
+    upper_band = upper_band.mask(speed_bucket.eq(108), 45)
 
-    lower_band = lower_band.mask(capped_speed.eq(109), 15)
-    upper_band = upper_band.mask(capped_speed.eq(109), 46)
+    lower_band = lower_band.mask(speed_bucket.eq(109), 15)
+    upper_band = upper_band.mask(speed_bucket.eq(109), 46)
 
-    lower_band = lower_band.mask(capped_speed.eq(110), 14)
-    upper_band = upper_band.mask(capped_speed.eq(110), 48)
+    lower_band = lower_band.mask(speed_bucket.eq(110), 14)
+    upper_band = upper_band.mask(speed_bucket.eq(110), 48)
 
-    lower_band = lower_band.mask(capped_speed.eq(111), 13)
-    upper_band = upper_band.mask(capped_speed.eq(111), 49)
+    lower_band = lower_band.mask(speed_bucket.eq(111), 13)
+    upper_band = upper_band.mask(speed_bucket.eq(111), 49)
 
-    lower_band = lower_band.mask(capped_speed.eq(112), 12)
-    upper_band = upper_band.mask(capped_speed.eq(112), 50)
+    lower_band = lower_band.mask(speed_bucket.eq(112), 12)
+    upper_band = upper_band.mask(speed_bucket.eq(112), 50)
 
-    lower_band = lower_band.mask(capped_speed.eq(113), 11)
-    upper_band = upper_band.mask(capped_speed.eq(113), 50)
+    lower_band = lower_band.mask(speed_bucket.eq(113), 11)
+    upper_band = upper_band.mask(speed_bucket.eq(113), 50)
 
-    lower_band = lower_band.mask(capped_speed.eq(114), 10)
-    upper_band = upper_band.mask(capped_speed.eq(114), 50)
+    lower_band = lower_band.mask(speed_bucket.eq(114), 10)
+    upper_band = upper_band.mask(speed_bucket.eq(114), 50)
 
-    lower_band = lower_band.mask(capped_speed.eq(115), 9)
-    upper_band = upper_band.mask(capped_speed.eq(115), 50)
+    lower_band = lower_band.mask(speed_bucket.eq(115), 9)
+    upper_band = upper_band.mask(speed_bucket.eq(115), 50)
 
-    lower_band = lower_band.mask(capped_speed.ge(116), 8)
-    upper_band = upper_band.mask(capped_speed.ge(116), 50)
+    lower_band = lower_band.mask(speed_bucket.ge(116), 8)
+    upper_band = upper_band.mask(speed_bucket.ge(116), 50)
 
     return launch_speed.ge(98) & launch_angle.ge(lower_band) & launch_angle.le(upper_band)
 
@@ -86,34 +87,78 @@ def is_hard_hit(frame: pd.DataFrame) -> pd.Series:
 
 
 def is_fly_ball(frame: pd.DataFrame) -> pd.Series:
-    return frame["bb_type"].fillna("").eq("fly_ball")
+    return frame["bb_type"].fillna("").astype(str).str.lower().eq("fly_ball")
 
 
 def is_ground_ball(frame: pd.DataFrame) -> pd.Series:
-    return frame["bb_type"].fillna("").eq("ground_ball")
+    return frame["bb_type"].fillna("").astype(str).str.lower().eq("ground_ball")
 
 
 def is_batted_ball(frame: pd.DataFrame) -> pd.Series:
-    return frame["bb_type"].fillna("").isin(IN_PLAY_TYPES)
+    return frame["bb_type"].fillna("").astype(str).str.lower().isin(IN_PLAY_TYPES)
+
+
+def is_pulled_batted_ball(frame: pd.DataFrame) -> pd.Series:
+    hc_x = pd.to_numeric(frame["hc_x"], errors="coerce")
+    stand = frame["stand"].fillna("")
+    return frame["is_batted_ball"] & (
+        ((stand == "R") & hc_x.lt(125))
+        | ((stand == "L") & hc_x.gt(125))
+    )
 
 
 def is_swinging_strike(frame: pd.DataFrame) -> pd.Series:
-    return frame["description"].fillna("").isin(SWINGING_STRIKE_DESCRIPTIONS)
+    return frame["description"].fillna("").astype(str).str.lower().isin(SWINGING_STRIKE_DESCRIPTIONS)
 
 
 def add_metric_flags(frame: pd.DataFrame) -> pd.DataFrame:
     enriched = frame.copy()
     enriched["is_batted_ball"] = is_batted_ball(enriched)
+    enriched["is_tracked_bbe"] = (
+        enriched["is_batted_ball"]
+        & pd.to_numeric(enriched["launch_speed"], errors="coerce").notna()
+        & pd.to_numeric(enriched["launch_angle"], errors="coerce").notna()
+    )
     enriched["is_barrel"] = is_barrel(enriched)
     enriched["is_hard_hit"] = is_hard_hit(enriched)
     enriched["is_fly_ball"] = is_fly_ball(enriched)
     enriched["is_ground_ball"] = is_ground_ball(enriched)
+    enriched["is_pulled_batted_ball"] = is_pulled_batted_ball(enriched)
+    enriched["is_pulled_barrel"] = enriched["is_barrel"] & enriched["is_pulled_batted_ball"]
     enriched["is_swinging_strike"] = is_swinging_strike(enriched)
     enriched["xwoba_value"] = pd.to_numeric(enriched["estimated_woba_using_speedangle"], errors="coerce")
     enriched["launch_angle_value"] = pd.to_numeric(enriched["launch_angle"], errors="coerce")
     enriched["release_speed_value"] = pd.to_numeric(enriched["release_speed"], errors="coerce")
     enriched["spin_rate_value"] = pd.to_numeric(enriched["release_spin_rate"], errors="coerce")
+    enriched["balls_value"] = pd.to_numeric(enriched["balls"], errors="coerce").fillna(0).astype(int) if "balls" in enriched else 0
+    enriched["strikes_value"] = pd.to_numeric(enriched["strikes"], errors="coerce").fillna(0).astype(int) if "strikes" in enriched else 0
+    enriched["batter_side_key"] = enriched["stand"].fillna("").map({"L": "vs_lhh", "R": "vs_rhh"}).fillna("unknown")
+    enriched["count_bucket"] = classify_count_buckets(enriched)
     return enriched
+
+
+def classify_count_buckets(frame: pd.DataFrame) -> pd.Series:
+    balls = pd.to_numeric(frame["balls"], errors="coerce").fillna(0).astype(int)
+    strikes = pd.to_numeric(frame["strikes"], errors="coerce").fillna(0).astype(int)
+    conditions = [
+        (balls == 3) & (strikes == 2),
+        (balls + strikes) <= 1,
+        strikes >= 2,
+        strikes < 2,
+        balls > strikes,
+        strikes > balls,
+        (balls == strikes) & ~((balls == 0) & (strikes == 0)),
+    ]
+    choices = [
+        "Full count",
+        "Early count",
+        "Two-strike",
+        "Pre two-strike",
+        "Pitcher behind",
+        "Pitcher ahead",
+        "Even count",
+    ]
+    return pd.Series(np.select(conditions, choices, default="Even count"), index=frame.index, dtype="object")
 
 
 def likely_starter_scores(plate_appearance_history: pd.DataFrame, recent_days: int = 14) -> pd.DataFrame:

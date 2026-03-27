@@ -5,3 +5,5 @@ pyarrow>=19.0
 requests>=2.32
 huggingface_hub>=0.30
 Pillow>=11.0
+streamlit-aggrid>=1.0.5
+psycopg[binary]>=3.2

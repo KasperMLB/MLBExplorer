@@ -32,6 +32,12 @@ class AppConfig:
     hf_repo_id: str = field(default_factory=lambda: os.getenv("HF_REPO_ID", ""))
     hf_repo_type: str = field(default_factory=lambda: os.getenv("HF_REPO_TYPE", "dataset"))
     hf_token: str = field(default_factory=lambda: os.getenv("HF_TOKEN", ""))
+    database_url: str = field(default_factory=lambda: os.getenv("DATABASE_URL", ""))
+    cockroach_live_pitch_mix_table: str = field(default_factory=lambda: os.getenv("COCKROACH_LIVE_PITCH_MIX_TABLE", "public.live_pitch_mix_2026"))
+    cockroach_hitter_rolling_table: str = field(default_factory=lambda: os.getenv("COCKROACH_HITTER_ROLLING_TABLE", "public.shared_hitter_rolling_summary"))
+    cockroach_pitcher_rolling_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_ROLLING_TABLE", "public.shared_pitcher_rolling_summary"))
+    cockroach_batter_zone_table: str = field(default_factory=lambda: os.getenv("COCKROACH_BATTER_ZONE_TABLE", "public.batter_zone_damage_profiles"))
+    cockroach_pitcher_zone_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_ZONE_TABLE", "public.pitcher_zone_profiles"))
     metrics_version: str = field(default_factory=lambda: os.getenv("MLB_METRICS_VERSION", "v1"))
     year_weights: dict[int, float] = field(default_factory=lambda: DEFAULT_YEAR_WEIGHTS.copy())
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
 import streamlit as st
@@ -11,12 +12,50 @@ try:
 except ImportError:  # pragma: no cover
     HAS_PILLOW = False
 
-PERCENT_COLUMNS = {"swstr_pct", "barrel_pct", "fb_pct", "hard_hit_pct", "usage_pct"}
-RATE_COLUMNS = {"xwoba", "xwoba_con", "avg_launch_angle", "avg_release_speed", "avg_spin_rate", "gb_fb_ratio", "gb_pct"}
+try:
+    from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode, JsCode
+    HAS_AGGRID = True
+except ImportError:  # pragma: no cover
+    HAS_AGGRID = False
+
+PERCENT_COLUMNS = {
+    "swstr_pct",
+    "pulled_barrel_pct",
+    "barrel_bbe_pct",
+    "barrel_bip_pct",
+    "fb_pct",
+    "hard_hit_pct",
+    "usage_pct",
+    "gb_pct",
+    "All counts",
+    "Early count",
+    "Even count",
+    "Pitcher ahead",
+    "Pitcher behind",
+    "Two-strike",
+    "Pre two-strike",
+    "Full count",
+}
+RATE_COLUMNS = {"xwoba", "xwoba_con", "avg_launch_angle", "avg_release_speed", "avg_spin_rate", "gb_fb_ratio", "matchup_score", "pitcher_score"}
 LOWER_IS_BETTER = {"swstr_pct"}
-HIGHER_IS_BETTER = {"barrel_pct", "fb_pct", "hard_hit_pct", "usage_pct", "xwoba", "xwoba_con", "avg_release_speed", "avg_spin_rate", "matchup_score"}
-TARGET_COLUMNS = {"avg_launch_angle": (8.0, 18.0, 28.0)}
+HIGHER_IS_BETTER = {
+    "pulled_barrel_pct",
+    "barrel_bbe_pct",
+    "barrel_bip_pct",
+    "fb_pct",
+    "hard_hit_pct",
+    "usage_pct",
+    "xwoba",
+    "xwoba_con",
+    "avg_release_speed",
+    "avg_spin_rate",
+    "matchup_score",
+    "gb_pct",
+    "gb_fb_ratio",
+}
+TARGET_COLUMNS = {"avg_launch_angle": (20.0, 27.5, 35.0)}
 DISPLAY_LABELS = {
+    "game": "Game",
     "hitter_name": "Hitter",
     "pitcher_name": "Pitcher",
     "team": "Team",
@@ -25,7 +64,9 @@ DISPLAY_LABELS = {
     "xwoba": "xwOBA",
     "xwoba_con": "xwOBAcon",
     "swstr_pct": "SwStr%",
-    "barrel_pct": "Brl%",
+    "pulled_barrel_pct": "PulledBrl%",
+    "barrel_bbe_pct": "Brl/BBE%",
+    "barrel_bip_pct": "Brl/BIP%",
     "fb_pct": "FB%",
     "gb_pct": "GB%",
     "gb_fb_ratio": "GB/FB",
@@ -38,18 +79,95 @@ DISPLAY_LABELS = {
     "p_throws": "Throws",
     "likely_starter_score": "Likely",
     "matchup_score": "Matchup",
+    "pitcher_score": "Pitch Score",
+    "player_name": "Player",
+    "rolling_window": "Window",
+    "games_in_window": "Games",
+    "sample_size": "Sample",
+    "pitch_type": "Pitch Type",
+    "zone": "Zone",
+    "pitch_family": "Family",
+    "zone_bucket": "Zone",
+    "whiff_rate": "Whiff%",
+    "ball_in_play_rate": "BIP%",
+    "hit_rate": "Hit%",
+    "hr_rate": "HR%",
+    "damage_rate": "Damage%",
+    "usage_rate_overall": "Usage%",
+    "hit_allowed_rate": "Hit Allowed%",
+    "hr_allowed_rate": "HR Allowed%",
+    "damage_allowed_rate": "Damage Allowed%",
+    "xwoba_allowed": "xwOBA Allowed",
+    "batter_id": "Batter",
+    "pitcher_id": "Pitcher ID",
+    "usage_rate": "Usage%",
+}
+INTEGER_COLUMNS = {"pitch_count", "bip", "likely_starter_score"}
+
+SHORT_COLUMNS = {"team", "p_throws", "bip", "pitch_count", "likely_starter_score"}
+MEDIUM_COLUMNS = {
+    "xwoba",
+    "xwoba_con",
+    "swstr_pct",
+    "pulled_barrel_pct",
+    "barrel_bbe_pct",
+    "barrel_bip_pct",
+    "fb_pct",
+    "gb_pct",
+    "hard_hit_pct",
+    "avg_launch_angle",
+    "avg_release_speed",
+    "avg_spin_rate",
+    "usage_pct",
+    "matchup_score",
+    "pitcher_score",
+    "whiff_rate",
+    "ball_in_play_rate",
+    "hit_rate",
+    "hr_rate",
+    "damage_rate",
+    "usage_rate_overall",
+    "hit_allowed_rate",
+    "hr_allowed_rate",
+    "damage_allowed_rate",
+    "xwoba_allowed",
+}
+LONG_COLUMNS = {"hitter_name", "pitcher_name", "game", "pitch_name"}
+
+ZONE_RECTANGLES = {
+    11: (1, 0, 3, 1),
+    12: (1, 4, 3, 1),
+    13: (0, 1, 1, 3),
+    14: (4, 1, 1, 3),
+    1: (1, 1, 1, 1),
+    2: (2, 1, 1, 1),
+    3: (3, 1, 1, 1),
+    4: (1, 2, 1, 1),
+    5: (2, 2, 1, 1),
+    6: (3, 2, 1, 1),
+    7: (1, 3, 1, 1),
+    8: (2, 3, 1, 1),
+    9: (3, 3, 1, 1),
 }
 
 
-def _format_value(column: str, value: object) -> str:
+def _format_value(column: str, value: object, export_mode: bool = False) -> str:
     if pd.isna(value):
         return "-"
+    if column in INTEGER_COLUMNS:
+        return f"{int(float(value)):,}"
     if column in PERCENT_COLUMNS:
-        return f"{float(value):.1%}"
+        decimals = 3 if export_mode else 1
+        return f"{float(value):.{decimals}%}"
     if column == "avg_spin_rate":
-        return f"{float(value):.0f}"
+        decimals = 0 if not export_mode else 3
+        return f"{float(value):.{decimals}f}"
     if column in RATE_COLUMNS:
-        return f"{float(value):.3f}" if "xwoba" in column else f"{float(value):.1f}"
+        decimals = 3 if export_mode else (3 if "xwoba" in column or column == "matchup_score" else 1)
+        return f"{float(value):.{decimals}f}"
+    if isinstance(value, float):
+        decimals = 3 if export_mode else 2
+        return f"{value:.{decimals}f}"
     return str(value)
 
 
@@ -70,24 +188,53 @@ def _blend_color(start: str, end: str, ratio: float) -> str:
     return _rgb_to_hex(blended)
 
 
+def _ease_ratio(ratio: float) -> float:
+    clamped = max(0.0, min(1.0, ratio))
+    centered = (clamped - 0.5) * 2.0
+    curved = 0.5 + 0.5 * (abs(centered) ** 0.8) * (1 if centered >= 0 else -1)
+    return max(0.0, min(1.0, curved))
+
+
+def _diverging_heatmap_hex(ratio: float) -> str:
+    bad = "#c94b4b"
+    mid = "#f2dc62"
+    good = "#2f8f4e"
+    curved = _ease_ratio(ratio)
+    if curved <= 0.5:
+        inner_ratio = curved / 0.5
+        return _blend_color(bad, mid, inner_ratio)
+    inner_ratio = (curved - 0.5) / 0.5
+    return _blend_color(mid, good, inner_ratio)
+
+
+def _zone_heatmap_hex(ratio: float) -> str:
+    cold = "#58a7e4"
+    mid = "#a8b0ad"
+    hot = "#ef8d32"
+    curved = _ease_ratio(ratio)
+    if curved <= 0.5:
+        return _blend_color(cold, mid, curved / 0.5)
+    return _blend_color(mid, hot, (curved - 0.5) / 0.5)
+
+
 def _two_sided_target_ratio(value: float, low: float, ideal: float, high: float) -> float:
     if value <= ideal:
         return 1.0 - min(1.0, max(0.0, (ideal - value) / max(ideal - low, 1e-9)))
     return 1.0 - min(1.0, max(0.0, (value - ideal) / max(high - ideal, 1e-9)))
 
 
-def _background_style(
+def _background_hex(
     column: str,
     value: object,
     series: pd.Series,
     lower_is_better: set[str] | None = None,
     higher_is_better: set[str] | None = None,
-) -> str:
+) -> str | None:
     if pd.isna(value):
-        return ""
+        return None
     numeric_series = pd.to_numeric(series, errors="coerce").dropna()
     if numeric_series.empty:
-        return ""
+        return None
 
     numeric_value = float(value)
     if column in TARGET_COLUMNS:
@@ -105,115 +252,699 @@ def _background_style(
         elif higher_is_better and column not in higher_is_better:
             ratio = 1.0 - ratio
 
-    background = _blend_color("#f4b6b6", "#b8f2a6", ratio)
-    return f"background-color: {background}; color: #1f1f1f;"
-
-
-def style_metric_table(
-    frame: pd.DataFrame,
-    lower_is_better: set[str] | None = None,
-    higher_is_better: set[str] | None = None,
-) -> "pd.io.formats.style.Styler":
-    display_frame = frame.rename(columns=DISPLAY_LABELS)
-    reverse_labels = {label: source for source, label in DISPLAY_LABELS.items()}
-    styler = display_frame.style.format(
-        {
-            column: (
-                lambda value, c=reverse_labels.get(column, column): _format_value(c, value)
-            )
-            for column in display_frame.columns
-        }
-    )
-    color_columns = [col for col in frame.columns if col in PERCENT_COLUMNS or col in RATE_COLUMNS]
-    for column in color_columns:
-        label = DISPLAY_LABELS.get(column, column)
-        styler = styler.map(
-            lambda value, c=column: _background_style(
-                c,
-                value,
-                frame[c],
-                lower_is_better=lower_is_better or LOWER_IS_BETTER,
-                higher_is_better=higher_is_better or HIGHER_IS_BETTER,
-            ),
-            subset=[label],
-        )
-    return styler
+    return _diverging_heatmap_hex(ratio)
 
 
 def _display_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.rename(columns=DISPLAY_LABELS)
 
 
-def _sorted_frame(frame: pd.DataFrame, key: str) -> pd.DataFrame:
-    sort_options = ["Current order"] + list(frame.columns)
-    control_col1, control_col2, control_col3, control_col4 = st.columns([2.2, 1.2, 1.1, 1.1])
-    with control_col1:
-        sort_column = st.selectbox("Sort", sort_options, index=0, key=f"{key}-sort-col", label_visibility="collapsed")
-    with control_col2:
-        ascending = st.toggle("Ascending", value=False, key=f"{key}-sort-dir")
-    sorted_frame = frame
-    if sort_column != "Current order":
-        sorted_frame = frame.sort_values(sort_column, ascending=ascending, na_position="last")
-    return sorted_frame
+def _prepare_grid_frame(
+    frame: pd.DataFrame,
+    lower_is_better: set[str] | None = None,
+    higher_is_better: set[str] | None = None,
+) -> pd.DataFrame:
+    prepared = frame.copy()
+    for column in frame.columns:
+        if column in PERCENT_COLUMNS or column in RATE_COLUMNS:
+            prepared[f"__style_{column}"] = [
+                _background_hex(
+                    column,
+                    value,
+                    frame[column],
+                    lower_is_better=lower_is_better or LOWER_IS_BETTER,
+                    higher_is_better=higher_is_better or HIGHER_IS_BETTER,
+                ) or ""
+                for value in frame[column]
+            ]
+    return prepared
 
 
-def _render_branded_table_image(frame: pd.DataFrame, title: str, subtitle: str) -> bytes:
+def _formatted_length(column: str, value: object) -> int:
+    return len(_format_value(column, value))
+
+
+def _column_width(column: str, series: pd.Series) -> tuple[int, int, int]:
+    header_name = DISPLAY_LABELS.get(column, column)
+    content_lengths = [_formatted_length(column, value) for value in series.head(50)]
+    max_len = max([len(header_name), *content_lengths, 4])
+    if column in SHORT_COLUMNS:
+        min_width = 70
+        max_width = 110
+        scale = 8
+    elif column in LONG_COLUMNS:
+        min_width = 140
+        max_width = 260
+        scale = 9
+    elif column in MEDIUM_COLUMNS or column in PERCENT_COLUMNS or column in RATE_COLUMNS:
+        min_width = 92
+        max_width = 135
+        scale = 8
+    else:
+        min_width = 100
+        max_width = 180
+        scale = 8
+    width = max(min_width, min(max_width, max_len * scale + 24))
+    return width, min_width, max_width
+
+
+def render_metric_grid(
+    frame: pd.DataFrame,
+    key: str,
+    height: int = 320,
+    lower_is_better: set[str] | None = None,
+    higher_is_better: set[str] | None = None,
+) -> pd.DataFrame:
+    if frame.empty:
+        st.info("No data available for this selection.")
+        return frame
+    if not HAS_AGGRID:
+        st.error("Install `streamlit-aggrid` to render the matchup tables.")
+        return frame
+
+    prepared = _prepare_grid_frame(frame, lower_is_better=lower_is_better, higher_is_better=higher_is_better)
+    builder = GridOptionsBuilder.from_dataframe(prepared)
+    builder.configure_default_column(sortable=True, resizable=True, filter=False)
+    builder.configure_grid_options(
+        tooltipShowDelay=0,
+    )
+
+    cell_style = JsCode(
+        """
+        function(params) {
+          const styleKey = "__style_" + params.colDef.field;
+          const bg = params.data ? params.data[styleKey] : "";
+          if (bg) {
+            return {backgroundColor: bg, color: "#1f1f1f"};
+          }
+          return {color: "#1f1f1f"};
+        }
+        """
+    )
+    percent_formatter = JsCode(
+        """
+        function(params) {
+          if (params.value === null || params.value === undefined || params.value === "") { return "-"; }
+          return (Number(params.value) * 100).toFixed(1) + "%";
+        }
+        """
+    )
+    rate_formatter = JsCode(
+        """
+        function(params) {
+          if (params.value === null || params.value === undefined || params.value === "") { return "-"; }
+          return Number(params.value).toFixed(3);
+        }
+        """
+    )
+    one_decimal_formatter = JsCode(
+        """
+        function(params) {
+          if (params.value === null || params.value === undefined || params.value === "") { return "-"; }
+          return Number(params.value).toFixed(1);
+        }
+        """
+    )
+    integer_formatter = JsCode(
+        """
+        function(params) {
+          if (params.value === null || params.value === undefined || params.value === "") { return "-"; }
+          return Math.round(Number(params.value)).toLocaleString();
+        }
+        """
+    )
+
+    for column in frame.columns:
+        header_name = DISPLAY_LABELS.get(column, column)
+        formatter = None
+        width, min_width, max_width = _column_width(column, frame[column])
+        if column in PERCENT_COLUMNS:
+            formatter = percent_formatter
+        elif column in {"xwoba", "xwoba_con", "matchup_score", "pitcher_score"}:
+            formatter = rate_formatter
+        elif column in {"avg_launch_angle", "avg_release_speed", "gb_fb_ratio"}:
+            formatter = one_decimal_formatter
+        elif column in {"avg_spin_rate", *INTEGER_COLUMNS}:
+            formatter = integer_formatter
+        builder.configure_column(
+            column,
+            header_name=header_name,
+            cellStyle=cell_style if column in PERCENT_COLUMNS or column in RATE_COLUMNS else None,
+            valueFormatter=formatter,
+            width=width,
+            minWidth=min_width,
+            maxWidth=max_width,
+        )
+        style_col = f"__style_{column}"
+        if style_col in prepared.columns:
+            builder.configure_column(style_col, hide=True)
+
+    grid_options = builder.build()
+    response = AgGrid(
+        prepared,
+        gridOptions=grid_options,
+        height=height,
+        fit_columns_on_grid_load=False,
+        allow_unsafe_jscode=True,
+        update_mode=GridUpdateMode.MODEL_CHANGED,
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+        theme="streamlit",
+        key=key,
+    )
+    returned = pd.DataFrame(response["data"])
+    if returned.empty:
+        return frame
+    return returned.loc[:, frame.columns]
+
+
+def render_pitcher_summary_strip(
+    pitcher_row: pd.Series,
+    lower_is_better: set[str] | None = None,
+    higher_is_better: set[str] | None = None,
+) -> None:
+    st.markdown(f"### {pitcher_row.get('pitcher_name', 'Unknown Pitcher')}")
+    stats = [
+        ("Throws", "p_throws"),
+        ("Pitches", "pitch_count"),
+        ("BIP", "bip"),
+        ("xwOBA", "xwoba"),
+        ("SwStr%", "swstr_pct"),
+        ("PulledBrl%", "pulled_barrel_pct"),
+        ("Brl/BIP%", "barrel_bip_pct"),
+        ("FB%", "fb_pct"),
+        ("HH%", "hard_hit_pct"),
+        ("LA", "avg_launch_angle"),
+    ]
+    columns = st.columns(5)
+    default_lower = lower_is_better or LOWER_IS_BETTER
+    default_higher = higher_is_better or HIGHER_IS_BETTER
+    numeric_source = pd.DataFrame([pitcher_row])
+    for idx, (label, column_name) in enumerate(stats):
+        with columns[idx % 5]:
+            value = pitcher_row.get(column_name)
+            bg = None
+            if column_name in numeric_source.columns and (column_name in PERCENT_COLUMNS or column_name in RATE_COLUMNS):
+                bg = _background_hex(
+                    column_name,
+                    value,
+                    numeric_source[column_name],
+                    lower_is_better=default_lower,
+                    higher_is_better=default_higher,
+                )
+            background = bg or "#f6f8fb"
+            st.markdown(
+                f"""
+                <div style="padding:12px 14px;border-radius:10px;background:{background};border:1px solid #dfe7ef;margin-bottom:0.75rem;">
+                  <div style="font-size:0.78rem;color:#556270;margin-bottom:0.25rem;">{label}</div>
+                  <div style="font-size:1.05rem;font-weight:600;color:#1f1f1f;">{_format_value(column_name, value)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
+def render_matchup_header(game: dict) -> None:
+    st.subheader(f"{game['away_team']} @ {game['home_team']}")
+    st.caption(f"{game.get('status', 'Scheduled')} | Game PK: {game['game_pk']}")
+
+
+def _zone_map_lookup(zone_map: pd.DataFrame) -> dict[int, dict[str, float]]:
+    if zone_map.empty:
+        return {}
+    lookup: dict[int, dict[str, float]] = {}
+    for _, row in zone_map.iterrows():
+        zone = row.get("zone")
+        if pd.isna(zone):
+            continue
+        lookup[int(float(zone))] = {
+            "zone_value": row.get("zone_value"),
+            "display_value": row.get("display_value"),
+            "sample_size": row.get("sample_size"),
+        }
+    return lookup
+
+
+def _draw_home_plate(draw: ImageDraw.ImageDraw, center_x: int, top_y: int, fill: str, outline: str) -> None:
+    points = [
+        (center_x - 34, top_y),
+        (center_x + 34, top_y),
+        (center_x + 48, top_y + 24),
+        (center_x, top_y + 42),
+        (center_x - 48, top_y + 24),
+    ]
+    draw.polygon(points, fill=fill, outline=outline)
+
+
+def _build_zone_heatmap_image(title: str, subtitle: str, zone_map: pd.DataFrame, value_mode: str = "percent") -> bytes:
     if not HAS_PILLOW:
-        raise RuntimeError("Pillow is required for PNG/JPG export.")
-    display_frame = _display_frame(frame).copy()
-    formatted_rows = []
-    for _, row in display_frame.iterrows():
-        formatted_rows.append([str(value) if pd.notna(value) else "-" for value in row.tolist()])
-    headers = [str(column) for column in display_frame.columns.tolist()]
-
+        raise RuntimeError("Pillow is required for heatmap rendering.")
     font = ImageFont.load_default()
-    padding_x = 12
-    padding_y = 8
-    row_height = 26
-    branding_height = 74
-
-    draw_probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-    col_widths = []
-    for col_idx, header in enumerate(headers):
-        max_width = draw_probe.textbbox((0, 0), header, font=font)[2] - draw_probe.textbbox((0, 0), header, font=font)[0]
-        for row in formatted_rows:
-            text = row[col_idx]
-            bbox = draw_probe.textbbox((0, 0), text, font=font)
-            max_width = max(max_width, bbox[2] - bbox[0])
-        col_widths.append(max_width + padding_x * 2)
-
-    width = sum(col_widths)
-    height = branding_height + row_height * (len(formatted_rows) + 1) + padding_y * 2
-    image = Image.new("RGB", (width, height), "#fffdf8")
+    width = 620
+    height = 700
+    image = Image.new("RGB", (width, height), "#1f2d31")
     draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((10, 10, width - 10, height - 10), radius=22, fill="#2c3f45", outline="#41565d", width=2)
+    draw.text((34, 28), title, fill="#f4f6f7", font=font)
+    draw.text((34, 50), subtitle, fill="#b8c4c8", font=font)
 
-    draw.rectangle((0, 0, width, branding_height), fill="#102542")
-    draw.text((padding_x, 12), "KASPER", fill="#f7c04a", font=font)
-    draw.text((padding_x, 34), title, fill="#ffffff", font=font)
-    draw.text((padding_x, 52), subtitle, fill="#d7e4f2", font=font)
+    legend_x = width - 112
+    legend_top = 118
+    legend_labels = [("Best", "#ef8d32"), ("", "#c39656"), ("", "#a8b0ad"), ("", "#79a7ca"), ("Worst", "#58a7e4")]
+    draw.text((legend_x, legend_top - 24), "Zone Score", fill="#d5dcde", font=font)
+    for idx, (label, color) in enumerate(legend_labels):
+        y = legend_top + idx * 52
+        draw.rounded_rectangle((legend_x, y, legend_x + 36, y + 36), radius=7, fill=color)
+        if label:
+            draw.text((legend_x + 50, y + 8), label, fill="#f4f6f7", font=font)
 
-    y = branding_height
-    x = 0
-    for idx, header in enumerate(headers):
-        draw.rectangle((x, y, x + col_widths[idx], y + row_height), fill="#d8e6f3")
-        draw.text((x + padding_x, y + padding_y), header, fill="#102542", font=font)
-        x += col_widths[idx]
+    grid_origin_x = 64
+    grid_origin_y = 110
+    unit = 86
+    gap = 6
+    lookup = _zone_map_lookup(zone_map)
+    zone_values = [value["zone_value"] for value in lookup.values() if value.get("zone_value") is not None and not pd.isna(value.get("zone_value"))]
+    min_val = min(zone_values) if zone_values else 0.0
+    max_val = max(zone_values) if zone_values else 1.0
 
-    for row_idx, row in enumerate(formatted_rows, start=1):
-        y = branding_height + row_height * row_idx
-        x = 0
-        fill = "#ffffff" if row_idx % 2 else "#f6f8fb"
-        for col_idx, value in enumerate(row):
-            draw.rectangle((x, y, x + col_widths[col_idx], y + row_height), fill=fill)
-            draw.text((x + padding_x, y + padding_y), value, fill="#1f1f1f", font=font)
-            x += col_widths[col_idx]
+    def zone_ratio(value: float | None) -> float:
+        if value is None or pd.isna(value):
+            return 0.5
+        if abs(max_val - min_val) < 1e-9:
+            return 0.5
+        return (float(value) - min_val) / (max_val - min_val)
+
+    for zone, (grid_x, grid_y, span_x, span_y) in ZONE_RECTANGLES.items():
+        x0 = grid_origin_x + grid_x * (unit + gap)
+        y0 = grid_origin_y + grid_y * (unit + gap)
+        x1 = x0 + span_x * unit + (span_x - 1) * gap
+        y1 = y0 + span_y * unit + (span_y - 1) * gap
+        zone_info = lookup.get(zone, {})
+        color = _zone_heatmap_hex(zone_ratio(zone_info.get("zone_value")))
+        draw.rounded_rectangle((x0, y0, x1, y1), radius=10, fill=color, outline="#d5d8d9", width=2)
+        sample_size = zone_info.get("sample_size")
+        display_value = zone_info.get("display_value")
+        label = "-"
+        if display_value is not None and not pd.isna(display_value):
+            if value_mode == "percent":
+                label = f"{float(display_value) * 100:.0f}"
+            else:
+                label = f"{float(display_value) * 100:.0f}"
+        label_bbox = draw.textbbox((0, 0), label, font=font)
+        label_x = x0 + ((x1 - x0) - (label_bbox[2] - label_bbox[0])) / 2
+        label_y = y0 + ((y1 - y0) - (label_bbox[3] - label_bbox[1])) / 2 - 6
+        draw.text((label_x, label_y), label, fill="#111618", font=font)
+        if sample_size is not None and not pd.isna(sample_size):
+            sample_text = f"{int(float(sample_size))}"
+            sample_bbox = draw.textbbox((0, 0), sample_text, font=font)
+            sample_x = x0 + ((x1 - x0) - (sample_bbox[2] - sample_bbox[0])) / 2
+            sample_y = label_y + 18
+            draw.text((sample_x, sample_y), sample_text, fill="#263338", font=font)
+
+    strike_left = grid_origin_x + (unit + gap)
+    strike_top = grid_origin_y + (unit + gap)
+    strike_right = strike_left + 3 * unit + 2 * gap
+    strike_bottom = strike_top + 3 * unit + 2 * gap
+    draw.rectangle((strike_left - 3, strike_top - 3, strike_right + 3, strike_bottom + 3), outline="#f3f7f8", width=3)
+    _draw_home_plate(draw, (strike_left + strike_right) // 2, strike_bottom + 32, fill="#d9dedf", outline="#f3f7f8")
 
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
 
 
-def _png_to_jpg_bytes(png_bytes: bytes) -> bytes:
+def render_zone_heatmap(title: str, subtitle: str, zone_map: pd.DataFrame, value_mode: str = "percent") -> None:
+    if zone_map.empty:
+        st.info("No zone heatmap data available.")
+        return
+    st.image(_build_zone_heatmap_image(title, subtitle, zone_map, value_mode=value_mode), use_container_width=False)
+
+
+def _table_section_height(title: str, frame: pd.DataFrame) -> int:
+    return 32 + 28 + 26 * (len(frame) + 1)
+
+
+def _summary_card_color(column: str, row: pd.Series, lower_is_better: set[str] | None, higher_is_better: set[str] | None) -> str:
+    if column not in PERCENT_COLUMNS and column not in RATE_COLUMNS:
+        return "#f6f8fb"
+    value = row.get(column)
+    if pd.isna(value):
+        return "#f6f8fb"
+    if column in TARGET_COLUMNS:
+        return _background_hex(column, value, pd.Series([value]), lower_is_better=lower_is_better, higher_is_better=higher_is_better) or "#f6f8fb"
+    thresholds = {
+        "xwoba": (0.24, 0.30, True),
+        "swstr_pct": (0.10, 0.14, False),
+        "pulled_barrel_pct": (0.03, 0.08, True),
+        "barrel_bbe_pct": (0.05, 0.10, True),
+        "barrel_bip_pct": (0.04, 0.09, True),
+        "fb_pct": (0.20, 0.33, True),
+        "hard_hit_pct": (0.34, 0.48, True),
+    }
+    if column not in thresholds:
+        return "#f6f8fb"
+    low, high, invert = thresholds[column]
+    ratio = (float(value) - low) / max(high - low, 1e-9)
+    ratio = max(0.0, min(1.0, ratio))
+    if invert:
+        ratio = 1.0 - ratio
+    return _diverging_heatmap_hex(ratio)
+
+
+def _infer_summary_stats(frame: pd.DataFrame) -> list[tuple[str, str]]:
+    preferred = [
+        ("Throws", "p_throws"),
+        ("Pitches", "pitch_count"),
+        ("BIP", "bip"),
+        ("xwOBA", "xwoba"),
+        ("SwStr%", "swstr_pct"),
+        ("Brl/BBE%", "barrel_bbe_pct"),
+        ("Brl/BIP%", "barrel_bip_pct"),
+        ("FB%", "fb_pct"),
+        ("HH%", "hard_hit_pct"),
+        ("LA", "avg_launch_angle"),
+    ]
+    return [(label, column) for label, column in preferred if column in frame.columns]
+
+
+def _draw_summary_cards(
+    draw: ImageDraw.ImageDraw,
+    top: int,
+    left: int,
+    width: int,
+    title: str,
+    frame: pd.DataFrame,
+    font: ImageFont.ImageFont,
+    lower_is_better: set[str] | None = None,
+    higher_is_better: set[str] | None = None,
+) -> int:
+    if frame.empty:
+        return top
+    row = frame.iloc[0]
+    stats = _infer_summary_stats(frame)
+    draw.text((left, top), title, fill="#102542", font=font)
+    y = top + 22
+    cols = 5
+    card_gap = 10
+    card_width = max(120, int((width - (card_gap * (cols - 1))) / cols))
+    card_height = 62
+    for idx, (label, column_name) in enumerate(stats):
+        col_idx = idx % cols
+        row_idx = idx // cols
+        x0 = left + col_idx * (card_width + card_gap)
+        y0 = y + row_idx * (card_height + 10)
+        x1 = x0 + card_width
+        y1 = y0 + card_height
+        fill = _summary_card_color(column_name, row, lower_is_better, higher_is_better)
+        draw.rounded_rectangle((x0, y0, x1, y1), radius=12, fill=fill, outline="#d9e2ec", width=1)
+        draw.text((x0 + 10, y0 + 10), label, fill="#516273", font=font)
+        draw.text((x0 + 10, y0 + 34), _format_value(column_name, row.get(column_name), export_mode=True), fill="#1f1f1f", font=font)
+    rows = (len(stats) + cols - 1) // cols
+    return y + rows * (card_height + 10)
+
+
+def _limit_frame(frame: pd.DataFrame, rows: int, columns: list[str] | None = None) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    limited = frame.copy()
+    if columns is not None:
+        limited = limited[[column for column in columns if column in limited.columns]]
+    return limited.head(rows)
+
+
+def _section_type(title: str) -> str:
+    lowered = title.lower()
+    if "best matchups" in lowered:
+        return "best"
+    if "summary" in lowered:
+        return "summary"
+    if "arsenal" in lowered:
+        return "arsenal"
+    if "count usage" in lowered:
+        return "count"
+    if "hitters" in lowered:
+        return "hitters"
+    return "table"
+
+
+def _extract_sections(sections: list[dict], kind: str) -> list[dict]:
+    return [section for section in sections if _section_type(section["title"]) == kind]
+
+
+def _extract_first_matching(sections: list[dict], keyword: str) -> dict | None:
+    lowered = keyword.lower()
+    for section in sections:
+        if lowered in section["title"].lower():
+            return section
+    return None
+
+
+def _draw_side_by_side_tables(
+    draw: ImageDraw.ImageDraw,
+    top: int,
+    width: int,
+    left_title: str,
+    left_frame: pd.DataFrame,
+    right_title: str,
+    right_frame: pd.DataFrame,
+    font: ImageFont.ImageFont,
+) -> int:
+    gap = 24
+    table_width = (width - gap) // 2
+    left_bottom = _draw_section(draw, top, 18, table_width, left_title, left_frame, None, None, font)
+    right_bottom = _draw_section(draw, top, 18 + table_width + gap, table_width, right_title, right_frame, None, None, font)
+    return max(left_bottom, right_bottom)
+
+
+def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict]) -> bytes:
+    if not HAS_PILLOW:
+        raise RuntimeError("Pillow is required for PNG/JPG export.")
+    font = ImageFont.load_default()
+    width = 1080
+    branding_height = 84
+    image = Image.new("RGB", (width, 1600), "#fffdf8")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, width, branding_height), fill="#102542")
+    draw.text((18, 14), "KASPER", fill="#f7c04a", font=font)
+    draw.text((18, 38), title, fill="#ffffff", font=font)
+    draw.text((18, 58), subtitle, fill="#d7e4f2", font=font)
+    y = branding_height + 18
+
+    best_section = next((section for section in sections if _section_type(section["title"]) == "best"), None)
+    summary_sections = _extract_sections(sections, "summary")
+    hitter_sections = _extract_sections(sections, "hitters")
+
+    if best_section is not None:
+        best_frame = _limit_frame(best_section["frame"], 3, ["hitter_name", "team", "matchup_score", "xwoba", "barrel_bbe_pct", "avg_launch_angle"])
+        y = _draw_section(draw, y, 18, width - 36, "Best Matchups", best_frame, None, None, font)
+
+    away_summary = _extract_first_matching(summary_sections, "summary all")
+    home_summary = None
+    if away_summary is not None:
+        for section in summary_sections:
+            if section is away_summary:
+                continue
+            if "summary all" in section["title"].lower():
+                home_summary = section
+                break
+    if away_summary is not None or home_summary is not None:
+        left_width = (width - 54) // 2
+        right_start = 18 + left_width + 18
+        bottom_left = _draw_summary_cards(
+            draw,
+            y,
+            18,
+            left_width,
+            away_summary["title"] if away_summary else "Away Starter",
+            away_summary["frame"] if away_summary else pd.DataFrame(),
+            font,
+            away_summary.get("lower_is_better") if away_summary else None,
+            away_summary.get("higher_is_better") if away_summary else None,
+        )
+        bottom_right = _draw_summary_cards(
+            draw,
+            y,
+            right_start,
+            left_width,
+            home_summary["title"] if home_summary else "Home Starter",
+            home_summary["frame"] if home_summary else pd.DataFrame(),
+            font,
+            home_summary.get("lower_is_better") if home_summary else None,
+            home_summary.get("higher_is_better") if home_summary else None,
+        )
+        y = max(bottom_left, bottom_right) + 10
+
+    if len(hitter_sections) >= 2:
+        left_frame = _limit_frame(hitter_sections[0]["frame"], 6, ["hitter_name", "matchup_score", "xwoba", "barrel_bbe_pct", "hard_hit_pct", "avg_launch_angle"])
+        right_frame = _limit_frame(hitter_sections[1]["frame"], 6, ["hitter_name", "matchup_score", "xwoba", "barrel_bbe_pct", "hard_hit_pct", "avg_launch_angle"])
+        y = _draw_side_by_side_tables(draw, y, width - 36, hitter_sections[0]["title"], left_frame, hitter_sections[1]["title"], right_frame, font)
+
+    cropped = image.crop((0, 0, width, min(max(y + 22, 900), image.height)))
+    buffer = BytesIO()
+    cropped.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _build_carousel_images(title: str, subtitle: str, sections: list[dict]) -> list[bytes]:
+    slides: list[bytes] = []
+    best_section = next((section for section in sections if _section_type(section["title"]) == "best"), None)
+    summary_sections = _extract_sections(sections, "summary")
+    arsenal_sections = _extract_sections(sections, "arsenal")
+    count_sections = _extract_sections(sections, "count")
+    hitter_sections = _extract_sections(sections, "hitters")
+
+    overview_sections: list[dict] = []
+    if best_section is not None:
+        overview_sections.append({"title": "Best Matchups", "frame": _limit_frame(best_section["frame"], 3, ["hitter_name", "team", "matchup_score", "xwoba", "barrel_bbe_pct", "avg_launch_angle"])})
+    for section in summary_sections:
+        if "summary all" in section["title"].lower():
+            overview_sections.append(section)
+    slides.append(_build_compact_poster_image(title, f"{subtitle} | Slide 1: Overview", overview_sections))
+
+    pitching_sections: list[dict] = []
+    pitching_sections.extend(summary_sections)
+    for section in arsenal_sections:
+        pitching_sections.append(
+            {
+                **section,
+                "frame": _limit_frame(section["frame"], 5, ["pitch_name", "usage_pct", "swstr_pct", "hard_hit_pct", "avg_release_speed", "xwoba_con"]),
+            }
+        )
+    slides.append(build_branded_report_image(title, f"{subtitle} | Slide 2: Pitching Detail", pitching_sections))
+
+    if len(hitter_sections) >= 2:
+        hitter_slide_sections = [
+            {"title": hitter_sections[0]["title"], "frame": _limit_frame(hitter_sections[0]["frame"], 8)},
+            {"title": hitter_sections[1]["title"], "frame": _limit_frame(hitter_sections[1]["frame"], 8)},
+        ]
+        slides.append(build_branded_report_image(title, f"{subtitle} | Slide 3: Hitter Tables", hitter_slide_sections))
+
+    if count_sections:
+        limited_count = []
+        for section in count_sections:
+            limited_count.append(
+                {
+                    **section,
+                    "frame": _limit_frame(section["frame"], 5, ["pitch_name", "All counts", "Early count", "Pitcher ahead", "Pitcher behind", "Two-strike"]),
+                }
+            )
+        slides.append(build_branded_report_image(title, f"{subtitle} | Slide 4: Count Usage", limited_count))
+
+    return slides
+
+
+def _draw_section(
+    draw: ImageDraw.ImageDraw,
+    top: int,
+    left: int,
+    width: int,
+    title: str,
+    frame: pd.DataFrame,
+    lower_is_better: set[str] | None,
+    higher_is_better: set[str] | None,
+    font: ImageFont.ImageFont,
+) -> int:
+    padding_x = 12
+    padding_y = 8
+    row_height = 26
+    draw.text((left + padding_x, top), title, fill="#102542", font=font)
+    y = top + 24
+
+    display_frame = _display_frame(frame).copy()
+    headers = list(display_frame.columns)
+    formatted_rows = []
+    source_by_label = {DISPLAY_LABELS.get(col, col): col for col in frame.columns}
+    for _, row in display_frame.iterrows():
+        formatted_rows.append([_format_value(source_by_label.get(column, column), row[column], export_mode=True) for column in headers])
+
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    col_widths = []
+    for col_idx, header in enumerate(headers):
+        bbox = probe.textbbox((0, 0), header, font=font)
+        max_width = bbox[2] - bbox[0]
+        for row in formatted_rows:
+            bbox = probe.textbbox((0, 0), row[col_idx], font=font)
+            max_width = max(max_width, bbox[2] - bbox[0])
+        col_widths.append(max_width + padding_x * 2)
+
+    total_width = sum(col_widths)
+    if total_width < width:
+        extra = (width - total_width) // max(len(col_widths), 1)
+        col_widths = [size + extra for size in col_widths]
+
+    x = left
+    for idx, header in enumerate(headers):
+        draw.rectangle((x, y, x + col_widths[idx], y + row_height), fill="#d8e6f3")
+        draw.text((x + padding_x, y + padding_y), header, fill="#102542", font=font)
+        x += col_widths[idx]
+
+    for row_idx, row in enumerate(formatted_rows, start=1):
+        current_y = y + row_height * row_idx
+        x = left
+        for col_idx, value in enumerate(row):
+            display_label = headers[col_idx]
+            source_column = source_by_label.get(display_label, display_label)
+            fill = "#ffffff" if row_idx % 2 else "#f6f8fb"
+            if source_column in frame.columns and (source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS):
+                fill = _background_hex(
+                    source_column,
+                    frame.iloc[row_idx - 1][source_column],
+                    frame[source_column],
+                    lower_is_better=lower_is_better or LOWER_IS_BETTER,
+                    higher_is_better=higher_is_better or HIGHER_IS_BETTER,
+                ) or fill
+            draw.rectangle((x, current_y, x + col_widths[col_idx], current_y + row_height), fill=fill)
+            draw.text((x + padding_x, current_y + padding_y), value, fill="#1f1f1f", font=font)
+            x += col_widths[col_idx]
+
+    return current_y + row_height + 18
+
+
+def build_branded_report_image(title: str, subtitle: str, sections: list[dict]) -> bytes:
+    if not HAS_PILLOW:
+        raise RuntimeError("Pillow is required for PNG/JPG export.")
+    font = ImageFont.load_default()
+    width = 1500
+    branding_height = 74
+    total_height = branding_height + 16
+    for section in sections:
+        total_height += _table_section_height(section["title"], section["frame"])
+    image = Image.new("RGB", (width, total_height), "#fffdf8")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, width, branding_height), fill="#102542")
+    draw.text((12, 12), "KASPER", fill="#f7c04a", font=font)
+    draw.text((12, 34), title, fill="#ffffff", font=font)
+    draw.text((12, 52), subtitle, fill="#d7e4f2", font=font)
+
+    y = branding_height + 12
+    for section in sections:
+        if section["frame"].empty:
+            continue
+        y = _draw_section(
+            draw,
+            y,
+            0,
+            width,
+            section["title"],
+            section["frame"],
+            section.get("lower_is_better"),
+            section.get("higher_is_better"),
+            font,
+        )
+
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _build_export_bundle(title: str, subtitle: str, sections: list[dict], layout_mode: str) -> list[bytes]:
+    if layout_mode == "Compact single poster":
+        return [_build_compact_poster_image(title, subtitle, sections)]
+    if layout_mode == "Carousel":
+        return _build_carousel_images(title, subtitle, sections)
+    return [build_branded_report_image(title, subtitle, sections)]
+
+
+def png_to_jpg_bytes(png_bytes: bytes) -> bytes:
     if not HAS_PILLOW:
         raise RuntimeError("Pillow is required for PNG/JPG export.")
     source = Image.open(BytesIO(png_bytes)).convert("RGB")
@@ -222,71 +953,66 @@ def _png_to_jpg_bytes(png_bytes: bytes) -> bytes:
     return buffer.getvalue()
 
 
-def _export_image_buttons(frame: pd.DataFrame, key: str, title: str) -> None:
+def _zip_export_slides(slides: list[bytes], base_filename: str, extension: str) -> bytes:
+    buffer = BytesIO()
+    with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
+        for idx, slide_bytes in enumerate(slides, start=1):
+            archive.writestr(f"{base_filename}-{idx}.{extension}", slide_bytes)
+    return buffer.getvalue()
+
+
+def render_export_hub(key: str, title: str, export_options: dict[str, list[dict]]) -> None:
+    if not export_options:
+        return
+    st.markdown("#### Game Exports")
     if not HAS_PILLOW:
-        st.caption("Install `Pillow` to enable PNG/JPG export for this table.")
+        st.caption("Install `Pillow` to enable PNG/JPG export.")
         return
-    png_bytes = _render_branded_table_image(frame, title=title, subtitle="Generated from the Kasper matchup dashboard")
-    jpg_bytes = _png_to_jpg_bytes(png_bytes)
-    export_col1, export_col2 = st.columns(2)
-    with export_col1:
-        st.download_button(
-            label="Export PNG",
-            data=png_bytes,
-            file_name=f"{key}.png",
-            mime="image/png",
-            key=f"{key}-png",
-            use_container_width=True,
-        )
-    with export_col2:
-        st.download_button(
-            label="Export JPG",
-            data=jpg_bytes,
-            file_name=f"{key}.jpg",
-            mime="image/jpeg",
-            key=f"{key}-jpg",
-            use_container_width=True,
-        )
-
-
-def render_pitcher_card(pitcher_row: pd.Series) -> None:
-    st.markdown(
-        f"""
-        ### {pitcher_row.get('pitcher_name', 'Unknown Pitcher')}
-        **Throws:** {pitcher_row.get('p_throws', '-')}  
-        **Pitches:** {int(pitcher_row.get('pitch_count', 0)):,}  
-        **BIP:** {int(pitcher_row.get('bip', 0)):,}  
-        **xwOBA:** {_format_value('xwoba', pitcher_row.get('xwoba'))}  
-        **SwStr%:** {_format_value('swstr_pct', pitcher_row.get('swstr_pct'))}  
-        **Barrel% Allowed:** {_format_value('barrel_pct', pitcher_row.get('barrel_pct'))}  
-        **FB% Allowed:** {_format_value('fb_pct', pitcher_row.get('fb_pct'))}  
-        **GB/FB:** {_format_value('gb_fb_ratio', pitcher_row.get('gb_fb_ratio'))}
-        """
-    )
-
-
-def render_matchup_header(game: dict) -> None:
-    st.subheader(f"{game['away_team']} @ {game['home_team']}")
-    st.caption(f"{game.get('status', 'Scheduled')} | Game PK: {game['game_pk']}")
-
-
-def render_dataframe(
-    frame: pd.DataFrame,
-    key: str,
-    height: int = 320,
-    lower_is_better: set[str] | None = None,
-    higher_is_better: set[str] | None = None,
-    title: str | None = None,
-) -> None:
-    if frame.empty:
-        st.info("No data available for this selection.")
-        return
-    sorted_frame = _sorted_frame(frame, key)
-    _export_image_buttons(sorted_frame, key=key, title=title or key.replace("-", " ").title())
-    st.dataframe(
-        style_metric_table(sorted_frame, lower_is_better=lower_is_better, higher_is_better=higher_is_better),
-        use_container_width=True,
-        key=key,
-        hide_index=True,
-        height=height,
-    )
+    option_labels = list(export_options.keys())
+    selected_option = st.selectbox("Export scope", option_labels, key=f"{key}-scope", label_visibility="collapsed")
+    layout_options = ["Compact single poster", "Carousel"] if selected_option == "Full game" else ["Standard report"]
+    selected_layout = st.selectbox("Export layout", layout_options, key=f"{key}-layout", label_visibility="collapsed")
+    sections = export_options[selected_option]
+    subtitle = f"{selected_option} | Generated from the Kasper matchup dashboard"
+    png_slides = _build_export_bundle(title=title, subtitle=subtitle, sections=sections, layout_mode=selected_layout)
+    jpg_slides = [png_to_jpg_bytes(slide) for slide in png_slides]
+    safe_name = f"{key}-{selected_option.lower().replace(' ', '_').replace('/', '_')}-{selected_layout.lower().replace(' ', '_')}"
+    col1, col2 = st.columns(2)
+    with col1:
+        if len(png_slides) == 1:
+            st.download_button(
+                label="Download PNG",
+                data=png_slides[0],
+                file_name=f"{safe_name}.png",
+                mime="image/png",
+                use_container_width=True,
+                key=f"{key}-png",
+            )
+        else:
+            st.download_button(
+                label="Download PNG Carousel (.zip)",
+                data=_zip_export_slides(png_slides, safe_name, "png"),
+                file_name=f"{safe_name}.zip",
+                mime="application/zip",
+                use_container_width=True,
+                key=f"{key}-png-zip",
+            )
+    with col2:
+        if len(jpg_slides) == 1:
+            st.download_button(
+                label="Download JPG",
+                data=jpg_slides[0],
+                file_name=f"{safe_name}.jpg",
+                mime="image/jpeg",
+                use_container_width=True,
+                key=f"{key}-jpg",
+            )
+        else:
+            st.download_button(
+                label="Download JPG Carousel (.zip)",
+                data=_zip_export_slides(jpg_slides, safe_name, "jpg"),
+                file_name=f"{safe_name}-jpg.zip",
+                mime="application/zip",
+                use_container_width=True,
+                key=f"{key}-jpg-zip",
+            )

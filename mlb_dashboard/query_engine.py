@@ -49,6 +49,30 @@ class StatcastQueryEngine:
             return pd.DataFrame(columns=["team", "player_id", "player_name"])
         return pd.read_parquet(path)
 
+    def load_daily_hitter_rolling(self, target_date: date) -> pd.DataFrame:
+        path = self.config.daily_dir / target_date.isoformat() / "daily_hitter_rolling.parquet"
+        if not path.exists():
+            return pd.DataFrame()
+        return pd.read_parquet(path)
+
+    def load_daily_pitcher_rolling(self, target_date: date) -> pd.DataFrame:
+        path = self.config.daily_dir / target_date.isoformat() / "daily_pitcher_rolling.parquet"
+        if not path.exists():
+            return pd.DataFrame()
+        return pd.read_parquet(path)
+
+    def load_daily_batter_zone_profiles(self, target_date: date) -> pd.DataFrame:
+        path = self.config.daily_dir / target_date.isoformat() / "daily_batter_zone_profiles.parquet"
+        if not path.exists():
+            return pd.DataFrame()
+        return pd.read_parquet(path)
+
+    def load_daily_pitcher_zone_profiles(self, target_date: date) -> pd.DataFrame:
+        path = self.config.daily_dir / target_date.isoformat() / "daily_pitcher_zone_profiles.parquet"
+        if not path.exists():
+            return pd.DataFrame()
+        return pd.read_parquet(path)
+
     def get_pitcher_cards(self, pitcher_ids: list[int], filters: QueryFilters) -> pd.DataFrame:
         if not pitcher_ids:
             return pd.DataFrame()
@@ -82,6 +106,69 @@ class StatcastQueryEngine:
               AND recent_window = $recent_window
               AND weighted_mode = $weighted_mode
             ORDER BY pitcher_name, usage_pct DESC
+            """,
+            {
+                "pitcher_ids": pitcher_ids,
+                "split_key": filters.split,
+                "recent_window": filters.recent_window,
+                "weighted_mode": filters.weighted_mode,
+            },
+        ).df()
+
+    def get_pitcher_summary_by_hand(self, pitcher_ids: list[int], filters: QueryFilters) -> pd.DataFrame:
+        if not pitcher_ids:
+            return pd.DataFrame()
+        return self.conn.execute(
+            """
+            SELECT *
+            FROM pitcher_summary_by_hand
+            WHERE pitcher_id IN $pitcher_ids
+              AND split_key = $split_key
+              AND recent_window = $recent_window
+              AND weighted_mode = $weighted_mode
+            ORDER BY pitcher_name, batter_side_key
+            """,
+            {
+                "pitcher_ids": pitcher_ids,
+                "split_key": filters.split,
+                "recent_window": filters.recent_window,
+                "weighted_mode": filters.weighted_mode,
+            },
+        ).df()
+
+    def get_pitcher_arsenal_by_hand(self, pitcher_ids: list[int], filters: QueryFilters) -> pd.DataFrame:
+        if not pitcher_ids:
+            return pd.DataFrame()
+        return self.conn.execute(
+            """
+            SELECT *
+            FROM pitcher_arsenal_by_hand
+            WHERE pitcher_id IN $pitcher_ids
+              AND split_key = $split_key
+              AND recent_window = $recent_window
+              AND weighted_mode = $weighted_mode
+            ORDER BY pitcher_name, batter_side_key, usage_pct DESC
+            """,
+            {
+                "pitcher_ids": pitcher_ids,
+                "split_key": filters.split,
+                "recent_window": filters.recent_window,
+                "weighted_mode": filters.weighted_mode,
+            },
+        ).df()
+
+    def get_pitcher_usage_by_count(self, pitcher_ids: list[int], filters: QueryFilters) -> pd.DataFrame:
+        if not pitcher_ids:
+            return pd.DataFrame()
+        return self.conn.execute(
+            """
+            SELECT *
+            FROM pitcher_usage_by_count
+            WHERE pitcher_id IN $pitcher_ids
+              AND split_key = $split_key
+              AND recent_window = $recent_window
+              AND weighted_mode = $weighted_mode
+            ORDER BY pitcher_name, batter_side_key, count_bucket, usage_pct DESC
             """,
             {
                 "pitcher_ids": pitcher_ids,

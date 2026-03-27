@@ -29,6 +29,7 @@ def test_official_barrel_bands_expand_with_exit_velocity():
     frame = pd.DataFrame(
         [
             {"launch_speed": 98.0, "launch_angle": 26.0},
+            {"launch_speed": 98.4, "launch_angle": 27.0},
             {"launch_speed": 98.0, "launch_angle": 25.0},
             {"launch_speed": 100.0, "launch_angle": 33.0},
             {"launch_speed": 100.0, "launch_angle": 34.0},
@@ -39,4 +40,4 @@ def test_official_barrel_bands_expand_with_exit_velocity():
         ]
     )
     result = is_barrel(frame).tolist()
-    assert result == [True, False, True, False, True, False, True, False]
+    assert result == [True, True, False, True, False, True, False, True, False]
