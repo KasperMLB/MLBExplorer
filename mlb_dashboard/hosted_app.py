@@ -116,6 +116,24 @@ def _filter_hitters(
     return apply_roster_names(frame, rosters, team)
 
 
+def _filter_pitcher_frame(
+    frame: pd.DataFrame,
+    split: str,
+    recent_window: str,
+    weighted_mode: str,
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    filtered = frame.copy()
+    if "split_key" in filtered.columns:
+        filtered = filtered.loc[filtered["split_key"] == split]
+    if "recent_window" in filtered.columns:
+        filtered = filtered.loc[filtered["recent_window"] == recent_window]
+    if "weighted_mode" in filtered.columns:
+        filtered = filtered.loc[filtered["weighted_mode"] == weighted_mode]
+    return filtered
+
+
 def _render_pitcher_tab(
     game_pk: int,
     team_label: str,
@@ -231,8 +249,9 @@ def main() -> None:
     pitchers_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
 
     for game in selected_games:
-        away_pitcher = pitchers.loc[pitchers["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
-        home_pitcher = pitchers.loc[pitchers["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
+        filtered_pitchers = _filter_pitcher_frame(pitchers, split, recent_window, weighted_mode)
+        away_pitcher = filtered_pitchers.loc[filtered_pitchers["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
+        home_pitcher = filtered_pitchers.loc[filtered_pitchers["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
         away_hand = home_pitcher["p_throws"].iloc[0] if not home_pitcher.empty else None
         home_hand = away_pitcher["p_throws"].iloc[0] if not away_pitcher.empty else None
 
@@ -289,14 +308,18 @@ def main() -> None:
     for idx, game in enumerate(selected_games):
         away_hitters, home_hitters = hitters_by_game.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
         away_pitcher, home_pitcher = pitchers_by_game.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        away_summary_by_hand = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
-        home_summary_by_hand = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
-        away_arsenal = arsenal.loc[arsenal["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
-        home_arsenal = arsenal.loc[arsenal["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
-        away_by_hand = arsenal_by_hand.loc[arsenal_by_hand["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
-        home_by_hand = arsenal_by_hand.loc[arsenal_by_hand["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
-        away_count = usage_by_count.loc[usage_by_count["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
-        home_count = usage_by_count.loc[usage_by_count["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
+        filtered_summary = _filter_pitcher_frame(pitcher_summary_by_hand, split, recent_window, weighted_mode)
+        filtered_arsenal = _filter_pitcher_frame(arsenal, split, recent_window, weighted_mode)
+        filtered_arsenal_by_hand = _filter_pitcher_frame(arsenal_by_hand, split, recent_window, weighted_mode)
+        filtered_count = _filter_pitcher_frame(usage_by_count, split, recent_window, weighted_mode)
+        away_summary_by_hand = filtered_summary.loc[filtered_summary["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
+        home_summary_by_hand = filtered_summary.loc[filtered_summary["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
+        away_arsenal = filtered_arsenal.loc[filtered_arsenal["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
+        home_arsenal = filtered_arsenal.loc[filtered_arsenal["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
+        away_by_hand = filtered_arsenal_by_hand.loc[filtered_arsenal_by_hand["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
+        home_by_hand = filtered_arsenal_by_hand.loc[filtered_arsenal_by_hand["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
+        away_count = filtered_count.loc[filtered_count["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
+        home_count = filtered_count.loc[filtered_count["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
         best_matchups = build_best_matchups(away_hitters, home_hitters)
 
         with st.expander(f"{game['away_team']} @ {game['home_team']}", expanded=idx == 0):
