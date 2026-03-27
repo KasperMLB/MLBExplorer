@@ -62,7 +62,7 @@ def _load_artifacts(
     return slate, rosters, hitters, pitchers, pitcher_summary_by_hand, arsenal, arsenal_by_hand, usage_by_count, hitter_rolling, pitcher_rolling, batter_zone_profiles, pitcher_zone_profiles
 
 
-def _sidebar() -> tuple[date, str, str, str, int, int, bool, str, bool, bool, bool]:
+def _sidebar() -> tuple[date, str, str, str, int, int, bool, str]:
     st.sidebar.title("Hosted Filters")
     target_date = st.sidebar.date_input("Slate date", value=date.today())
     split = st.sidebar.selectbox("Split", ["overall", "vs_rhp", "vs_lhp", "home", "away"])
@@ -73,18 +73,14 @@ def _sidebar() -> tuple[date, str, str, str, int, int, bool, str, bool, bool, bo
     likely_only = st.sidebar.checkbox("Likely starters only", value=False)
     preset_names = list(HITTER_PRESETS.keys())
     hitter_preset = st.sidebar.selectbox("Hitter view", preset_names, index=preset_names.index("All stats"))
-    lite_mode = st.sidebar.checkbox("Lite mode", value=True, help="Mobile-safe mode that reduces first-load memory use.")
-    load_advanced = st.sidebar.checkbox("Load rolling and zone views", value=False)
-    load_exports = st.sidebar.checkbox("Load export tools", value=False)
-    return target_date, split, recent_window, weighted_mode, min_pitch_count, min_bip, likely_only, hitter_preset, lite_mode, load_advanced, load_exports
+    return target_date, split, recent_window, weighted_mode, min_pitch_count, min_bip, likely_only, hitter_preset
 
 
-def _game_selection(slate: list[dict], lite_mode: bool) -> list[dict]:
+def _game_selection(slate: list[dict]) -> list[dict]:
     if not slate:
         return []
     options = ["All games"] + [f"{game['away_team']} @ {game['home_team']}" for game in slate]
-    default_index = 1 if lite_mode and len(options) > 1 else 0
-    selection = st.sidebar.selectbox("Game", options, index=default_index)
+    selection = st.sidebar.selectbox("Game", options, index=0)
     if selection == "All games":
         return slate
     return [game for game in slate if f"{game['away_team']} @ {game['home_team']}" == selection]
@@ -233,7 +229,7 @@ def main() -> None:
         st.error("Set MLB_HOSTED_BASE_URL to your Hugging Face dataset file base URL before running this app.")
         return
 
-    target_date, split, recent_window, weighted_mode, min_pitch_count, min_bip, likely_only, hitter_preset, lite_mode, load_advanced, load_exports = _sidebar()
+    target_date, split, recent_window, weighted_mode, min_pitch_count, min_bip, likely_only, hitter_preset = _sidebar()
     try:
         slate, rosters, hitters, pitchers, pitcher_summary_by_hand, arsenal, arsenal_by_hand, usage_by_count, hitter_rolling, pitcher_rolling, batter_zone_profiles, pitcher_zone_profiles = _load_artifacts(base_url, target_date)
     except Exception as exc:  # pragma: no cover
@@ -241,11 +237,9 @@ def main() -> None:
         return
 
     all_games = slate.to_dict(orient="records")
-    selected_games = _game_selection(all_games, lite_mode)
+    selected_games = _game_selection(all_games)
     st.caption(f"Showing {len(selected_games)} of {len(all_games)} games")
     st.caption("PulledBrl% tracks pulled barrels on tracked batted-ball events. Brl/BIP% uses all balls in play.")
-    if lite_mode:
-        st.caption("Lite mode is on: loading one game by default and skipping heavy sections unless you enable them in the sidebar.")
     batter_join_col = "batter_id" if "batter_id" in batter_zone_profiles.columns else "batter"
     pitcher_join_col = "pitcher_id" if "pitcher_id" in pitcher_zone_profiles.columns else "pitcher"
     roster_lookup = rosters[["team", "player_id", "player_name"]].drop_duplicates("player_id")
@@ -281,35 +275,34 @@ def main() -> None:
         if not home_pitcher.empty:
             pitcher_rows.append(with_game_label(home_pitcher, label))
 
-    if not lite_mode:
-        st.header("Top Slate Hitters")
-        all_hitters = pd.concat(hitter_rows, ignore_index=True, sort=False) if hitter_rows else pd.DataFrame()
-        if all_hitters.empty:
-            st.info("No hitter data available for this slate.")
-        else:
-            preset_columns = hitter_columns_for_preset(hitter_preset)
-            ranked_hitters = all_hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
-            render_metric_grid(
-                ranked_hitters[["game"] + [column for column in preset_columns if column in all_hitters.columns]].head(10),
-                key="top-slate-hitters-hosted",
-                height=320,
-            )
+    st.header("Top Slate Hitters")
+    all_hitters = pd.concat(hitter_rows, ignore_index=True, sort=False) if hitter_rows else pd.DataFrame()
+    if all_hitters.empty:
+        st.info("No hitter data available for this slate.")
+    else:
+        preset_columns = hitter_columns_for_preset(hitter_preset)
+        ranked_hitters = all_hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
+        render_metric_grid(
+            ranked_hitters[["game"] + [column for column in preset_columns if column in all_hitters.columns]].head(10),
+            key="top-slate-hitters-hosted",
+            height=320,
+        )
 
-        st.header("Top Slate Pitchers")
-        all_pitchers = pd.concat(pitcher_rows, ignore_index=True, sort=False) if pitcher_rows else pd.DataFrame()
-        if all_pitchers.empty:
-            st.info("No pitcher data available for this slate.")
-        else:
-            ranked_pitchers = add_pitcher_rank_score(all_pitchers)
-            render_metric_grid(
-                ranked_pitchers[TOP_PITCHER_COLUMNS].head(10),
-                key="top-slate-pitchers-hosted",
-                height=320,
-                lower_is_better=PITCHER_LOWER_IS_BETTER,
-                higher_is_better=PITCHER_HIGHER_IS_BETTER,
-            )
+    st.header("Top Slate Pitchers")
+    all_pitchers = pd.concat(pitcher_rows, ignore_index=True, sort=False) if pitcher_rows else pd.DataFrame()
+    if all_pitchers.empty:
+        st.info("No pitcher data available for this slate.")
+    else:
+        ranked_pitchers = add_pitcher_rank_score(all_pitchers)
+        render_metric_grid(
+            ranked_pitchers[TOP_PITCHER_COLUMNS].head(10),
+            key="top-slate-pitchers-hosted",
+            height=320,
+            lower_is_better=PITCHER_LOWER_IS_BETTER,
+            higher_is_better=PITCHER_HIGHER_IS_BETTER,
+        )
 
-        st.divider()
+    st.divider()
     hitter_columns = hitter_columns_for_preset(hitter_preset)
 
     for idx, game in enumerate(selected_games):
@@ -331,12 +324,14 @@ def main() -> None:
 
         with st.expander(f"{game['away_team']} @ {game['home_team']}", expanded=idx == 0):
             render_matchup_header(game)
-            if load_advanced:
-                matchup_tab, rolling_tab, pitcher_zone_tab, hitter_zone_tab = st.tabs(["Matchup", "Rolling", "Pitcher Zones", "Hitter Zones"])
-            else:
-                matchup_tab = st.container()
-                rolling_tab = pitcher_zone_tab = hitter_zone_tab = None
-            with matchup_tab:
+            active_section = st.radio(
+                "Section",
+                ["Matchup", "Rolling", "Pitcher Zones", "Hitter Zones", "Exports"],
+                horizontal=True,
+                key=f"section-{game['game_pk']}",
+                label_visibility="collapsed",
+            )
+            if active_section == "Matchup":
                 st.markdown("#### Best Matchups")
                 best_matchups = render_metric_grid(best_matchups[BEST_MATCHUP_COLUMNS], key=f"best-hosted-{game['game_pk']}", height=170)
 
@@ -380,147 +375,146 @@ def main() -> None:
                         height=360,
                     )
 
-            if load_advanced and rolling_tab is not None and pitcher_zone_tab is not None and hitter_zone_tab is not None:
-                with rolling_tab:
-                    roll_tabs = st.tabs(["Rolling 5", "Rolling 10", "Rolling 15"])
-                    away_hitter_names = set(away_hitters.get("hitter_name", pd.Series(dtype="object")).dropna().tolist())
-                    home_hitter_names = set(home_hitters.get("hitter_name", pd.Series(dtype="object")).dropna().tolist())
-                    away_pitcher_name = away_pitcher["pitcher_name"].iloc[0] if not away_pitcher.empty else None
-                    home_pitcher_name = home_pitcher["pitcher_name"].iloc[0] if not home_pitcher.empty else None
-                    for label, tab in zip(["Rolling 5", "Rolling 10", "Rolling 15"], roll_tabs):
-                        with tab:
-                            cols = st.columns(2)
-                            with cols[0]:
-                                hitter_frame = hitter_rolling.loc[
-                                    hitter_rolling["rolling_window"].eq(label)
-                                    & hitter_rolling["player_name"].isin(sorted(away_hitter_names | home_hitter_names))
-                                ]
-                                render_metric_grid(
-                                    hitter_frame[[column for column in HITTER_ROLLING_COLUMNS if column in hitter_frame.columns]],
-                                    key=f"h-roll-hosted-{game['game_pk']}-{label}",
-                                    height=260,
-                                )
-                            with cols[1]:
-                                pitcher_frame = pitcher_rolling.loc[
-                                    pitcher_rolling["rolling_window"].eq(label)
-                                    & pitcher_rolling["player_name"].isin([name for name in [away_pitcher_name, home_pitcher_name] if name])
-                                ]
-                                render_metric_grid(
-                                    pitcher_frame[[column for column in PITCHER_ROLLING_COLUMNS if column in pitcher_frame.columns]],
-                                    key=f"p-roll-hosted-{game['game_pk']}-{label}",
-                                    height=260,
-                                    lower_is_better=PITCHER_LOWER_IS_BETTER | {"barrel_bip_pct"},
-                                    higher_is_better=PITCHER_HIGHER_IS_BETTER | {"avg_release_speed"},
-                                )
-
-                with pitcher_zone_tab:
-                    zone_tabs = st.tabs([game["away_team"], game["home_team"]])
-                    for pitcher_row, tab, team_label in [
-                        (away_pitcher, zone_tabs[0], game["away_team"]),
-                        (home_pitcher, zone_tabs[1], game["home_team"]),
-                    ]:
-                        with tab:
-                            if pitcher_row.empty:
-                                st.info("No pitcher zone data available.")
-                            else:
-                                pitcher_id = pitcher_row["pitcher_id"].iloc[0]
-                                zone_frame = (
-                                    pitcher_zone_profiles.loc[pitcher_zone_profiles[pitcher_join_col] == pitcher_id]
-                                    .sort_values("sample_size", ascending=False, na_position="last")
-                                    .head(200)
-                                )
-                                opposing_hitters = home_hitters if team_label == game["away_team"] else away_hitters
-                                opponent_names = sorted(opposing_hitters.get("hitter_name", pd.Series(dtype="object")).dropna().unique().tolist())
-                                selected_hitter = (
-                                    st.selectbox("Overlay hitter", opponent_names, key=f"p-zone-hosted-hitter-{game['game_pk']}-{team_label}")
-                                    if opponent_names
-                                    else None
-                                )
-                                hitter_detail = batter_zone_named.loc[batter_zone_named["player_name"] == selected_hitter].copy() if selected_hitter else pd.DataFrame()
-                                pitch_types = ["All pitches"] + sorted(
-                                    set(zone_frame.get("pitch_type", pd.Series(dtype="object")).dropna().tolist())
-                                    | set(hitter_detail.get("pitch_type", pd.Series(dtype="object")).dropna().tolist())
-                                )
-                                selected_pitch = st.selectbox("Pitch type", pitch_types, key=f"p-zone-hosted-pitch-{game['game_pk']}-{team_label}")
-                                pitcher_map = aggregate_pitcher_zone_map(zone_frame, selected_pitch)
-                                hitter_map = aggregate_batter_zone_map(hitter_detail, selected_pitch)
-                                overlay_map = build_zone_overlay_map(hitter_map, pitcher_map)
-                                heatmap_cols = st.columns(2)
-                                with heatmap_cols[0]:
-                                    render_zone_heatmap(
-                                        f"{pitcher_row['pitcher_name'].iloc[0]} Usage",
-                                        f"{selected_pitch} | Pitcher zone attack",
-                                        pitcher_map,
-                                    )
-                                with heatmap_cols[1]:
-                                    render_zone_heatmap(
-                                        f"Overlay vs {selected_hitter or 'Opposing Hitter'}",
-                                        f"{selected_pitch} | Hitter damage x pitcher usage",
-                                        overlay_map,
-                                    )
-                                render_metric_grid(
-                                    zone_frame[[column for column in PITCHER_ZONE_COLUMNS if column in zone_frame.columns]],
-                                    key=f"p-zone-hosted-{game['game_pk']}-{team_label}",
-                                    height=240,
-                                    higher_is_better={"usage_rate"},
-                                )
-
-                with hitter_zone_tab:
-                    zone_tabs = st.tabs([game["away_team"], game["home_team"]])
-                    for team_label, tab in [(game["away_team"], zone_tabs[0]), (game["home_team"], zone_tabs[1])]:
-                        with tab:
-                            zone_frame = (
-                                batter_zone_named.loc[batter_zone_named["team"] == team_label]
-                                .sort_values("sample_size", ascending=False, na_position="last")
-                                .head(250)
+            elif active_section == "Rolling":
+                roll_tabs = st.tabs(["Rolling 5", "Rolling 10", "Rolling 15"])
+                away_hitter_names = set(away_hitters.get("hitter_name", pd.Series(dtype="object")).dropna().tolist())
+                home_hitter_names = set(home_hitters.get("hitter_name", pd.Series(dtype="object")).dropna().tolist())
+                away_pitcher_name = away_pitcher["pitcher_name"].iloc[0] if not away_pitcher.empty else None
+                home_pitcher_name = home_pitcher["pitcher_name"].iloc[0] if not home_pitcher.empty else None
+                for label, tab in zip(["Rolling 5", "Rolling 10", "Rolling 15"], roll_tabs):
+                    with tab:
+                        cols = st.columns(2)
+                        with cols[0]:
+                            hitter_frame = hitter_rolling.loc[
+                                hitter_rolling["rolling_window"].eq(label)
+                                & hitter_rolling["player_name"].isin(sorted(away_hitter_names | home_hitter_names))
+                            ]
+                            render_metric_grid(
+                                hitter_frame[[column for column in HITTER_ROLLING_COLUMNS if column in hitter_frame.columns]],
+                                key=f"h-roll-hosted-{game['game_pk']}-{label}",
+                                height=260,
                             )
-                            hitter_options = sorted(zone_frame.get("player_name", pd.Series(dtype="object")).dropna().unique().tolist())
+                        with cols[1]:
+                            pitcher_frame = pitcher_rolling.loc[
+                                pitcher_rolling["rolling_window"].eq(label)
+                                & pitcher_rolling["player_name"].isin([name for name in [away_pitcher_name, home_pitcher_name] if name])
+                            ]
+                            render_metric_grid(
+                                pitcher_frame[[column for column in PITCHER_ROLLING_COLUMNS if column in pitcher_frame.columns]],
+                                key=f"p-roll-hosted-{game['game_pk']}-{label}",
+                                height=260,
+                                lower_is_better=PITCHER_LOWER_IS_BETTER | {"barrel_bip_pct"},
+                                higher_is_better=PITCHER_HIGHER_IS_BETTER | {"avg_release_speed"},
+                            )
+
+            elif active_section == "Pitcher Zones":
+                zone_tabs = st.tabs([game["away_team"], game["home_team"]])
+                for pitcher_row, tab, team_label in [
+                    (away_pitcher, zone_tabs[0], game["away_team"]),
+                    (home_pitcher, zone_tabs[1], game["home_team"]),
+                ]:
+                    with tab:
+                        if pitcher_row.empty:
+                            st.info("No pitcher zone data available.")
+                        else:
+                            pitcher_id = pitcher_row["pitcher_id"].iloc[0]
+                            zone_frame = (
+                                pitcher_zone_profiles.loc[pitcher_zone_profiles[pitcher_join_col] == pitcher_id]
+                                .sort_values("sample_size", ascending=False, na_position="last")
+                                .head(200)
+                            )
+                            opposing_hitters = home_hitters if team_label == game["away_team"] else away_hitters
+                            opponent_names = sorted(opposing_hitters.get("hitter_name", pd.Series(dtype="object")).dropna().unique().tolist())
                             selected_hitter = (
-                                st.selectbox("Hitter", hitter_options, key=f"h-zone-hosted-hitter-{game['game_pk']}-{team_label}")
-                                if hitter_options
+                                st.selectbox("Overlay hitter", opponent_names, key=f"p-zone-hosted-hitter-{game['game_pk']}-{team_label}")
+                                if opponent_names
                                 else None
                             )
-                            hitter_detail = zone_frame.loc[zone_frame["player_name"] == selected_hitter].copy() if selected_hitter else pd.DataFrame()
-                            hitter_detail["damage_rate"] = (
-                                pd.to_numeric(hitter_detail.get("hit_rate"), errors="coerce").fillna(0) * 0.6
-                                + pd.to_numeric(hitter_detail.get("hr_rate"), errors="coerce").fillna(0) * 0.4
-                            )
-                            opposing_pitcher = home_pitcher if team_label == game["away_team"] else away_pitcher
-                            pitcher_detail = (
-                                pitcher_zone_profiles.loc[pitcher_zone_profiles[pitcher_join_col] == opposing_pitcher["pitcher_id"].iloc[0]].copy()
-                                if not opposing_pitcher.empty
-                                else pd.DataFrame()
-                            )
+                            hitter_detail = batter_zone_named.loc[batter_zone_named["player_name"] == selected_hitter].copy() if selected_hitter else pd.DataFrame()
                             pitch_types = ["All pitches"] + sorted(
-                                set(hitter_detail.get("pitch_type", pd.Series(dtype="object")).dropna().tolist())
-                                | set(pitcher_detail.get("pitch_type", pd.Series(dtype="object")).dropna().tolist())
+                                set(zone_frame.get("pitch_type", pd.Series(dtype="object")).dropna().tolist())
+                                | set(hitter_detail.get("pitch_type", pd.Series(dtype="object")).dropna().tolist())
                             )
-                            selected_pitch = st.selectbox("Pitch type", pitch_types, key=f"h-zone-hosted-pitch-{game['game_pk']}-{team_label}")
+                            selected_pitch = st.selectbox("Pitch type", pitch_types, key=f"p-zone-hosted-pitch-{game['game_pk']}-{team_label}")
+                            pitcher_map = aggregate_pitcher_zone_map(zone_frame, selected_pitch)
                             hitter_map = aggregate_batter_zone_map(hitter_detail, selected_pitch)
-                            pitcher_map = aggregate_pitcher_zone_map(pitcher_detail, selected_pitch)
                             overlay_map = build_zone_overlay_map(hitter_map, pitcher_map)
                             heatmap_cols = st.columns(2)
                             with heatmap_cols[0]:
                                 render_zone_heatmap(
-                                    f"{selected_hitter or team_label} Damage",
-                                    f"{selected_pitch} | Hitter zone quality",
-                                    hitter_map,
+                                    f"{pitcher_row['pitcher_name'].iloc[0]} Usage",
+                                    f"{selected_pitch} | Pitcher zone attack",
+                                    pitcher_map,
                                 )
                             with heatmap_cols[1]:
-                                opposing_name = opposing_pitcher["pitcher_name"].iloc[0] if not opposing_pitcher.empty else "Opposing Pitcher"
                                 render_zone_heatmap(
-                                    f"Overlay vs {opposing_name}",
+                                    f"Overlay vs {selected_hitter or 'Opposing Hitter'}",
                                     f"{selected_pitch} | Hitter damage x pitcher usage",
                                     overlay_map,
                                 )
                             render_metric_grid(
-                                hitter_detail[[column for column in BATTER_ZONE_COLUMNS if column in hitter_detail.columns]],
-                                key=f"h-zone-hosted-{game['game_pk']}-{team_label}",
+                                zone_frame[[column for column in PITCHER_ZONE_COLUMNS if column in zone_frame.columns]],
+                                key=f"p-zone-hosted-{game['game_pk']}-{team_label}",
                                 height=240,
-                                higher_is_better={"hit_rate", "hr_rate", "damage_rate"},
+                                higher_is_better={"usage_rate"},
                             )
 
-            if load_exports:
+            elif active_section == "Hitter Zones":
+                zone_tabs = st.tabs([game["away_team"], game["home_team"]])
+                for team_label, tab in [(game["away_team"], zone_tabs[0]), (game["home_team"], zone_tabs[1])]:
+                    with tab:
+                        zone_frame = (
+                            batter_zone_named.loc[batter_zone_named["team"] == team_label]
+                            .sort_values("sample_size", ascending=False, na_position="last")
+                            .head(250)
+                        )
+                        hitter_options = sorted(zone_frame.get("player_name", pd.Series(dtype="object")).dropna().unique().tolist())
+                        selected_hitter = (
+                            st.selectbox("Hitter", hitter_options, key=f"h-zone-hosted-hitter-{game['game_pk']}-{team_label}")
+                            if hitter_options
+                            else None
+                        )
+                        hitter_detail = zone_frame.loc[zone_frame["player_name"] == selected_hitter].copy() if selected_hitter else pd.DataFrame()
+                        hitter_detail["damage_rate"] = (
+                            pd.to_numeric(hitter_detail.get("hit_rate"), errors="coerce").fillna(0) * 0.6
+                            + pd.to_numeric(hitter_detail.get("hr_rate"), errors="coerce").fillna(0) * 0.4
+                        )
+                        opposing_pitcher = home_pitcher if team_label == game["away_team"] else away_pitcher
+                        pitcher_detail = (
+                            pitcher_zone_profiles.loc[pitcher_zone_profiles[pitcher_join_col] == opposing_pitcher["pitcher_id"].iloc[0]].copy()
+                            if not opposing_pitcher.empty
+                            else pd.DataFrame()
+                        )
+                        pitch_types = ["All pitches"] + sorted(
+                            set(hitter_detail.get("pitch_type", pd.Series(dtype="object")).dropna().tolist())
+                            | set(pitcher_detail.get("pitch_type", pd.Series(dtype="object")).dropna().tolist())
+                        )
+                        selected_pitch = st.selectbox("Pitch type", pitch_types, key=f"h-zone-hosted-pitch-{game['game_pk']}-{team_label}")
+                        hitter_map = aggregate_batter_zone_map(hitter_detail, selected_pitch)
+                        pitcher_map = aggregate_pitcher_zone_map(pitcher_detail, selected_pitch)
+                        overlay_map = build_zone_overlay_map(hitter_map, pitcher_map)
+                        heatmap_cols = st.columns(2)
+                        with heatmap_cols[0]:
+                            render_zone_heatmap(
+                                f"{selected_hitter or team_label} Damage",
+                                f"{selected_pitch} | Hitter zone quality",
+                                hitter_map,
+                            )
+                        with heatmap_cols[1]:
+                            opposing_name = opposing_pitcher["pitcher_name"].iloc[0] if not opposing_pitcher.empty else "Opposing Pitcher"
+                            render_zone_heatmap(
+                                f"Overlay vs {opposing_name}",
+                                f"{selected_pitch} | Hitter damage x pitcher usage",
+                                overlay_map,
+                            )
+                        render_metric_grid(
+                            hitter_detail[[column for column in BATTER_ZONE_COLUMNS if column in hitter_detail.columns]],
+                            key=f"h-zone-hosted-{game['game_pk']}-{team_label}",
+                            height=240,
+                            higher_is_better={"hit_rate", "hr_rate", "damage_rate"},
+                        )
+
+            elif active_section == "Exports":
                 export_options = build_game_export_options(
                     game_title=f"{game['away_team']} @ {game['home_team']}",
                     away_team=game["away_team"],
