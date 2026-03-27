@@ -312,7 +312,7 @@ def main() -> None:
         return
 
     target_date, split, recent_window, weighted_mode, min_pitch_count, min_bip, likely_only, hitter_preset = _sidebar()
-    mobile_safe = _is_mobile_request()
+    mobile_safe = True
     try:
         slate, rosters, hitters, pitchers, pitcher_summary_by_hand, arsenal, arsenal_by_hand, usage_by_count, hitter_rolling, pitcher_rolling, batter_zone_profiles, pitcher_zone_profiles = _load_artifacts(base_url, target_date)
     except Exception as exc:  # pragma: no cover
