@@ -19,8 +19,8 @@ class QueryFilters:
     split: str = "overall"
     recent_window: str = "season"
     weighted_mode: str = "weighted"
-    min_pitch_count: int = 100
-    min_bip: int = 25
+    min_pitch_count: int = 0
+    min_bip: int = 0
     likely_starters_only: bool = False
 
 
@@ -192,8 +192,6 @@ class StatcastQueryEngine:
               AND split_key = $split_key
               AND recent_window = $recent_window
               AND weighted_mode = $weighted_mode
-              AND pitch_count >= $min_pitch_count
-              AND bip >= $min_bip
             ORDER BY likely_starter_score DESC NULLS LAST, xwoba DESC NULLS LAST
             """,
             {
@@ -201,8 +199,6 @@ class StatcastQueryEngine:
                 "split_key": split_key,
                 "recent_window": filters.recent_window,
                 "weighted_mode": filters.weighted_mode,
-                "min_pitch_count": filters.min_pitch_count,
-                "min_bip": filters.min_bip,
             },
         ).df()
         if filters.likely_starters_only and "likely_starter_score" in data:

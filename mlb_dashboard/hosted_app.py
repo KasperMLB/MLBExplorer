@@ -99,8 +99,8 @@ def _sidebar() -> tuple[date, str, str, str, int, int, bool, str]:
     split = st.sidebar.selectbox("Split", ["overall", "vs_rhp", "vs_lhp", "home", "away"])
     recent_window = st.sidebar.selectbox("Recent window", ["season", "last_45_days", "last_14_days"])
     weighted_mode = st.sidebar.radio("Weighting", ["weighted", "unweighted"], horizontal=True)
-    min_pitch_count = st.sidebar.slider("Min pitches", 0, 3000, 100, 25)
-    min_bip = st.sidebar.slider("Min BIP", 0, 500, 25, 5)
+    min_pitch_count = st.sidebar.slider("Min pitches", 0, 3000, 0, 25)
+    min_bip = st.sidebar.slider("Min BIP", 0, 500, 0, 5)
     likely_only = st.sidebar.checkbox("Likely starters only", value=False)
     preset_names = list(HITTER_PRESETS.keys())
     hitter_preset = st.sidebar.selectbox("Hitter view", preset_names, index=preset_names.index("All stats"))
@@ -156,8 +156,6 @@ def _filter_hitters(
         & (hitters["split_key"] == split_key)
         & (hitters["recent_window"] == recent_window)
         & (hitters["weighted_mode"] == weighted_mode)
-        & (hitters["pitch_count"] >= min_pitch_count)
-        & (hitters["bip"] >= min_bip)
     ].copy()
     if likely_only and "likely_starter_score" in frame:
         frame = frame.loc[frame["likely_starter_score"].fillna(0) > 0]
