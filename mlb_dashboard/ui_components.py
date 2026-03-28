@@ -1093,21 +1093,7 @@ def _draw_export_section(
 ) -> int:
     title = section["title"]
     frame = section["frame"]
-    lowered = title.lower()
-    if "summary" in lowered:
-        return _draw_dark_table(
-            draw,
-            top,
-            left,
-            width,
-            title,
-            frame,
-            font,
-            small_font,
-            section.get("lower_is_better"),
-            section.get("higher_is_better"),
-        )
-    return _draw_scouting_rows_section(
+    return _draw_dark_table(
         draw,
         top,
         left,
@@ -1119,6 +1105,20 @@ def _draw_export_section(
         section.get("lower_is_better"),
         section.get("higher_is_better"),
     )
+
+
+def _draw_report_stacked_sections(
+    draw: ImageDraw.ImageDraw,
+    top: int,
+    width: int,
+    sections: list[dict],
+    font: ImageFont.ImageFont,
+    small_font: ImageFont.ImageFont,
+) -> int:
+    y = top
+    for section in sections:
+        y = _draw_export_section(draw, y, 24, width - 48, section, font, small_font) + 12
+    return y
 
 
 def _draw_report_two_column_sections(
@@ -1150,6 +1150,16 @@ def _collect_team_sections(sections: list[dict], kind: str) -> dict[str, list[di
     return grouped
 
 
+def _exclude_all_split_sections(sections: list[dict]) -> list[dict]:
+    filtered: list[dict] = []
+    for section in sections:
+        lowered = section["title"].lower()
+        if "summary all" in lowered or "arsenal all" in lowered or "count usage all" in lowered:
+            continue
+        filtered.append(section)
+    return filtered
+
+
 def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict]) -> bytes:
     if not HAS_PILLOW:
         raise RuntimeError("Pillow is required for PNG/JPG export.")
@@ -1163,7 +1173,7 @@ def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict])
 
     best_section = next((section for section in sections if _section_type(section["title"]) == "best"), None)
     summary_sections = _extract_sections(sections, "summary")
-    arsenal_by_team = _collect_team_sections(sections, "arsenal")
+    arsenal_by_team = _collect_team_sections(_exclude_all_split_sections(sections), "arsenal")
     hitter_sections = _extract_sections(sections, "hitters")
     away_summary = next((section for section in summary_sections if "summary all" in section["title"].lower()), None)
     home_summary = next((section for section in summary_sections if section is not away_summary and "summary all" in section["title"].lower()), None)
@@ -1177,13 +1187,10 @@ def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict])
     _text(draw, (24, y), "Pitcher Detail", title_font, REPORT_TEXT)
     y += 46
     team_order = list(arsenal_by_team.keys())
-    if len(team_order) < 2:
-        team_order = [*_collect_team_sections(sections, "summary").keys()]
-    left_team = team_order[0] if team_order else "Away"
-    right_team = team_order[1] if len(team_order) > 1 else "Home"
-    left_sections = arsenal_by_team.get(left_team, [])
-    right_sections = arsenal_by_team.get(right_team, [])
-    y = _draw_report_two_column_sections(draw, y, width, left_sections, right_sections, section_font, small_font) + 10
+    stacked_pitcher_sections: list[dict] = []
+    for team in team_order:
+        stacked_pitcher_sections.extend(arsenal_by_team.get(team, []))
+    y = _draw_report_stacked_sections(draw, y, width, stacked_pitcher_sections, section_font, small_font) + 10
 
     if len(hitter_sections) >= 2:
         _text(draw, (24, y), "Hitter Matchups", title_font, REPORT_TEXT)
@@ -1204,8 +1211,8 @@ def _build_carousel_images(title: str, subtitle: str, sections: list[dict]) -> l
     slides: list[bytes] = []
     best_section = next((section for section in sections if _section_type(section["title"]) == "best"), None)
     summary_sections = _extract_sections(sections, "summary")
-    arsenal_sections = _extract_sections(sections, "arsenal")
-    count_sections = _extract_sections(sections, "count")
+    arsenal_sections = _exclude_all_split_sections(_extract_sections(sections, "arsenal"))
+    count_sections = _exclude_all_split_sections(_extract_sections(sections, "count"))
     hitter_sections = _extract_sections(sections, "hitters")
 
     overview_sections: list[dict] = []
