@@ -642,7 +642,7 @@ def _infer_summary_stats(frame: pd.DataFrame) -> list[tuple[str, str]]:
         ("BIP", "bip"),
         ("xwOBA", "xwoba"),
         ("SwStr%", "swstr_pct"),
-        ("Brl/BBE%", "barrel_bbe_pct"),
+        ("PulledBrl%", "pulled_barrel_pct"),
         ("Brl/BIP%", "barrel_bip_pct"),
         ("FB%", "fb_pct"),
         ("HH%", "hard_hit_pct"),
@@ -740,70 +740,351 @@ def _draw_side_by_side_tables(
     return max(left_bottom, right_bottom)
 
 
+REPORT_BG = "#08111f"
+REPORT_PANEL = "#102238"
+REPORT_PANEL_ALT = "#152a44"
+REPORT_BORDER = "#253a56"
+REPORT_TEXT = "#eef4fb"
+REPORT_MUTED = "#8ea5c2"
+REPORT_ACCENT = "#f7c04a"
+
+
+def _load_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
+    try:
+        return ImageFont.truetype("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf", size=size)
+    except Exception:  # pragma: no cover
+        return ImageFont.load_default()
+
+
+def _section_team(title: str) -> str:
+    return title.split(" ", 1)[0] if title else ""
+
+
+def _panel(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], fill: str = REPORT_PANEL, radius: int = 18) -> None:
+    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=REPORT_BORDER, width=2)
+
+
+def _text(draw: ImageDraw.ImageDraw, position: tuple[int, int], value: str, font: ImageFont.ImageFont, fill: str = REPORT_TEXT) -> None:
+    draw.text(position, value, fill=fill, font=font)
+
+
+def _measure(draw: ImageDraw.ImageDraw, value: str, font: ImageFont.ImageFont) -> tuple[int, int]:
+    bbox = draw.textbbox((0, 0), value, font=font)
+    return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+
+def _report_table_height(frame: pd.DataFrame, row_height: int = 24, header_height: int = 26) -> int:
+    return header_height + row_height * max(len(frame), 1) + 20
+
+
+def _report_summary_height(frame: pd.DataFrame) -> int:
+    stats = _infer_summary_stats(frame)
+    rows = max(1, (len(stats) + 1) // 2)
+    return 64 + rows * 84
+
+
+def _filter_section_columns(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    return frame[[column for column in columns if column in frame.columns]].copy()
+
+
+def _draw_report_header(
+    draw: ImageDraw.ImageDraw,
+    width: int,
+    title: str,
+    subtitle: str,
+    away_summary: dict | None,
+    home_summary: dict | None,
+    title_font: ImageFont.ImageFont,
+    body_font: ImageFont.ImageFont,
+) -> int:
+    hero_box = (24, 24, width - 24, 166)
+    _panel(draw, hero_box, fill="#0d1b2d", radius=24)
+    _text(draw, (46, 42), "KASPER SCOUTING REPORT", body_font, REPORT_ACCENT)
+    _text(draw, (46, 68), title, title_font, REPORT_TEXT)
+    _text(draw, (46, 110), subtitle, body_font, REPORT_MUTED)
+    starter_y = 132
+    if away_summary is not None and not away_summary["frame"].empty:
+        row = away_summary["frame"].iloc[0]
+        _text(draw, (46, starter_y), f"Away: {_section_team(away_summary['title'])} | {row.get('pitcher_name', 'Starter')} ({row.get('p_throws', '-')})", body_font, "#c9d7e6")
+    if home_summary is not None and not home_summary["frame"].empty:
+        row = home_summary["frame"].iloc[0]
+        _text(draw, (width // 2 + 40, starter_y), f"Home: {_section_team(home_summary['title'])} | {row.get('pitcher_name', 'Starter')} ({row.get('p_throws', '-')})", body_font, "#c9d7e6")
+    return hero_box[3] + 18
+
+
+def _draw_matchup_board(
+    draw: ImageDraw.ImageDraw,
+    top: int,
+    left: int,
+    width: int,
+    frame: pd.DataFrame,
+    title_font: ImageFont.ImageFont,
+    body_font: ImageFont.ImageFont,
+) -> int:
+    board_height = 220
+    _panel(draw, (left, top, left + width, top + board_height), fill=REPORT_PANEL_ALT)
+    _text(draw, (left + 18, top + 16), "Best Matchups", title_font, REPORT_TEXT)
+    work = _filter_section_columns(frame.head(3), ["hitter_name", "team", "matchup_score", "xwoba", "avg_launch_angle"])
+    card_top = top + 56
+    card_height = 46
+    for idx, (_, row) in enumerate(work.iterrows(), start=1):
+        y0 = card_top + (idx - 1) * (card_height + 10)
+        _panel(draw, (left + 14, y0, left + width - 14, y0 + card_height), fill="#0f2034", radius=14)
+        _text(draw, (left + 28, y0 + 12), f"{idx}. {row.get('hitter_name', '-')}", body_font, REPORT_TEXT)
+        _text(draw, (left + width - 255, y0 + 12), row.get("team", "-"), body_font, REPORT_MUTED)
+        for offset, label in enumerate(
+            [
+                f"Matchup {_format_value('matchup_score', row.get('matchup_score'), export_mode=True)}",
+                f"xwOBA {_format_value('xwoba', row.get('xwoba'), export_mode=True)}",
+                f"LA {_format_value('avg_launch_angle', row.get('avg_launch_angle'), export_mode=True)}",
+            ]
+        ):
+            chip_x = left + 250 + offset * 120
+            chip_fill = "#183652"
+            if offset == 0:
+                bg = _background_hex("matchup_score", row.get("matchup_score"), work["matchup_score"]) or chip_fill
+                chip_fill = bg
+            draw.rounded_rectangle((chip_x, y0 + 8, chip_x + 108, y0 + 36), radius=12, fill=chip_fill)
+            _text(draw, (chip_x + 10, y0 + 15), label, body_font, "#111618" if offset == 0 else REPORT_TEXT)
+    return top + board_height
+
+
+def _draw_report_summary_cards(
+    draw: ImageDraw.ImageDraw,
+    top: int,
+    left: int,
+    width: int,
+    title: str,
+    frame: pd.DataFrame,
+    title_font: ImageFont.ImageFont,
+    body_font: ImageFont.ImageFont,
+    lower_is_better: set[str] | None = None,
+    higher_is_better: set[str] | None = None,
+) -> int:
+    panel_height = _report_summary_height(frame)
+    _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
+    _text(draw, (left + 18, top + 14), title, title_font, REPORT_TEXT)
+    if frame.empty:
+        _text(draw, (left + 18, top + 50), "No summary available", body_font, REPORT_MUTED)
+        return top + panel_height
+    row = frame.iloc[0]
+    stats = _infer_summary_stats(frame)
+    cols = 2
+    gap = 12
+    card_width = (width - 36 - gap) // cols
+    card_height = 68
+    start_y = top + 48
+    for idx, (label, column_name) in enumerate(stats):
+        col_idx = idx % cols
+        row_idx = idx // cols
+        x0 = left + 18 + col_idx * (card_width + gap)
+        y0 = start_y + row_idx * (card_height + 10)
+        x1 = x0 + card_width
+        y1 = y0 + card_height
+        fill = _summary_card_color(column_name, row, lower_is_better, higher_is_better)
+        draw.rounded_rectangle((x0, y0, x1, y1), radius=12, fill=fill, outline="#d0d8e0", width=1)
+        _text(draw, (x0 + 10, y0 + 10), label, body_font, "#4d6075")
+        _text(draw, (x0 + 10, y0 + 36), _format_value(column_name, row.get(column_name), export_mode=True), body_font, "#161a1f")
+    return top + panel_height
+
+
+def _draw_dark_table(
+    draw: ImageDraw.ImageDraw,
+    top: int,
+    left: int,
+    width: int,
+    title: str,
+    frame: pd.DataFrame,
+    font: ImageFont.ImageFont,
+    small_font: ImageFont.ImageFont,
+    lower_is_better: set[str] | None = None,
+    higher_is_better: set[str] | None = None,
+) -> int:
+    if frame.empty:
+        panel_height = 76
+        _panel(draw, (left, top, left + width, top + panel_height))
+        _text(draw, (left + 16, top + 16), title, font, REPORT_TEXT)
+        _text(draw, (left + 16, top + 42), "No data available", small_font, REPORT_MUTED)
+        return top + panel_height
+
+    header_height = 28
+    row_height = 24
+    padding_x = 10
+    padding_y = 7
+    panel_height = 46 + _report_table_height(frame, row_height=row_height, header_height=header_height)
+    _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
+    _text(draw, (left + 16, top + 14), title, font, REPORT_TEXT)
+
+    y = top + 46
+    display_frame = _display_frame(frame).copy()
+    headers = list(display_frame.columns)
+    source_by_label = {DISPLAY_LABELS.get(col, col): col for col in frame.columns}
+    formatted_rows = [[_format_value(source_by_label.get(column, column), row[column], export_mode=True) for column in headers] for _, row in display_frame.iterrows()]
+
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    col_widths: list[int] = []
+    for col_idx, header in enumerate(headers):
+        max_width = _measure(probe, header, small_font)[0]
+        for row in formatted_rows:
+            max_width = max(max_width, _measure(probe, row[col_idx], small_font)[0])
+        col_widths.append(max_width + padding_x * 2)
+    total_width = sum(col_widths)
+    if total_width < width - 24:
+        extra = (width - 24 - total_width) // max(len(col_widths), 1)
+        col_widths = [size + extra for size in col_widths]
+
+    x = left + 12
+    for idx, header in enumerate(headers):
+        draw.rounded_rectangle((x, y, x + col_widths[idx], y + header_height), radius=8, fill="#18314d")
+        _text(draw, (x + padding_x, y + 7), header, small_font, "#dbe6f2")
+        x += col_widths[idx]
+
+    for row_idx, row in enumerate(formatted_rows, start=1):
+        current_y = y + header_height + (row_idx - 1) * row_height
+        x = left + 12
+        for col_idx, value in enumerate(row):
+            display_label = headers[col_idx]
+            source_column = source_by_label.get(display_label, display_label)
+            fill = "#0f2034" if row_idx % 2 else "#132740"
+            if source_column in frame.columns and (source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS):
+                fill = _background_hex(
+                    source_column,
+                    frame.iloc[row_idx - 1][source_column],
+                    frame[source_column],
+                    lower_is_better=lower_is_better or LOWER_IS_BETTER,
+                    higher_is_better=higher_is_better or HIGHER_IS_BETTER,
+                ) or fill
+            draw.rounded_rectangle((x, current_y, x + col_widths[col_idx], current_y + row_height - 2), radius=6, fill=fill)
+            text_fill = "#111618" if fill.startswith("#c") or fill.startswith("#d") or fill.startswith("#e") or fill.startswith("#f") else REPORT_TEXT
+            _text(draw, (x + padding_x, current_y + padding_y), value, small_font, text_fill)
+            x += col_widths[col_idx]
+    return top + panel_height
+
+
+def _draw_report_two_column_sections(
+    draw: ImageDraw.ImageDraw,
+    top: int,
+    width: int,
+    left_sections: list[dict],
+    right_sections: list[dict],
+    font: ImageFont.ImageFont,
+    small_font: ImageFont.ImageFont,
+) -> int:
+    gap = 22
+    col_width = (width - 48 - gap) // 2
+    left_x = 24
+    right_x = left_x + col_width + gap
+    left_y = top
+    right_y = top
+    for section in left_sections:
+        left_y = _draw_dark_table(
+            draw,
+            left_y,
+            left_x,
+            col_width,
+            section["title"],
+            section["frame"],
+            font,
+            small_font,
+            section.get("lower_is_better"),
+            section.get("higher_is_better"),
+        ) + 12
+    for section in right_sections:
+        right_y = _draw_dark_table(
+            draw,
+            right_y,
+            right_x,
+            col_width,
+            section["title"],
+            section["frame"],
+            font,
+            small_font,
+            section.get("lower_is_better"),
+            section.get("higher_is_better"),
+        ) + 12
+    return max(left_y, right_y)
+
+
+def _collect_team_sections(sections: list[dict], kind: str) -> dict[str, list[dict]]:
+    grouped: dict[str, list[dict]] = {}
+    for section in _extract_sections(sections, kind):
+        grouped.setdefault(_section_team(section["title"]), []).append(section)
+    return grouped
+
+
 def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict]) -> bytes:
     if not HAS_PILLOW:
         raise RuntimeError("Pillow is required for PNG/JPG export.")
-    font = ImageFont.load_default()
-    width = 1080
-    branding_height = 84
-    image = Image.new("RGB", (width, 1600), "#fffdf8")
+    title_font = _load_font(34, bold=True)
+    section_font = _load_font(20, bold=True)
+    body_font = _load_font(15)
+    small_font = _load_font(13)
+    width = 1600
+    image = Image.new("RGB", (width, 5200), REPORT_BG)
     draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 0, width, branding_height), fill="#102542")
-    draw.text((18, 14), "KASPER", fill="#f7c04a", font=font)
-    draw.text((18, 38), title, fill="#ffffff", font=font)
-    draw.text((18, 58), subtitle, fill="#d7e4f2", font=font)
-    y = branding_height + 18
 
     best_section = next((section for section in sections if _section_type(section["title"]) == "best"), None)
     summary_sections = _extract_sections(sections, "summary")
+    arsenal_by_team = _collect_team_sections(sections, "arsenal")
+    count_by_team = _collect_team_sections(sections, "count")
     hitter_sections = _extract_sections(sections, "hitters")
+    away_summary = next((section for section in summary_sections if "summary all" in section["title"].lower()), None)
+    home_summary = next((section for section in summary_sections if section is not away_summary and "summary all" in section["title"].lower()), None)
+
+    y = _draw_report_header(draw, width, title, subtitle, away_summary, home_summary, title_font, body_font)
 
     if best_section is not None:
-        best_frame = _limit_frame(best_section["frame"], 3, ["hitter_name", "team", "matchup_score", "xwoba", "barrel_bbe_pct", "avg_launch_angle"])
-        y = _draw_section(draw, y, 18, width - 36, "Best Matchups", best_frame, None, None, font)
+        best_frame = _filter_section_columns(best_section["frame"], ["hitter_name", "team", "matchup_score", "xwoba", "avg_launch_angle"])
+        y = _draw_matchup_board(draw, y, 24, width - 48, best_frame, section_font, body_font) + 18
 
-    away_summary = _extract_first_matching(summary_sections, "summary all")
-    home_summary = None
-    if away_summary is not None:
-        for section in summary_sections:
-            if section is away_summary:
-                continue
-            if "summary all" in section["title"].lower():
-                home_summary = section
-                break
-    if away_summary is not None or home_summary is not None:
-        left_width = (width - 54) // 2
-        right_start = 18 + left_width + 18
-        bottom_left = _draw_summary_cards(
-            draw,
-            y,
-            18,
-            left_width,
-            away_summary["title"] if away_summary else "Away Starter",
-            away_summary["frame"] if away_summary else pd.DataFrame(),
-            font,
-            away_summary.get("lower_is_better") if away_summary else None,
-            away_summary.get("higher_is_better") if away_summary else None,
-        )
-        bottom_right = _draw_summary_cards(
-            draw,
-            y,
-            right_start,
-            left_width,
-            home_summary["title"] if home_summary else "Home Starter",
-            home_summary["frame"] if home_summary else pd.DataFrame(),
-            font,
-            home_summary.get("lower_is_better") if home_summary else None,
-            home_summary.get("higher_is_better") if home_summary else None,
-        )
-        y = max(bottom_left, bottom_right) + 10
+    summary_col_width = (width - 70) // 2
+    left_bottom = _draw_report_summary_cards(
+        draw,
+        y,
+        24,
+        summary_col_width,
+        away_summary["title"] if away_summary else "Away Starter",
+        away_summary["frame"] if away_summary else pd.DataFrame(),
+        section_font,
+        body_font,
+        away_summary.get("lower_is_better") if away_summary else None,
+        away_summary.get("higher_is_better") if away_summary else None,
+    )
+    right_bottom = _draw_report_summary_cards(
+        draw,
+        y,
+        46 + summary_col_width,
+        summary_col_width,
+        home_summary["title"] if home_summary else "Home Starter",
+        home_summary["frame"] if home_summary else pd.DataFrame(),
+        section_font,
+        body_font,
+        home_summary.get("lower_is_better") if home_summary else None,
+        home_summary.get("higher_is_better") if home_summary else None,
+    )
+    y = max(left_bottom, right_bottom) + 18
+
+    _text(draw, (24, y), "Pitcher Detail", title_font, REPORT_TEXT)
+    y += 46
+    team_order = list(arsenal_by_team.keys() or count_by_team.keys())
+    if len(team_order) < 2:
+        team_order = [*_collect_team_sections(sections, "summary").keys()]
+    left_team = team_order[0] if team_order else "Away"
+    right_team = team_order[1] if len(team_order) > 1 else "Home"
+    left_sections = arsenal_by_team.get(left_team, []) + count_by_team.get(left_team, [])
+    right_sections = arsenal_by_team.get(right_team, []) + count_by_team.get(right_team, [])
+    y = _draw_report_two_column_sections(draw, y, width, left_sections, right_sections, section_font, small_font) + 10
 
     if len(hitter_sections) >= 2:
-        left_frame = _limit_frame(hitter_sections[0]["frame"], 6, ["hitter_name", "matchup_score", "xwoba", "barrel_bbe_pct", "hard_hit_pct", "avg_launch_angle"])
-        right_frame = _limit_frame(hitter_sections[1]["frame"], 6, ["hitter_name", "matchup_score", "xwoba", "barrel_bbe_pct", "hard_hit_pct", "avg_launch_angle"])
-        y = _draw_side_by_side_tables(draw, y, width - 36, hitter_sections[0]["title"], left_frame, hitter_sections[1]["title"], right_frame, font)
+        _text(draw, (24, y), "Hitter Matchups", title_font, REPORT_TEXT)
+        y += 46
+        hitter_frames = []
+        for section in hitter_sections[:2]:
+            frame = _filter_section_columns(section["frame"], ["hitter_name", "matchup_score", "xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "avg_launch_angle"])
+            hitter_frames.append({**section, "frame": frame})
+        y = _draw_report_two_column_sections(draw, y, width, [hitter_frames[0]], [hitter_frames[1]], section_font, small_font) + 8
 
-    cropped = image.crop((0, 0, width, min(max(y + 22, 900), image.height)))
+    cropped = image.crop((0, 0, width, min(max(y + 30, 1600), image.height)))
     buffer = BytesIO()
     cropped.save(buffer, format="PNG")
     return buffer.getvalue()
@@ -819,40 +1100,42 @@ def _build_carousel_images(title: str, subtitle: str, sections: list[dict]) -> l
 
     overview_sections: list[dict] = []
     if best_section is not None:
-        overview_sections.append({"title": "Best Matchups", "frame": _limit_frame(best_section["frame"], 3, ["hitter_name", "team", "matchup_score", "xwoba", "barrel_bbe_pct", "avg_launch_angle"])})
-    for section in summary_sections:
-        if "summary all" in section["title"].lower():
-            overview_sections.append(section)
+        overview_sections.append(
+            {
+                "title": "Best Matchups",
+                "frame": _filter_section_columns(best_section["frame"], ["hitter_name", "team", "matchup_score", "xwoba", "avg_launch_angle"]),
+            }
+        )
+    overview_sections.extend([section for section in summary_sections if "summary all" in section["title"].lower()])
     slides.append(_build_compact_poster_image(title, f"{subtitle} | Slide 1: Overview", overview_sections))
 
     pitching_sections: list[dict] = []
     pitching_sections.extend(summary_sections)
-    for section in arsenal_sections:
-        pitching_sections.append(
-            {
-                **section,
-                "frame": _limit_frame(section["frame"], 5, ["pitch_name", "usage_pct", "swstr_pct", "hard_hit_pct", "avg_release_speed", "xwoba_con"]),
-            }
-        )
+    pitching_sections.extend(
+        {
+            **section,
+            "frame": _filter_section_columns(section["frame"], ["pitch_name", "usage_pct", "swstr_pct", "hard_hit_pct", "avg_release_speed", "xwoba_con"]),
+        }
+        for section in arsenal_sections
+    )
     slides.append(build_branded_report_image(title, f"{subtitle} | Slide 2: Pitching Detail", pitching_sections))
 
     if len(hitter_sections) >= 2:
         hitter_slide_sections = [
-            {"title": hitter_sections[0]["title"], "frame": _limit_frame(hitter_sections[0]["frame"], 8)},
-            {"title": hitter_sections[1]["title"], "frame": _limit_frame(hitter_sections[1]["frame"], 8)},
+            {"title": hitter_sections[0]["title"], "frame": _filter_section_columns(hitter_sections[0]["frame"], ["hitter_name", "matchup_score", "xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "avg_launch_angle"])},
+            {"title": hitter_sections[1]["title"], "frame": _filter_section_columns(hitter_sections[1]["frame"], ["hitter_name", "matchup_score", "xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "avg_launch_angle"])},
         ]
-        slides.append(build_branded_report_image(title, f"{subtitle} | Slide 3: Hitter Tables", hitter_slide_sections))
+        slides.append(build_branded_report_image(title, f"{subtitle} | Slide 3: Hitter Matchups", hitter_slide_sections))
 
     if count_sections:
-        limited_count = []
-        for section in count_sections:
-            limited_count.append(
-                {
-                    **section,
-                    "frame": _limit_frame(section["frame"], 5, ["pitch_name", "All counts", "Early count", "Pitcher ahead", "Pitcher behind", "Two-strike"]),
-                }
-            )
-        slides.append(build_branded_report_image(title, f"{subtitle} | Slide 4: Count Usage", limited_count))
+        count_slide_sections = [
+            {
+                **section,
+                "frame": _filter_section_columns(section["frame"], ["pitch_name", "All counts", "Early count", "Even count", "Pitcher ahead", "Pitcher behind", "Two-strike", "Pre two-strike", "Full count"]),
+            }
+            for section in count_sections
+        ]
+        slides.append(build_branded_report_image(title, f"{subtitle} | Slide 4: Count Usage", count_slide_sections))
 
     return slides
 
@@ -871,8 +1154,11 @@ def _draw_section(
     padding_x = 12
     padding_y = 8
     row_height = 26
-    draw.text((left + padding_x, top), title, fill="#102542", font=font)
-    y = top + 24
+    small_font = _load_font(13)
+    panel_height = 46 + _report_table_height(frame, row_height=row_height, header_height=26)
+    _panel(draw, (left + 8, top, left + width - 8, top + panel_height), fill=REPORT_PANEL)
+    _text(draw, (left + 22, top + 14), title, font, REPORT_TEXT)
+    y = top + 46
 
     display_frame = _display_frame(frame).copy()
     headers = list(display_frame.columns)
@@ -884,31 +1170,32 @@ def _draw_section(
     probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     col_widths = []
     for col_idx, header in enumerate(headers):
-        bbox = probe.textbbox((0, 0), header, font=font)
+        bbox = probe.textbbox((0, 0), header, font=small_font)
         max_width = bbox[2] - bbox[0]
         for row in formatted_rows:
-            bbox = probe.textbbox((0, 0), row[col_idx], font=font)
+            bbox = probe.textbbox((0, 0), row[col_idx], font=small_font)
             max_width = max(max_width, bbox[2] - bbox[0])
         col_widths.append(max_width + padding_x * 2)
 
+    usable_width = width - 32
     total_width = sum(col_widths)
-    if total_width < width:
-        extra = (width - total_width) // max(len(col_widths), 1)
+    if total_width < usable_width:
+        extra = (usable_width - total_width) // max(len(col_widths), 1)
         col_widths = [size + extra for size in col_widths]
 
-    x = left
+    x = left + 16
     for idx, header in enumerate(headers):
-        draw.rectangle((x, y, x + col_widths[idx], y + row_height), fill="#d8e6f3")
-        draw.text((x + padding_x, y + padding_y), header, fill="#102542", font=font)
+        draw.rounded_rectangle((x, y, x + col_widths[idx], y + row_height), radius=8, fill="#18314d")
+        _text(draw, (x + padding_x, y + padding_y), header, small_font, "#dbe6f2")
         x += col_widths[idx]
 
     for row_idx, row in enumerate(formatted_rows, start=1):
         current_y = y + row_height * row_idx
-        x = left
+        x = left + 16
         for col_idx, value in enumerate(row):
             display_label = headers[col_idx]
             source_column = source_by_label.get(display_label, display_label)
-            fill = "#ffffff" if row_idx % 2 else "#f6f8fb"
+            fill = "#0f2034" if row_idx % 2 else "#132740"
             if source_column in frame.columns and (source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS):
                 fill = _background_hex(
                     source_column,
@@ -917,37 +1204,39 @@ def _draw_section(
                     lower_is_better=lower_is_better or LOWER_IS_BETTER,
                     higher_is_better=higher_is_better or HIGHER_IS_BETTER,
                 ) or fill
-            draw.rectangle((x, current_y, x + col_widths[col_idx], current_y + row_height), fill=fill)
-            draw.text((x + padding_x, current_y + padding_y), value, fill="#1f1f1f", font=font)
+            draw.rounded_rectangle((x, current_y, x + col_widths[col_idx], current_y + row_height - 2), radius=6, fill=fill)
+            text_fill = "#111618" if fill.startswith("#c") or fill.startswith("#d") or fill.startswith("#e") or fill.startswith("#f") else REPORT_TEXT
+            _text(draw, (x + padding_x, current_y + padding_y), value, small_font, text_fill)
             x += col_widths[col_idx]
 
-    return current_y + row_height + 18
+    return top + panel_height + 12
 
 
 def build_branded_report_image(title: str, subtitle: str, sections: list[dict]) -> bytes:
     if not HAS_PILLOW:
         raise RuntimeError("Pillow is required for PNG/JPG export.")
-    font = ImageFont.load_default()
+    font = _load_font(20, bold=True)
+    body_font = _load_font(14)
     width = 1500
-    branding_height = 74
-    total_height = branding_height + 16
+    branding_height = 110
+    total_height = branding_height + 24
     for section in sections:
-        total_height += _table_section_height(section["title"], section["frame"])
-    image = Image.new("RGB", (width, total_height), "#fffdf8")
+        total_height += _table_section_height(section["title"], section["frame"]) + 24
+    image = Image.new("RGB", (width, total_height), REPORT_BG)
     draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 0, width, branding_height), fill="#102542")
-    draw.text((12, 12), "KASPER", fill="#f7c04a", font=font)
-    draw.text((12, 34), title, fill="#ffffff", font=font)
-    draw.text((12, 52), subtitle, fill="#d7e4f2", font=font)
+    _panel(draw, (20, 20, width - 20, branding_height), fill="#0d1b2d", radius=24)
+    _text(draw, (42, 36), "KASPER SCOUTING REPORT", body_font, REPORT_ACCENT)
+    _text(draw, (42, 58), title, font, REPORT_TEXT)
+    _text(draw, (42, 84), subtitle, body_font, REPORT_MUTED)
 
-    y = branding_height + 12
+    y = branding_height + 18
     for section in sections:
         if section["frame"].empty:
             continue
         y = _draw_section(
             draw,
             y,
-            0,
+            8,
             width,
             section["title"],
             section["frame"],
