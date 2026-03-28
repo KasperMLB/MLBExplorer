@@ -1190,7 +1190,19 @@ def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict])
 
     if best_section is not None:
         best_frame = _filter_section_columns(best_section["frame"], ["hitter_name", "team", "matchup_score", "xwoba", "swstr_pct", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle"])
-        y = _draw_matchup_board(draw, y, 24, width - 48, best_frame, section_font, body_font) + 18
+        y = _draw_export_section(
+            draw,
+            y,
+            24,
+            width - 48,
+            {
+                **best_section,
+                "title": "Best Matchups",
+                "frame": best_frame,
+            },
+            section_font,
+            body_font,
+        ) + 18
 
     team_order = list(arsenal_by_team.keys())
     for team in team_order:
