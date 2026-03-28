@@ -373,6 +373,15 @@ def build_best_matchups(away_hitters: pd.DataFrame, home_hitters: pd.DataFrame) 
     return combined.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last").head(3)
 
 
+def sort_arsenal_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    work = frame.copy()
+    if "usage_pct" in work.columns:
+        work["usage_pct"] = pd.to_numeric(work["usage_pct"], errors="coerce")
+    return work.sort_values(["usage_pct", "pitch_name"], ascending=[False, True], na_position="last").reset_index(drop=True)
+
+
 def latest_built_date(daily_dir: Path) -> date | None:
     if not daily_dir.exists():
         return None

@@ -32,6 +32,7 @@ from .dashboard_views import (
     hitter_columns_for_preset,
     latest_built_date,
     pivot_count_usage,
+    sort_arsenal_frame,
     with_game_label,
 )
 from .query_engine import QueryFilters, StatcastQueryEngine
@@ -121,9 +122,9 @@ def _render_pitcher_tab(
         for side_key, side_tab in zip(BATTER_SIDE_LABELS, arsenal_tabs):
             with side_tab:
                 if side_key == "all":
-                    side_frame = pitcher_arsenal
+                    side_frame = sort_arsenal_frame(pitcher_arsenal)
                 else:
-                    side_frame = pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key]
+                    side_frame = sort_arsenal_frame(pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key])
                 if side_frame.empty:
                     st.info("No arsenal data available.")
                     hand_grids[side_key] = pd.DataFrame(columns=ARSENAL_COLUMNS)

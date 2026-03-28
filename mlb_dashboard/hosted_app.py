@@ -31,6 +31,7 @@ from .dashboard_views import (
     build_game_export_options,
     hitter_columns_for_preset,
     pivot_count_usage,
+    sort_arsenal_frame,
     with_game_label,
 )
 from .query_engine import load_remote_parquet
@@ -218,7 +219,7 @@ def _render_pitcher_tab(
         arsenal_tabs = st.tabs([BATTER_SIDE_LABELS[key] for key in BATTER_SIDE_LABELS])
         for side_key, side_tab in zip(BATTER_SIDE_LABELS, arsenal_tabs):
             with side_tab:
-                side_frame = pitcher_arsenal if side_key == "all" else pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key]
+                side_frame = sort_arsenal_frame(pitcher_arsenal) if side_key == "all" else sort_arsenal_frame(pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key])
                 if side_frame.empty:
                     st.info("No arsenal data available.")
                 else:
@@ -290,7 +291,7 @@ def _build_pitcher_export_sections(
                 }
             )
 
-        side_arsenal = pitcher_arsenal if side_key == "all" else pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key]
+        side_arsenal = sort_arsenal_frame(pitcher_arsenal) if side_key == "all" else sort_arsenal_frame(pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key])
         if not side_arsenal.empty:
             export_sections.append(
                 {
