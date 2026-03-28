@@ -747,13 +747,13 @@ def _draw_side_by_side_tables(
     return max(left_bottom, right_bottom)
 
 
-REPORT_BG = "#08111f"
-REPORT_PANEL = "#102238"
-REPORT_PANEL_ALT = "#152a44"
-REPORT_BORDER = "#253a56"
-REPORT_TEXT = "#07111e"
-REPORT_MUTED = "#17263a"
-REPORT_ACCENT = "#f7c04a"
+REPORT_BG = "#ffffff"
+REPORT_PANEL = "#ffffff"
+REPORT_PANEL_ALT = "#f6f8fb"
+REPORT_BORDER = "#cfd8e3"
+REPORT_TEXT = "#111111"
+REPORT_MUTED = "#4b5563"
+REPORT_ACCENT = "#1f4e79"
 
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
@@ -813,7 +813,7 @@ def _draw_report_header(
     body_font: ImageFont.ImageFont,
 ) -> int:
     hero_box = (24, 24, width - 24, 166)
-    _panel(draw, hero_box, fill="#0d1b2d", radius=24)
+    _panel(draw, hero_box, fill="#f5f7fa", radius=24)
     _text(draw, (46, 42), "KASPER SCOUTING REPORT", body_font, REPORT_ACCENT)
     _text(draw, (46, 68), title, title_font, REPORT_TEXT)
     _text(draw, (46, 110), subtitle, body_font, REPORT_TEXT)
@@ -844,7 +844,7 @@ def _draw_matchup_board(
     card_height = 58
     for idx, (_, row) in enumerate(work.iterrows(), start=1):
         y0 = card_top + (idx - 1) * (card_height + 10)
-        _panel(draw, (left + 14, y0, left + width - 14, y0 + card_height), fill="#0f2034", radius=14)
+        _panel(draw, (left + 14, y0, left + width - 14, y0 + card_height), fill="#ffffff", radius=14)
         _text(draw, (left + 24, y0 + 14), f"{idx}. {row.get('hitter_name', '-')}", body_font, REPORT_TEXT)
         _text(draw, (left + width - 90, y0 + 20), row.get("team", "-"), body_font, REPORT_TEXT)
         chip_specs = [
@@ -867,7 +867,7 @@ def _draw_matchup_board(
                 work[column],
                 lower_is_better=LOWER_IS_BETTER,
                 higher_is_better=HIGHER_IS_BETTER,
-            ) or "#183652"
+            ) or "#e8eef5"
             draw.rounded_rectangle((chip_x, y0 + 10, chip_x + chip_width, y0 + 40), radius=12, fill=chip_fill)
             chip_text = f"{label} {_format_value(column, row.get(column), export_mode=True)}"
             _text(draw, (chip_x + 8, y0 + 18), chip_text, body_font, REPORT_TEXT)
@@ -960,8 +960,8 @@ def _draw_dark_table(
 
     x = left + 12
     for idx, header in enumerate(headers):
-        draw.rounded_rectangle((x, y, x + col_widths[idx], y + header_height), radius=8, fill="#18314d")
-        _text(draw, (x + padding_x, y + 7), header, small_font, "#dbe6f2")
+        draw.rounded_rectangle((x, y, x + col_widths[idx], y + header_height), radius=8, fill="#dce6f2")
+        _text(draw, (x + padding_x, y + 7), header, small_font, REPORT_TEXT)
         x += col_widths[idx]
 
     for row_idx, row in enumerate(formatted_rows, start=1):
@@ -970,7 +970,7 @@ def _draw_dark_table(
         for col_idx, value in enumerate(row):
             display_label = headers[col_idx]
             source_column = source_by_label.get(display_label, display_label)
-            fill = "#0f2034" if row_idx % 2 else "#132740"
+            fill = "#ffffff" if row_idx % 2 else "#f7f9fc"
             if source_column in frame.columns and (source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS):
                 fill = _background_hex(
                     source_column,
@@ -1050,7 +1050,7 @@ def _draw_scouting_rows_section(
     for _, row in frame.iterrows():
         row_top = y
         row_bottom = row_top + row_height
-        _panel(draw, (left + 12, row_top, left + width - 12, row_bottom), fill="#0f2034", radius=14)
+        _panel(draw, (left + 12, row_top, left + width - 12, row_bottom), fill="#ffffff", radius=14)
 
         primary = _format_value(identity_columns[0], row.get(identity_columns[0]), export_mode=True) if identity_columns else "-"
         secondary_parts = [
@@ -1072,7 +1072,7 @@ def _draw_scouting_rows_section(
                 frame[column],
                 lower_is_better=lower_is_better or LOWER_IS_BETTER,
                 higher_is_better=higher_is_better or HIGHER_IS_BETTER,
-            ) or "#183652"
+            ) or "#e8eef5"
             draw.rounded_rectangle((chip_x, row_top + 10, chip_x + chip_width, row_top + 40), radius=12, fill=chip_fill)
             chip_label = DISPLAY_LABELS.get(column, column)
             chip_text = f"{chip_label} {_format_value(column, row.get(column), export_mode=True)}"
@@ -1330,8 +1330,8 @@ def _draw_section(
 
     x = left + 16
     for idx, header in enumerate(headers):
-        draw.rounded_rectangle((x, y, x + col_widths[idx], y + row_height), radius=8, fill="#18314d")
-        _text(draw, (x + padding_x, y + padding_y), header, small_font, "#dbe6f2")
+        draw.rounded_rectangle((x, y, x + col_widths[idx], y + row_height), radius=8, fill="#dce6f2")
+        _text(draw, (x + padding_x, y + padding_y), header, small_font, REPORT_TEXT)
         x += col_widths[idx]
 
     for row_idx, row in enumerate(formatted_rows, start=1):
@@ -1340,7 +1340,7 @@ def _draw_section(
         for col_idx, value in enumerate(row):
             display_label = headers[col_idx]
             source_column = source_by_label.get(display_label, display_label)
-            fill = "#0f2034" if row_idx % 2 else "#132740"
+            fill = "#ffffff" if row_idx % 2 else "#f7f9fc"
             if source_column in frame.columns and (source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS):
                 fill = _background_hex(
                     source_column,
@@ -1350,8 +1350,7 @@ def _draw_section(
                     higher_is_better=higher_is_better or HIGHER_IS_BETTER,
                 ) or fill
             draw.rounded_rectangle((x, current_y, x + col_widths[col_idx], current_y + row_height - 2), radius=6, fill=fill)
-            text_fill = "#111618" if fill.startswith("#c") or fill.startswith("#d") or fill.startswith("#e") or fill.startswith("#f") else REPORT_TEXT
-            _text(draw, (x + padding_x, current_y + padding_y), value, small_font, text_fill)
+            _text(draw, (x + padding_x, current_y + padding_y), value, small_font, REPORT_TEXT)
             x += col_widths[col_idx]
 
     return top + panel_height + 12
@@ -1369,7 +1368,7 @@ def build_branded_report_image(title: str, subtitle: str, sections: list[dict]) 
         total_height += _export_section_height_estimate(section["title"], section["frame"])
     image = Image.new("RGB", (width, total_height), REPORT_BG)
     draw = ImageDraw.Draw(image)
-    _panel(draw, (20, 20, width - 20, branding_height), fill="#0d1b2d", radius=24)
+    _panel(draw, (20, 20, width - 20, branding_height), fill="#f5f7fa", radius=24)
     _text(draw, (42, 34), "KASPER SCOUTING REPORT", body_font, REPORT_ACCENT)
     _text(draw, (42, 58), title, font, REPORT_TEXT)
     _text(draw, (42, 88), subtitle, body_font, REPORT_TEXT)
