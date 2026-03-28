@@ -36,7 +36,7 @@ PERCENT_COLUMNS = {
     "Pre two-strike",
     "Full count",
 }
-RATE_COLUMNS = {"xwoba", "xwoba_con", "avg_launch_angle", "avg_release_speed", "avg_spin_rate", "gb_fb_ratio", "matchup_score", "pitcher_score"}
+RATE_COLUMNS = {"xwoba", "xwoba_con", "avg_launch_angle", "avg_release_speed", "avg_spin_rate", "gb_fb_ratio", "matchup_score", "pitcher_score", "zone_fit_score"}
 LOWER_IS_BETTER = {"swstr_pct"}
 HIGHER_IS_BETTER = {
     "pulled_barrel_pct",
@@ -50,6 +50,7 @@ HIGHER_IS_BETTER = {
     "avg_release_speed",
     "avg_spin_rate",
     "matchup_score",
+    "zone_fit_score",
     "gb_pct",
     "gb_fb_ratio",
 }
@@ -79,6 +80,7 @@ DISPLAY_LABELS = {
     "p_throws": "Throws",
     "likely_starter_score": "Likely",
     "matchup_score": "Matchup",
+    "zone_fit_score": "Zone Fit",
     "pitcher_score": "Pitch Score",
     "player_name": "Player",
     "rolling_window": "Window",

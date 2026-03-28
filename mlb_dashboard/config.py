@@ -14,6 +14,15 @@ DEFAULT_YEAR_WEIGHTS = {
     2026: 1.35,
 }
 
+DEFAULT_ZONE_YEAR_WEIGHTS = {
+    2021: 0.20,
+    2022: 0.35,
+    2023: 0.55,
+    2024: 0.85,
+    2025: 1.10,
+    2026: 1.75,
+}
+
 DEFAULT_RECENT_WINDOWS = ("season", "last_45_days", "last_14_days")
 DEFAULT_SPLITS = ("overall", "vs_rhp", "vs_lhp", "home", "away")
 DEFAULT_PITCH_GROUPS = {
@@ -40,6 +49,7 @@ class AppConfig:
     cockroach_pitcher_zone_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_ZONE_TABLE", "public.pitcher_zone_profiles"))
     metrics_version: str = field(default_factory=lambda: os.getenv("MLB_METRICS_VERSION", "v1"))
     year_weights: dict[int, float] = field(default_factory=lambda: DEFAULT_YEAR_WEIGHTS.copy())
+    zone_year_weights: dict[int, float] = field(default_factory=lambda: DEFAULT_ZONE_YEAR_WEIGHTS.copy())
 
     @property
     def reusable_dir(self) -> Path:

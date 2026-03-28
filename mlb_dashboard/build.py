@@ -36,6 +36,7 @@ REQUIRED_COLUMNS = [
     "estimated_woba_using_speedangle",
     "bb_type",
     "description",
+    "events",
     "launch_angle",
     "launch_speed",
     "release_speed",
@@ -44,6 +45,7 @@ REQUIRED_COLUMNS = [
     "balls",
     "strikes",
     "hc_x",
+    "zone",
 ]
 
 
@@ -117,6 +119,7 @@ def _aggregate_hitter_metrics(frame: pd.DataFrame, weighted_mode: str, year_weig
     work["metric_weight"] = apply_year_weights(work, year_weights) if weighted_mode == "weighted" else 1.0
     rows: list[dict] = []
     for (team, batter), group in work.groupby(["team", "batter"], sort=False):
+        hitter_side = group["stand"].dropna().astype(str).value_counts().idxmax() if group["stand"].notna().any() else None
         pitch_count = len(group)
         bip = int(group["is_batted_ball"].sum())
         pitch_weight_sum = float(group["metric_weight"].sum())
@@ -129,6 +132,7 @@ def _aggregate_hitter_metrics(frame: pd.DataFrame, weighted_mode: str, year_weig
                 "team": team,
                 "batter": batter,
                 "hitter_name": str(batter),
+                "stand": hitter_side,
                 "pitch_count": pitch_count,
                 "bip": bip,
                 "xwoba": _weighted_sum(group, "xwoba_value", group.index) / max(_weighted_denominator(group, "xwoba_value", group.index), 1e-9),
@@ -143,6 +147,66 @@ def _aggregate_hitter_metrics(frame: pd.DataFrame, weighted_mode: str, year_weig
             }
         )
     return pd.DataFrame(rows)
+
+
+def _aggregate_zone_profiles(frame: pd.DataFrame, zone_year_weights: dict[int, float]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    work = frame.copy()
+    work["zone"] = pd.to_numeric(work["zone"], errors="coerce")
+    work = work.loc[work["zone"].notna() & work["pitch_type"].notna()].copy()
+    if work.empty:
+        batter_columns = ["batter_id", "pitcher_hand_key", "pitch_type", "zone", "sample_size", "hit_rate", "hr_rate"]
+        pitcher_columns = ["pitcher_id", "batter_side_key", "pitch_type", "zone", "sample_size", "usage_rate"]
+        return pd.DataFrame(columns=batter_columns), pd.DataFrame(columns=pitcher_columns)
+
+    work["zone_metric_weight"] = apply_year_weights(work, zone_year_weights)
+    work["pitcher_hand_key"] = work["p_throws"].fillna("").map({"R": "vs_rhp", "L": "vs_lhp"}).fillna("overall")
+    work["batter_side_key"] = work["stand"].fillna("").map({"L": "vs_lhh", "R": "vs_rhh"}).fillna("overall")
+    work["zone"] = work["zone"].astype(int)
+
+    batter_rows: list[pd.DataFrame] = []
+    for pitcher_hand_key, hand_frame in {
+        "overall": work,
+        "vs_rhp": work.loc[work["p_throws"].fillna("") == "R"],
+        "vs_lhp": work.loc[work["p_throws"].fillna("") == "L"],
+    }.items():
+        if hand_frame.empty:
+            continue
+        grouped = (
+            hand_frame.assign(
+                hit_weight=hand_frame["is_hit_event"].astype(int) * hand_frame["zone_metric_weight"],
+                hr_weight=hand_frame["is_home_run_event"].astype(int) * hand_frame["zone_metric_weight"],
+            )
+            .groupby(["batter", "pitch_type", "zone"], as_index=False)
+            .agg(
+                sample_size=("zone_metric_weight", "sum"),
+                hit_weight=("hit_weight", "sum"),
+                hr_weight=("hr_weight", "sum"),
+            )
+        )
+        grouped["batter_id"] = grouped["batter"]
+        grouped["pitcher_hand_key"] = pitcher_hand_key
+        grouped["hit_rate"] = grouped["hit_weight"] / grouped["sample_size"].where(grouped["sample_size"] != 0)
+        grouped["hr_rate"] = grouped["hr_weight"] / grouped["sample_size"].where(grouped["sample_size"] != 0)
+        batter_rows.append(grouped[["batter_id", "pitcher_hand_key", "pitch_type", "zone", "sample_size", "hit_rate", "hr_rate"]])
+
+    pitcher_rows: list[pd.DataFrame] = []
+    for batter_side_key, side_frame in {
+        "overall": work,
+        "vs_lhh": work.loc[work["stand"].fillna("") == "L"],
+        "vs_rhh": work.loc[work["stand"].fillna("") == "R"],
+    }.items():
+        if side_frame.empty:
+            continue
+        grouped = side_frame.groupby(["pitcher", "pitch_type", "zone"], as_index=False).agg(sample_size=("zone_metric_weight", "sum"))
+        grouped["pitcher_id"] = grouped["pitcher"]
+        grouped["batter_side_key"] = batter_side_key
+        totals = grouped.groupby("pitcher_id")["sample_size"].transform("sum")
+        grouped["usage_rate"] = grouped["sample_size"] / totals.where(totals != 0)
+        pitcher_rows.append(grouped[["pitcher_id", "batter_side_key", "pitch_type", "zone", "sample_size", "usage_rate"]])
+
+    batter_profiles = pd.concat(batter_rows, ignore_index=True) if batter_rows else pd.DataFrame(columns=["batter_id", "pitcher_hand_key", "pitch_type", "zone", "sample_size", "hit_rate", "hr_rate"])
+    pitcher_profiles = pd.concat(pitcher_rows, ignore_index=True) if pitcher_rows else pd.DataFrame(columns=["pitcher_id", "batter_side_key", "pitch_type", "zone", "sample_size", "usage_rate"])
+    return batter_profiles, pitcher_profiles
 
 
 def _aggregate_pitcher_metrics(frame: pd.DataFrame, weighted_mode: str, year_weights: dict[int, float]) -> pd.DataFrame:
@@ -473,6 +537,7 @@ def run_build(context: BuildContext) -> None:
     historical_statcast = _load_raw_statcast(csv_paths)
     live_payload = load_cockroach_payload(context.config)
     raw_statcast = _merge_historical_and_live(historical_statcast, live_payload)
+    batter_zone_profiles, pitcher_zone_profiles = _aggregate_zone_profiles(raw_statcast, context.config.zone_year_weights)
     hitter_metrics, pitcher_metrics, pitcher_summary_by_hand, pitcher_arsenal, pitcher_arsenal_by_hand, pitcher_usage_by_count = build_metric_tables(raw_statcast, context.config)
     _write_duckdb(
         context.config,
@@ -484,8 +549,8 @@ def run_build(context: BuildContext) -> None:
         pitcher_usage_by_count,
         live_payload.hitter_rolling,
         live_payload.pitcher_rolling,
-        live_payload.batter_zone_profiles,
-        live_payload.pitcher_zone_profiles,
+        batter_zone_profiles,
+        pitcher_zone_profiles,
     )
     _write_reusable_artifacts(
         context.config,
@@ -497,8 +562,8 @@ def run_build(context: BuildContext) -> None:
         pitcher_usage_by_count,
         live_payload.hitter_rolling,
         live_payload.pitcher_rolling,
-        live_payload.batter_zone_profiles,
-        live_payload.pitcher_zone_profiles,
+        batter_zone_profiles,
+        pitcher_zone_profiles,
     )
     schedule = fetch_schedule(context.target_date)
     rosters = fetch_team_rosters_for_schedule(schedule, context.target_date)
@@ -514,8 +579,8 @@ def run_build(context: BuildContext) -> None:
         pitcher_usage_by_count,
         live_payload.hitter_rolling,
         live_payload.pitcher_rolling,
-        live_payload.batter_zone_profiles,
-        live_payload.pitcher_zone_profiles,
+        batter_zone_profiles,
+        pitcher_zone_profiles,
     )
 
 

@@ -270,8 +270,20 @@ def main() -> None:
 
         away_hitters = apply_roster_names(engine.get_team_hitter_pool(game["away_team"], away_hand, filters), rosters, game["away_team"])
         home_hitters = apply_roster_names(engine.get_team_hitter_pool(game["home_team"], home_hand, filters), rosters, game["home_team"])
-        away_hitters = add_hitter_matchup_score(away_hitters)
-        home_hitters = add_hitter_matchup_score(home_hitters)
+        away_hitters = add_hitter_matchup_score(
+            away_hitters,
+            batter_zone_profiles=batter_zone_profiles,
+            pitcher_zone_profiles=pitcher_zone_profiles,
+            opposing_pitcher_id=game.get("home_probable_pitcher_id"),
+            opposing_pitcher_hand=away_hand,
+        )
+        home_hitters = add_hitter_matchup_score(
+            home_hitters,
+            batter_zone_profiles=batter_zone_profiles,
+            pitcher_zone_profiles=pitcher_zone_profiles,
+            opposing_pitcher_id=game.get("away_probable_pitcher_id"),
+            opposing_pitcher_hand=home_hand,
+        )
 
         hitters_by_game[game["game_pk"]] = (away_hitters, home_hitters)
         pitchers_by_game[game["game_pk"]] = (away_pitcher, home_pitcher)

@@ -7,6 +7,7 @@ import pandas as pd
 
 SWINGING_STRIKE_DESCRIPTIONS = {"swinging_strike", "swinging_strike_blocked"}
 IN_PLAY_TYPES = {"line_drive", "fly_ball", "ground_ball", "popup"}
+HIT_EVENTS = {"single", "double", "triple", "home_run"}
 
 
 def apply_year_weights(frame: pd.DataFrame, year_weights: dict[int, float]) -> pd.Series:
@@ -111,6 +112,14 @@ def is_swinging_strike(frame: pd.DataFrame) -> pd.Series:
     return frame["description"].fillna("").astype(str).str.lower().isin(SWINGING_STRIKE_DESCRIPTIONS)
 
 
+def is_hit_event(frame: pd.DataFrame) -> pd.Series:
+    return frame.get("events", pd.Series(index=frame.index, dtype="object")).fillna("").astype(str).str.lower().isin(HIT_EVENTS)
+
+
+def is_home_run_event(frame: pd.DataFrame) -> pd.Series:
+    return frame.get("events", pd.Series(index=frame.index, dtype="object")).fillna("").astype(str).str.lower().eq("home_run")
+
+
 def add_metric_flags(frame: pd.DataFrame) -> pd.DataFrame:
     enriched = frame.copy()
     enriched["is_batted_ball"] = is_batted_ball(enriched)
@@ -126,6 +135,8 @@ def add_metric_flags(frame: pd.DataFrame) -> pd.DataFrame:
     enriched["is_pulled_batted_ball"] = is_pulled_batted_ball(enriched)
     enriched["is_pulled_barrel"] = enriched["is_barrel"] & enriched["is_pulled_batted_ball"]
     enriched["is_swinging_strike"] = is_swinging_strike(enriched)
+    enriched["is_hit_event"] = is_hit_event(enriched)
+    enriched["is_home_run_event"] = is_home_run_event(enriched)
     enriched["xwoba_value"] = pd.to_numeric(enriched["estimated_woba_using_speedangle"], errors="coerce")
     enriched["launch_angle_value"] = pd.to_numeric(enriched["launch_angle"], errors="coerce")
     enriched["release_speed_value"] = pd.to_numeric(enriched["release_speed"], errors="coerce")

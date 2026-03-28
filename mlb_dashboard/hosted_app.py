@@ -363,7 +363,22 @@ def main() -> None:
 
         away_hitters = _filter_hitters(hitters, rosters, game["away_team"], away_hand, split, recent_window, weighted_mode, min_pitch_count, min_bip, likely_only)
         home_hitters = _filter_hitters(hitters, rosters, game["home_team"], home_hand, split, recent_window, weighted_mode, min_pitch_count, min_bip, likely_only)
-        hitters_by_game[game["game_pk"]] = (add_hitter_matchup_score(away_hitters), add_hitter_matchup_score(home_hitters))
+        hitters_by_game[game["game_pk"]] = (
+            add_hitter_matchup_score(
+                away_hitters,
+                batter_zone_profiles=batter_zone_profiles,
+                pitcher_zone_profiles=pitcher_zone_profiles,
+                opposing_pitcher_id=game.get("home_probable_pitcher_id"),
+                opposing_pitcher_hand=away_hand,
+            ),
+            add_hitter_matchup_score(
+                home_hitters,
+                batter_zone_profiles=batter_zone_profiles,
+                pitcher_zone_profiles=pitcher_zone_profiles,
+                opposing_pitcher_id=game.get("away_probable_pitcher_id"),
+                opposing_pitcher_hand=home_hand,
+            ),
+        )
         pitchers_by_game[game["game_pk"]] = (away_pitcher, home_pitcher)
 
     hitter_rows: list[pd.DataFrame] = []

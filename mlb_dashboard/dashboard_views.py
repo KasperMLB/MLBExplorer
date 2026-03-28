@@ -60,6 +60,7 @@ HITTER_PRESETS = {
         "hitter_name",
         "team",
         "matchup_score",
+        "zone_fit_score",
         "pitch_count",
         "bip",
         "xwoba",
@@ -85,6 +86,8 @@ BEST_MATCHUP_COLUMNS = [
     "fb_pct",
     "avg_launch_angle",
 ]
+
+ZONE_FIT_SAMPLE_FLOOR = 15.0
 
 TOP_PITCHER_COLUMNS = [
     "game",
@@ -230,14 +233,103 @@ def launch_angle_score(series: pd.Series, low: float = 20.0, ideal: float = 27.5
     return numeric.apply(score)
 
 
-def add_hitter_matchup_score(frame: pd.DataFrame) -> pd.DataFrame:
+def _weighted_average(series: pd.Series, weights: pd.Series) -> float | None:
+    numeric = pd.to_numeric(series, errors="coerce")
+    numeric_weights = pd.to_numeric(weights, errors="coerce").fillna(0)
+    valid = numeric.notna() & numeric_weights.gt(0)
+    if not valid.any():
+        return None
+    total_weight = float(numeric_weights.loc[valid].sum())
+    if total_weight <= 0:
+        return None
+    return float((numeric.loc[valid] * numeric_weights.loc[valid]).sum() / total_weight)
+
+
+def _select_batter_zone_frame(frame: pd.DataFrame, batter_id: object, opposing_pitcher_hand: str | None) -> pd.DataFrame:
+    if frame.empty or "batter_id" not in frame.columns:
+        return pd.DataFrame()
+    work = frame.loc[frame["batter_id"] == batter_id].copy()
+    if work.empty:
+        return work
+    if "pitcher_hand_key" in work.columns:
+        hand_key = {"R": "vs_rhp", "L": "vs_lhp"}.get(opposing_pitcher_hand or "", "overall")
+        specific = work.loc[work["pitcher_hand_key"] == hand_key]
+        if not specific.empty:
+            return specific
+        overall = work.loc[work["pitcher_hand_key"] == "overall"]
+        if not overall.empty:
+            return overall
+    return work
+
+
+def _select_pitcher_zone_frame(frame: pd.DataFrame, pitcher_id: object, hitter_side: str | None) -> pd.DataFrame:
+    if frame.empty or "pitcher_id" not in frame.columns:
+        return pd.DataFrame()
+    work = frame.loc[frame["pitcher_id"] == pitcher_id].copy()
+    if work.empty:
+        return work
+    if "batter_side_key" in work.columns:
+        side_key = {"L": "vs_lhh", "R": "vs_rhh"}.get(hitter_side or "", "overall")
+        specific = work.loc[work["batter_side_key"] == side_key]
+        if not specific.empty:
+            return specific
+        overall = work.loc[work["batter_side_key"] == "overall"]
+        if not overall.empty:
+            return overall
+    return work
+
+
+def _zone_fit_for_hitter(
+    hitter_row: pd.Series,
+    batter_zone_profiles: pd.DataFrame | None,
+    pitcher_zone_profiles: pd.DataFrame | None,
+    opposing_pitcher_id: int | None,
+    opposing_pitcher_hand: str | None,
+) -> float:
+    if batter_zone_profiles is None or pitcher_zone_profiles is None or opposing_pitcher_id is None:
+        return 0.5
+    batter_frame = _select_batter_zone_frame(batter_zone_profiles, hitter_row.get("batter"), opposing_pitcher_hand)
+    pitcher_frame = _select_pitcher_zone_frame(pitcher_zone_profiles, opposing_pitcher_id, hitter_row.get("stand"))
+    if batter_frame.empty or pitcher_frame.empty:
+        return 0.5
+    batter_map = aggregate_batter_zone_map(batter_frame, "All pitches")
+    pitcher_map = aggregate_pitcher_zone_map(pitcher_frame, "All pitches")
+    overlay = build_zone_overlay_map(batter_map, pitcher_map)
+    if overlay.empty:
+        return 0.5
+    sample = pd.to_numeric(overlay["sample_size"], errors="coerce").fillna(0)
+    if float(sample.sum()) < ZONE_FIT_SAMPLE_FLOOR:
+        return 0.5
+    score = _weighted_average(overlay["zone_value"], sample)
+    if score is None:
+        return 0.5
+    return min(max(float(score), 0.0), 1.0)
+
+
+def add_hitter_matchup_score(
+    frame: pd.DataFrame,
+    batter_zone_profiles: pd.DataFrame | None = None,
+    pitcher_zone_profiles: pd.DataFrame | None = None,
+    opposing_pitcher_id: int | None = None,
+    opposing_pitcher_hand: str | None = None,
+) -> pd.DataFrame:
     if frame.empty:
         return frame
     enriched = frame.copy()
+    if batter_zone_profiles is not None and pitcher_zone_profiles is not None and opposing_pitcher_id is not None:
+        enriched["zone_fit_score"] = enriched.apply(
+            lambda row: _zone_fit_for_hitter(row, batter_zone_profiles, pitcher_zone_profiles, opposing_pitcher_id, opposing_pitcher_hand),
+            axis=1,
+        )
+    else:
+        enriched["zone_fit_score"] = 0.5
     swstr_score = normalize_series(enriched["swstr_pct"], inverse=True)
     barrel_score = normalize_series(enriched["barrel_bbe_pct"])
     la_score = launch_angle_score(enriched["avg_launch_angle"])
-    enriched["matchup_score"] = ((swstr_score * 0.4) + (barrel_score * 0.35) + (la_score * 0.25)) * 100.0
+    base_score = ((swstr_score * 0.35) + (barrel_score * 0.30) + (la_score * 0.20) + (enriched["zone_fit_score"] * 0.15)) * 100.0
+    pulled_barrel_scale = normalize_series(enriched["pulled_barrel_pct"])
+    pulled_barrel_bonus = ((pulled_barrel_scale - 0.5).clip(lower=0.0) / 0.5) * 0.08
+    enriched["matchup_score"] = (base_score * (1.0 + pulled_barrel_bonus)).clip(lower=0.0, upper=100.0)
     return enriched.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
 
 
@@ -378,22 +470,12 @@ def build_game_export_options(
     }
 
 
-def _weighted_average(series: pd.Series, weights: pd.Series) -> float | None:
-    numeric = pd.to_numeric(series, errors="coerce")
-    numeric_weights = pd.to_numeric(weights, errors="coerce").fillna(0)
-    valid = numeric.notna() & numeric_weights.gt(0)
-    if not valid.any():
-        return None
-    total_weight = float(numeric_weights.loc[valid].sum())
-    if total_weight <= 0:
-        return None
-    return float((numeric.loc[valid] * numeric_weights.loc[valid]).sum() / total_weight)
-
-
 def aggregate_batter_zone_map(frame: pd.DataFrame, pitch_type: str = "All pitches") -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(columns=["zone", "sample_size", "zone_value", "display_value"])
     work = frame.copy()
+    if "pitcher_hand_key" in work.columns and (work["pitcher_hand_key"] == "overall").any():
+        work = work.loc[work["pitcher_hand_key"] == "overall"]
     if pitch_type != "All pitches" and "pitch_type" in work.columns:
         work = work.loc[work["pitch_type"] == pitch_type]
     if work.empty:
@@ -427,6 +509,8 @@ def aggregate_pitcher_zone_map(frame: pd.DataFrame, pitch_type: str = "All pitch
     if frame.empty:
         return pd.DataFrame(columns=["zone", "sample_size", "zone_value", "display_value"])
     work = frame.copy()
+    if "batter_side_key" in work.columns and (work["batter_side_key"] == "overall").any():
+        work = work.loc[work["batter_side_key"] == "overall"]
     if pitch_type != "All pitches" and "pitch_type" in work.columns:
         work = work.loc[work["pitch_type"] == pitch_type]
     if work.empty:
