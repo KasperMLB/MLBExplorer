@@ -777,8 +777,8 @@ def _text(
     value: str,
     font: ImageFont.ImageFont,
     fill: str = REPORT_TEXT,
-    stroke_width: int = 2,
-    stroke_fill: str = "#07111e",
+    stroke_width: int = 0,
+    stroke_fill: str = REPORT_TEXT,
 ) -> None:
     draw.text(position, value, fill=fill, font=font, stroke_width=stroke_width, stroke_fill=stroke_fill)
 
