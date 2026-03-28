@@ -1160,6 +1160,12 @@ def _exclude_all_split_sections(sections: list[dict]) -> list[dict]:
     return filtered
 
 
+def _split_sections_by_hand(sections: list[dict]) -> tuple[list[dict], list[dict]]:
+    vs_rhh = [section for section in sections if "vs rhh" in section["title"].lower()]
+    vs_lhh = [section for section in sections if "vs lhh" in section["title"].lower()]
+    return vs_rhh, vs_lhh
+
+
 def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict]) -> bytes:
     if not HAS_PILLOW:
         raise RuntimeError("Pillow is required for PNG/JPG export.")
@@ -1167,6 +1173,8 @@ def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict])
     section_font = _load_font(24, bold=True)
     body_font = _load_font(18, bold=True)
     small_font = _load_font(16, bold=True)
+    hitter_title_font = _load_font(28, bold=True)
+    hitter_body_font = _load_font(18, bold=True)
     width = 1600
     image = Image.new("RGB", (width, 4200), REPORT_BG)
     draw = ImageDraw.Draw(image)
@@ -1184,22 +1192,30 @@ def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict])
         best_frame = _filter_section_columns(best_section["frame"], ["hitter_name", "team", "matchup_score", "xwoba", "swstr_pct", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle"])
         y = _draw_matchup_board(draw, y, 24, width - 48, best_frame, section_font, body_font) + 18
 
-    _text(draw, (24, y), "Pitcher Detail", title_font, REPORT_TEXT)
-    y += 46
     team_order = list(arsenal_by_team.keys())
-    stacked_pitcher_sections: list[dict] = []
     for team in team_order:
-        stacked_pitcher_sections.extend(arsenal_by_team.get(team, []))
-    y = _draw_report_stacked_sections(draw, y, width, stacked_pitcher_sections, section_font, small_font) + 10
+        team_sections = arsenal_by_team.get(team, [])
+        if not team_sections:
+            continue
+        _text(draw, (24, y), f"{team} Pitcher", title_font, REPORT_TEXT)
+        y += 42
+        vs_rhh, vs_lhh = _split_sections_by_hand(team_sections)
+        y = _draw_report_two_column_sections(draw, y, width, vs_rhh[:1], vs_lhh[:1], section_font, small_font) + 12
 
     if len(hitter_sections) >= 2:
-        _text(draw, (24, y), "Hitter Matchups", title_font, REPORT_TEXT)
-        y += 46
-        hitter_frames = []
         for section in hitter_sections[:2]:
             frame = _filter_section_columns(section["frame"], ["hitter_name", "matchup_score", "xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "avg_launch_angle"])
-            hitter_frames.append({**section, "frame": frame})
-        y = _draw_report_two_column_sections(draw, y, width, [hitter_frames[0]], [hitter_frames[1]], section_font, small_font) + 8
+            _text(draw, (24, y), section["title"], title_font, REPORT_TEXT)
+            y += 42
+            y = _draw_export_section(
+                draw,
+                y,
+                24,
+                width - 48,
+                {**section, "frame": frame},
+                hitter_title_font,
+                hitter_body_font,
+            ) + 14
 
     cropped = image.crop((0, 0, width, min(max(y + 30, 1600), image.height)))
     buffer = BytesIO()
