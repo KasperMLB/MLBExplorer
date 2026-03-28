@@ -821,31 +821,35 @@ def _draw_matchup_board(
     title_font: ImageFont.ImageFont,
     body_font: ImageFont.ImageFont,
 ) -> int:
-    board_height = 220
+    board_height = 240
     _panel(draw, (left, top, left + width, top + board_height), fill=REPORT_PANEL_ALT)
     _text(draw, (left + 18, top + 16), "Best Matchups", title_font, REPORT_TEXT)
-    work = _filter_section_columns(frame.head(3), ["hitter_name", "team", "matchup_score", "xwoba", "avg_launch_angle"])
+    work = _filter_section_columns(frame.head(3), ["hitter_name", "team", "matchup_score", "xwoba", "swstr_pct", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle"])
     card_top = top + 56
-    card_height = 46
+    card_height = 52
     for idx, (_, row) in enumerate(work.iterrows(), start=1):
         y0 = card_top + (idx - 1) * (card_height + 10)
         _panel(draw, (left + 14, y0, left + width - 14, y0 + card_height), fill="#0f2034", radius=14)
-        _text(draw, (left + 28, y0 + 12), f"{idx}. {row.get('hitter_name', '-')}", body_font, REPORT_TEXT)
-        _text(draw, (left + width - 255, y0 + 12), row.get("team", "-"), body_font, REPORT_MUTED)
-        for offset, label in enumerate(
-            [
-                f"Matchup {_format_value('matchup_score', row.get('matchup_score'), export_mode=True)}",
-                f"xwOBA {_format_value('xwoba', row.get('xwoba'), export_mode=True)}",
-                f"LA {_format_value('avg_launch_angle', row.get('avg_launch_angle'), export_mode=True)}",
-            ]
-        ):
-            chip_x = left + 250 + offset * 120
-            chip_fill = "#183652"
-            if offset == 0:
-                bg = _background_hex("matchup_score", row.get("matchup_score"), work["matchup_score"]) or chip_fill
-                chip_fill = bg
-            draw.rounded_rectangle((chip_x, y0 + 8, chip_x + 108, y0 + 36), radius=12, fill=chip_fill)
-            _text(draw, (chip_x + 10, y0 + 15), label, body_font, "#111618" if offset == 0 else REPORT_TEXT)
+        _text(draw, (left + 24, y0 + 10), f"{idx}. {row.get('hitter_name', '-')}", body_font, REPORT_TEXT)
+        _text(draw, (left + width - 80, y0 + 18), row.get("team", "-"), body_font, REPORT_MUTED)
+        chip_specs = [
+            ("matchup_score", "Matchup"),
+            ("xwoba", "xwOBA"),
+            ("swstr_pct", "SwStr%"),
+            ("pulled_barrel_pct", "PulledBrl%"),
+            ("hard_hit_pct", "HH%"),
+            ("fb_pct", "FB%"),
+            ("avg_launch_angle", "LA"),
+        ]
+        start_x = left + 250
+        chip_width = 110
+        chip_gap = 10
+        for offset, (column, label) in enumerate(chip_specs):
+            chip_x = start_x + offset * (chip_width + chip_gap)
+            chip_fill = _background_hex(column, row.get(column), work[column]) or "#183652"
+            draw.rounded_rectangle((chip_x, y0 + 10, chip_x + chip_width, y0 + 40), radius=12, fill=chip_fill)
+            chip_text = f"{label} {_format_value(column, row.get(column), export_mode=True)}"
+            _text(draw, (chip_x + 8, y0 + 18), chip_text, body_font, "#111618" if chip_fill != "#183652" else REPORT_TEXT)
     return top + board_height
 
 
@@ -1026,7 +1030,6 @@ def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict])
     best_section = next((section for section in sections if _section_type(section["title"]) == "best"), None)
     summary_sections = _extract_sections(sections, "summary")
     arsenal_by_team = _collect_team_sections(sections, "arsenal")
-    count_by_team = _collect_team_sections(sections, "count")
     hitter_sections = _extract_sections(sections, "hitters")
     away_summary = next((section for section in summary_sections if "summary all" in section["title"].lower()), None)
     home_summary = next((section for section in summary_sections if section is not away_summary and "summary all" in section["title"].lower()), None)
@@ -1034,7 +1037,7 @@ def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict])
     y = _draw_report_header(draw, width, title, subtitle, away_summary, home_summary, title_font, body_font)
 
     if best_section is not None:
-        best_frame = _filter_section_columns(best_section["frame"], ["hitter_name", "team", "matchup_score", "xwoba", "avg_launch_angle"])
+        best_frame = _filter_section_columns(best_section["frame"], ["hitter_name", "team", "matchup_score", "xwoba", "swstr_pct", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle"])
         y = _draw_matchup_board(draw, y, 24, width - 48, best_frame, section_font, body_font) + 18
 
     summary_col_width = (width - 70) // 2
@@ -1066,13 +1069,13 @@ def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict])
 
     _text(draw, (24, y), "Pitcher Detail", title_font, REPORT_TEXT)
     y += 46
-    team_order = list(arsenal_by_team.keys() or count_by_team.keys())
+    team_order = list(arsenal_by_team.keys())
     if len(team_order) < 2:
         team_order = [*_collect_team_sections(sections, "summary").keys()]
     left_team = team_order[0] if team_order else "Away"
     right_team = team_order[1] if len(team_order) > 1 else "Home"
-    left_sections = arsenal_by_team.get(left_team, []) + count_by_team.get(left_team, [])
-    right_sections = arsenal_by_team.get(right_team, []) + count_by_team.get(right_team, [])
+    left_sections = arsenal_by_team.get(left_team, [])
+    right_sections = arsenal_by_team.get(right_team, [])
     y = _draw_report_two_column_sections(draw, y, width, left_sections, right_sections, section_font, small_font) + 10
 
     if len(hitter_sections) >= 2:
@@ -1103,7 +1106,7 @@ def _build_carousel_images(title: str, subtitle: str, sections: list[dict]) -> l
         overview_sections.append(
             {
                 "title": "Best Matchups",
-                "frame": _filter_section_columns(best_section["frame"], ["hitter_name", "team", "matchup_score", "xwoba", "avg_launch_angle"]),
+                "frame": _filter_section_columns(best_section["frame"], ["hitter_name", "team", "matchup_score", "xwoba", "swstr_pct", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle"]),
             }
         )
     overview_sections.extend([section for section in summary_sections if "summary all" in section["title"].lower()])

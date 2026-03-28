@@ -78,12 +78,12 @@ BEST_MATCHUP_COLUMNS = [
     "hitter_name",
     "team",
     "matchup_score",
+    "xwoba",
     "swstr_pct",
     "pulled_barrel_pct",
-    "barrel_bip_pct",
-    "avg_launch_angle",
-    "xwoba",
     "hard_hit_pct",
+    "fb_pct",
+    "avg_launch_angle",
 ]
 
 TOP_PITCHER_COLUMNS = [
@@ -345,6 +345,10 @@ def build_game_export_options(
     away_hitters: pd.DataFrame,
     home_hitters: pd.DataFrame,
 ) -> dict[str, list[dict]]:
+    away_arsenal_sections = [section for section in away_sections if "Summary" in section["title"] or "Arsenal" in section["title"]]
+    home_arsenal_sections = [section for section in home_sections if "Summary" in section["title"] or "Arsenal" in section["title"]]
+    away_count_sections = [section for section in away_sections if "Summary" in section["title"] or "Count Usage" in section["title"]]
+    home_count_sections = [section for section in home_sections if "Summary" in section["title"] or "Count Usage" in section["title"]]
     full_game_sections = [{"title": "Best Matchups", "frame": best_matchups[BEST_MATCHUP_COLUMNS]}]
     full_game_sections.extend(away_sections)
     full_game_sections.extend(home_sections)
@@ -365,6 +369,12 @@ def build_game_export_options(
         "Pitchers - Both starters": [*away_sections, *home_sections],
         f"Pitchers - {away_team} only": away_sections,
         f"Pitchers - {home_team} only": home_sections,
+        "Arsenal - Both starters": [*away_arsenal_sections, *home_arsenal_sections],
+        f"Arsenal - {away_team} only": away_arsenal_sections,
+        f"Arsenal - {home_team} only": home_arsenal_sections,
+        "Count Usage - Both starters": [*away_count_sections, *home_count_sections],
+        f"Count Usage - {away_team} only": away_count_sections,
+        f"Count Usage - {home_team} only": home_count_sections,
     }
 
 
