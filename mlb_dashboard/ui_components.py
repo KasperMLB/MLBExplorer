@@ -608,6 +608,13 @@ def _table_section_height(title: str, frame: pd.DataFrame) -> int:
     return 32 + 28 + 26 * (len(frame) + 1)
 
 
+def _export_section_height_estimate(title: str, frame: pd.DataFrame) -> int:
+    lowered = title.lower()
+    if "summary" in lowered:
+        return _table_section_height(title, frame) + 24
+    return 54 + len(frame) * 62 + 36
+
+
 def _summary_card_color(column: str, row: pd.Series, lower_is_better: set[str] | None, higher_is_better: set[str] | None) -> str:
     if column not in PERCENT_COLUMNS and column not in RATE_COLUMNS:
         return "#f6f8fb"
@@ -978,6 +985,142 @@ def _draw_dark_table(
     return top + panel_height
 
 
+def _identity_columns_for_section(frame: pd.DataFrame, title: str) -> list[str]:
+    lowered = title.lower()
+    if "hitters" in lowered or "best matchups" in lowered:
+        columns = ["hitter_name", "team"]
+    elif "arsenal" in lowered or "count usage" in lowered:
+        columns = ["pitch_name"]
+    elif "summary" in lowered:
+        columns = ["pitcher_name", "p_throws"]
+    else:
+        columns = [frame.columns[0]] if len(frame.columns) else []
+    return [column for column in columns if column in frame.columns]
+
+
+def _metric_columns_for_section(frame: pd.DataFrame, title: str) -> list[str]:
+    lowered = title.lower()
+    if "best matchups" in lowered:
+        columns = ["matchup_score", "xwoba", "swstr_pct", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle"]
+    elif "hitters" in lowered:
+        columns = ["matchup_score", "xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "avg_launch_angle"]
+    elif "arsenal" in lowered:
+        columns = ["usage_pct", "swstr_pct", "hard_hit_pct", "avg_release_speed", "avg_spin_rate", "xwoba_con"]
+    elif "count usage" in lowered:
+        columns = ["All counts", "Early count", "Even count", "Pitcher ahead", "Pitcher behind", "Two-strike", "Pre two-strike", "Full count"]
+    elif "summary" in lowered:
+        columns = ["pitch_count", "bip", "xwoba", "swstr_pct", "pulled_barrel_pct", "barrel_bip_pct", "fb_pct", "hard_hit_pct", "avg_launch_angle"]
+    else:
+        columns = [column for column in frame.columns if column not in _identity_columns_for_section(frame, title)]
+    return [column for column in columns if column in frame.columns]
+
+
+def _draw_scouting_rows_section(
+    draw: ImageDraw.ImageDraw,
+    top: int,
+    left: int,
+    width: int,
+    title: str,
+    frame: pd.DataFrame,
+    font: ImageFont.ImageFont,
+    small_font: ImageFont.ImageFont,
+    lower_is_better: set[str] | None = None,
+    higher_is_better: set[str] | None = None,
+) -> int:
+    if frame.empty:
+        panel_height = 82
+        _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
+        _text(draw, (left + 16, top + 14), title, font, REPORT_TEXT)
+        _text(draw, (left + 16, top + 48), "No data available", small_font, REPORT_TEXT)
+        return top + panel_height
+
+    identity_columns = _identity_columns_for_section(frame, title)
+    metric_columns = _metric_columns_for_section(frame, title)
+    row_height = 52
+    panel_height = 54 + len(frame) * (row_height + 10) + 12
+    _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
+    _text(draw, (left + 16, top + 14), title, font, REPORT_TEXT)
+
+    y = top + 52
+    identity_width = max(170, min(290, int(width * 0.27)))
+    chip_area_left = left + 18 + identity_width + 14
+    chip_width = 92
+    chip_gap = 8
+
+    for _, row in frame.iterrows():
+        row_top = y
+        row_bottom = row_top + row_height
+        _panel(draw, (left + 12, row_top, left + width - 12, row_bottom), fill="#0f2034", radius=14)
+
+        primary = _format_value(identity_columns[0], row.get(identity_columns[0]), export_mode=True) if identity_columns else "-"
+        secondary_parts = [
+            _format_value(column, row.get(column), export_mode=True)
+            for column in identity_columns[1:]
+            if str(_format_value(column, row.get(column), export_mode=True)).strip() != "-"
+        ]
+        _text(draw, (left + 26, row_top + 10), primary, small_font, REPORT_TEXT)
+        if secondary_parts:
+            _text(draw, (left + 26, row_top + 28), " | ".join(secondary_parts), small_font, REPORT_TEXT)
+
+        for idx, column in enumerate(metric_columns):
+            chip_x = chip_area_left + idx * (chip_width + chip_gap)
+            if chip_x + chip_width > left + width - 24:
+                break
+            chip_fill = _background_hex(
+                column,
+                row.get(column),
+                frame[column],
+                lower_is_better=lower_is_better or LOWER_IS_BETTER,
+                higher_is_better=higher_is_better or HIGHER_IS_BETTER,
+            ) or "#183652"
+            draw.rounded_rectangle((chip_x, row_top + 10, chip_x + chip_width, row_top + 40), radius=12, fill=chip_fill)
+            chip_label = DISPLAY_LABELS.get(column, column)
+            chip_text = f"{chip_label} {_format_value(column, row.get(column), export_mode=True)}"
+            _text(draw, (chip_x + 8, row_top + 18), chip_text, small_font, REPORT_TEXT)
+        y += row_height + 10
+
+    return top + panel_height
+
+
+def _draw_export_section(
+    draw: ImageDraw.ImageDraw,
+    top: int,
+    left: int,
+    width: int,
+    section: dict,
+    font: ImageFont.ImageFont,
+    small_font: ImageFont.ImageFont,
+) -> int:
+    title = section["title"]
+    frame = section["frame"]
+    lowered = title.lower()
+    if "summary" in lowered:
+        return _draw_dark_table(
+            draw,
+            top,
+            left,
+            width,
+            title,
+            frame,
+            font,
+            small_font,
+            section.get("lower_is_better"),
+            section.get("higher_is_better"),
+        )
+    return _draw_scouting_rows_section(
+        draw,
+        top,
+        left,
+        width,
+        title,
+        frame,
+        font,
+        small_font,
+        section.get("lower_is_better"),
+        section.get("higher_is_better"),
+    )
+
+
 def _draw_report_two_column_sections(
     draw: ImageDraw.ImageDraw,
     top: int,
@@ -994,31 +1137,9 @@ def _draw_report_two_column_sections(
     left_y = top
     right_y = top
     for section in left_sections:
-        left_y = _draw_dark_table(
-            draw,
-            left_y,
-            left_x,
-            col_width,
-            section["title"],
-            section["frame"],
-            font,
-            small_font,
-            section.get("lower_is_better"),
-            section.get("higher_is_better"),
-        ) + 12
+        left_y = _draw_export_section(draw, left_y, left_x, col_width, section, font, small_font) + 12
     for section in right_sections:
-        right_y = _draw_dark_table(
-            draw,
-            right_y,
-            right_x,
-            col_width,
-            section["title"],
-            section["frame"],
-            font,
-            small_font,
-            section.get("lower_is_better"),
-            section.get("higher_is_better"),
-        ) + 12
+        right_y = _draw_export_section(draw, right_y, right_x, col_width, section, font, small_font) + 12
     return max(left_y, right_y)
 
 
@@ -1210,7 +1331,7 @@ def build_branded_report_image(title: str, subtitle: str, sections: list[dict]) 
     branding_height = 110
     total_height = branding_height + 24
     for section in sections:
-        total_height += _table_section_height(section["title"], section["frame"]) + 24
+        total_height += _export_section_height_estimate(section["title"], section["frame"])
     image = Image.new("RGB", (width, total_height), REPORT_BG)
     draw = ImageDraw.Draw(image)
     _panel(draw, (20, 20, width - 20, branding_height), fill="#0d1b2d", radius=24)
@@ -1222,17 +1343,7 @@ def build_branded_report_image(title: str, subtitle: str, sections: list[dict]) 
     for section in sections:
         if section["frame"].empty:
             continue
-        y = _draw_section(
-            draw,
-            y,
-            8,
-            width,
-            section["title"],
-            section["frame"],
-            section.get("lower_is_better"),
-            section.get("higher_is_better"),
-            font,
-        )
+        y = _draw_export_section(draw, y, 8, width - 16, section, font, body_font) + 12
 
     buffer = BytesIO()
     image.save(buffer, format="PNG")
