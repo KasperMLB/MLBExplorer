@@ -57,6 +57,7 @@ HIGHER_IS_BETTER = {
 TARGET_COLUMNS = {"avg_launch_angle": (20.0, 27.5, 35.0)}
 DISPLAY_LABELS = {
     "game": "Game",
+    "split_label": "Split",
     "hitter_name": "Hitter",
     "pitcher_name": "Pitcher",
     "team": "Team",
@@ -108,6 +109,7 @@ INTEGER_COLUMNS = {"pitch_count", "bip", "likely_starter_score"}
 
 SHORT_COLUMNS = {"team", "p_throws", "bip", "pitch_count", "likely_starter_score"}
 MEDIUM_COLUMNS = {
+    "split_label",
     "xwoba",
     "xwoba_con",
     "swstr_pct",
@@ -134,6 +136,20 @@ MEDIUM_COLUMNS = {
     "damage_allowed_rate",
     "xwoba_allowed",
 }
+
+PITCHER_SUMMARY_TABLE_COLUMNS = [
+    "split_label",
+    "p_throws",
+    "pitch_count",
+    "bip",
+    "xwoba",
+    "swstr_pct",
+    "pulled_barrel_pct",
+    "barrel_bip_pct",
+    "fb_pct",
+    "hard_hit_pct",
+    "avg_launch_angle",
+]
 LONG_COLUMNS = {"hitter_name", "pitcher_name", "game", "pitch_name"}
 
 ZONE_RECTANGLES = {
@@ -444,50 +460,28 @@ def render_metric_grid(
     return returned.loc[:, frame.columns]
 
 
-def render_pitcher_summary_strip(
-    pitcher_row: pd.Series,
-    lower_is_better: set[str] | None = None,
-    higher_is_better: set[str] | None = None,
-) -> None:
-    st.markdown(f"### {pitcher_row.get('pitcher_name', 'Unknown Pitcher')}")
-    stats = [
-        ("Throws", "p_throws"),
-        ("Pitches", "pitch_count"),
-        ("BIP", "bip"),
-        ("xwOBA", "xwoba"),
-        ("SwStr%", "swstr_pct"),
-        ("PulledBrl%", "pulled_barrel_pct"),
-        ("Brl/BIP%", "barrel_bip_pct"),
-        ("FB%", "fb_pct"),
-        ("HH%", "hard_hit_pct"),
-        ("LA", "avg_launch_angle"),
+def build_pitcher_summary_table(pitcher_summary_by_hand: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict] = []
+    split_map = [
+        ("all", "All"),
+        ("vs_rhh", "vs RHH"),
+        ("vs_lhh", "vs LHH"),
     ]
-    columns = st.columns(5)
-    default_lower = lower_is_better or LOWER_IS_BETTER
-    default_higher = higher_is_better or HIGHER_IS_BETTER
-    numeric_source = pd.DataFrame([pitcher_row])
-    for idx, (label, column_name) in enumerate(stats):
-        with columns[idx % 5]:
-            value = pitcher_row.get(column_name)
-            bg = None
-            if column_name in numeric_source.columns and (column_name in PERCENT_COLUMNS or column_name in RATE_COLUMNS):
-                bg = _background_hex(
-                    column_name,
-                    value,
-                    numeric_source[column_name],
-                    lower_is_better=default_lower,
-                    higher_is_better=default_higher,
-                )
-            background = bg or "#f6f8fb"
-            st.markdown(
-                f"""
-                <div style="padding:12px 14px;border-radius:10px;background:{background};border:1px solid #dfe7ef;margin-bottom:0.75rem;">
-                  <div style="font-size:0.78rem;color:#556270;margin-bottom:0.25rem;">{label}</div>
-                  <div style="font-size:1.05rem;font-weight:600;color:#1f1f1f;">{_format_value(column_name, value)}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    for side_key, label in split_map:
+        side_frame = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["batter_side_key"] == side_key].copy()
+        if side_frame.empty:
+            row = {column: None for column in PITCHER_SUMMARY_TABLE_COLUMNS if column != "split_label"}
+            row["split_label"] = label
+            rows.append(row)
+            continue
+        first_row = side_frame.iloc[0]
+        row = {"split_label": label}
+        for column in PITCHER_SUMMARY_TABLE_COLUMNS:
+            if column == "split_label":
+                continue
+            row[column] = first_row.get(column)
+        rows.append(row)
+    return pd.DataFrame(rows, columns=PITCHER_SUMMARY_TABLE_COLUMNS)
 
 
 def render_matchup_header(game: dict) -> None:

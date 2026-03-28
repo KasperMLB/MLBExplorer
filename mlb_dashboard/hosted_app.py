@@ -35,7 +35,7 @@ from .dashboard_views import (
     with_game_label,
 )
 from .query_engine import load_remote_parquet
-from .ui_components import render_export_hub, render_matchup_header, render_metric_grid, render_pitcher_summary_strip, render_zone_heatmap
+from .ui_components import build_pitcher_summary_table, render_export_hub, render_matchup_header, render_metric_grid, render_zone_heatmap
 
 
 def _base_url() -> str:
@@ -194,26 +194,26 @@ def _render_pitcher_tab(
     tab_summary, tab_arsenal, tab_count = st.tabs(["Summary", "Arsenal", "Count Usage"])
 
     with tab_summary:
-        summary_tabs = st.tabs([BATTER_SIDE_LABELS[key] for key in BATTER_SIDE_LABELS])
-        for side_key, side_tab in zip(BATTER_SIDE_LABELS, summary_tabs):
-            with side_tab:
-                summary_frame = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["batter_side_key"] == side_key]
-                if summary_frame.empty:
-                    st.info("No pitcher summary available.")
-                else:
-                    render_pitcher_summary_strip(
-                        summary_frame.iloc[0],
-                        lower_is_better=PITCHER_LOWER_IS_BETTER,
-                        higher_is_better=PITCHER_HIGHER_IS_BETTER,
-                    )
-                    export_sections.append(
-                        {
-                            "title": f"{team_label} Summary {BATTER_SIDE_LABELS[side_key]}",
-                            "frame": summary_frame[PITCHER_SUMMARY_COLUMNS],
-                            "lower_is_better": PITCHER_LOWER_IS_BETTER,
-                            "higher_is_better": PITCHER_HIGHER_IS_BETTER,
-                        }
-                    )
+        summary_table = build_pitcher_summary_table(pitcher_summary_by_hand)
+        _render_hosted_grid(
+            summary_table,
+            key=f"summary-{game_pk}-{team_label}",
+            mobile_safe=mobile_safe,
+            height=170,
+            lower_is_better=PITCHER_LOWER_IS_BETTER,
+            higher_is_better=PITCHER_HIGHER_IS_BETTER,
+        )
+        for side_key in BATTER_SIDE_LABELS:
+            summary_frame = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["batter_side_key"] == side_key]
+            if not summary_frame.empty:
+                export_sections.append(
+                    {
+                        "title": f"{team_label} Summary {BATTER_SIDE_LABELS[side_key]}",
+                        "frame": summary_frame[PITCHER_SUMMARY_COLUMNS],
+                        "lower_is_better": PITCHER_LOWER_IS_BETTER,
+                        "higher_is_better": PITCHER_HIGHER_IS_BETTER,
+                    }
+                )
 
     with tab_arsenal:
         arsenal_tabs = st.tabs([BATTER_SIDE_LABELS[key] for key in BATTER_SIDE_LABELS])
