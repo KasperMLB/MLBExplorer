@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -105,6 +105,23 @@ def _sidebar() -> tuple[date, str, str, str, int, int, bool, str]:
     preset_names = list(HITTER_PRESETS.keys())
     hitter_preset = st.sidebar.selectbox("Hitter view", preset_names, index=preset_names.index("All stats"))
     return target_date, split, recent_window, weighted_mode, min_pitch_count, min_bip, likely_only, hitter_preset
+
+
+def _load_artifacts_with_fallback(
+    base_url: str,
+    target_date: date,
+    lookback_days: int = 7,
+) -> tuple[date, tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]]:
+    last_error: Exception | None = None
+    for offset in range(lookback_days + 1):
+        candidate = target_date - timedelta(days=offset)
+        try:
+            return candidate, _load_artifacts(base_url, candidate)
+        except Exception as exc:  # pragma: no cover
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No published hosted artifacts were found.")
 
 
 def _game_selection(slate: list[dict]) -> list[dict]:
@@ -314,10 +331,16 @@ def main() -> None:
     target_date, split, recent_window, weighted_mode, min_pitch_count, min_bip, likely_only, hitter_preset = _sidebar()
     mobile_safe = True
     try:
-        slate, rosters, hitters, pitchers, pitcher_summary_by_hand, arsenal, arsenal_by_hand, usage_by_count, hitter_rolling, pitcher_rolling, batter_zone_profiles, pitcher_zone_profiles = _load_artifacts(base_url, target_date)
+        resolved_date, artifacts = _load_artifacts_with_fallback(base_url, target_date)
+        slate, rosters, hitters, pitchers, pitcher_summary_by_hand, arsenal, arsenal_by_hand, usage_by_count, hitter_rolling, pitcher_rolling, batter_zone_profiles, pitcher_zone_profiles = artifacts
     except Exception as exc:  # pragma: no cover
         st.error(f"Unable to load hosted artifacts for {target_date.isoformat()}: {exc}")
         return
+    if resolved_date != target_date:
+        st.warning(
+            f"No published artifacts were found for {target_date.isoformat()}. "
+            f"Showing the latest available published slate from {resolved_date.isoformat()} instead."
+        )
 
     all_games = slate.to_dict(orient="records")
     selected_games = _game_selection(all_games)
