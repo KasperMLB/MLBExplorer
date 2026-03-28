@@ -777,8 +777,8 @@ def _text(
     value: str,
     font: ImageFont.ImageFont,
     fill: str = REPORT_TEXT,
-    stroke_width: int = 1,
-    stroke_fill: str = "#f2f6fb",
+    stroke_width: int = 2,
+    stroke_fill: str = "#07111e",
 ) -> None:
     draw.text(position, value, fill=fill, font=font, stroke_width=stroke_width, stroke_fill=stroke_fill)
 
@@ -1169,12 +1169,12 @@ def _split_sections_by_hand(sections: list[dict]) -> tuple[list[dict], list[dict
 def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict]) -> bytes:
     if not HAS_PILLOW:
         raise RuntimeError("Pillow is required for PNG/JPG export.")
-    title_font = _load_font(50, bold=True)
-    section_font = _load_font(30, bold=True)
-    body_font = _load_font(24, bold=True)
-    small_font = _load_font(21, bold=True)
-    hitter_title_font = _load_font(34, bold=True)
-    hitter_body_font = _load_font(24, bold=True)
+    title_font = _load_font(56, bold=True)
+    section_font = _load_font(34, bold=True)
+    body_font = _load_font(28, bold=True)
+    small_font = _load_font(24, bold=True)
+    hitter_title_font = _load_font(38, bold=True)
+    hitter_body_font = _load_font(28, bold=True)
     width = 1600
     image = Image.new("RGB", (width, 4200), REPORT_BG)
     draw = ImageDraw.Draw(image)
@@ -1348,8 +1348,8 @@ def _draw_section(
 def build_branded_report_image(title: str, subtitle: str, sections: list[dict]) -> bytes:
     if not HAS_PILLOW:
         raise RuntimeError("Pillow is required for PNG/JPG export.")
-    font = _load_font(30, bold=True)
-    body_font = _load_font(22, bold=True)
+    font = _load_font(36, bold=True)
+    body_font = _load_font(26, bold=True)
     width = 1500
     branding_height = 110
     total_height = branding_height + 24
