@@ -181,7 +181,7 @@ def _format_value(column: str, value: object, export_mode: bool = False) -> str:
         decimals = 0 if not export_mode else 3
         return f"{float(value):.{decimals}f}"
     if column in RATE_COLUMNS:
-        decimals = 3 if export_mode else (3 if "xwoba" in column or column == "matchup_score" else 1)
+        decimals = 3 if export_mode else (3 if "xwoba" in column or column in {"matchup_score", "zone_fit_score"} else 1)
         return f"{float(value):.{decimals}f}"
     if isinstance(value, float):
         decimals = 3 if export_mode else 2
