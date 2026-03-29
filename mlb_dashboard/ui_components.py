@@ -615,65 +615,65 @@ def render_weather_field(
     if not HAS_PILLOW:
         return None
 
-    width = 260
-    height = 220
+    width = 300
+    height = 248
     image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
     draw = ImageDraw.Draw(image)
-    icon_left = 34
-    icon_top = 18
-    icon_right = width - 34
-    icon_bottom = height - 24
+    icon_left = 20
+    icon_top = 12
+    icon_right = width - 12
+    icon_bottom = height - 14
     cx = (icon_left + icon_right) // 2
     cy = (icon_top + icon_bottom) // 2
 
     draw.rounded_rectangle(
         (icon_left, icon_top, icon_right, icon_bottom),
-        radius=20,
+        radius=22,
         fill="#f7faf6",
         outline="#edf2eb",
         width=1,
     )
 
     # Soft glow behind the field mark.
-    draw.ellipse((cx - 66, cy - 68, cx + 66, cy + 58), fill="#eef8eb", outline=None)
+    draw.ellipse((cx - 82, cy - 84, cx + 82, cy + 72), fill="#eef8eb", outline=None)
 
     # Simple outfield arc and foul poles like the reference tile.
-    arc_box = (cx - 82, cy - 82, cx + 82, cy + 30)
-    draw.arc(arc_box, start=208, end=332, fill="#92edb1", width=5)
-    draw.line((cx - 70, cy - 1, cx - 18, cy - 47), fill="#c6edd0", width=3)
-    draw.line((cx + 70, cy - 1, cx + 18, cy - 47), fill="#c6edd0", width=3)
+    arc_box = (cx - 98, cy - 96, cx + 98, cy + 34)
+    draw.arc(arc_box, start=208, end=332, fill="#92edb1", width=6)
+    draw.line((cx - 84, cy + 4, cx - 24, cy - 58), fill="#c6edd0", width=4)
+    draw.line((cx + 84, cy + 4, cx + 24, cy - 58), fill="#c6edd0", width=4)
 
     # Minimal diamond and bases.
     diamond = [
-        (cx, cy + 14),
-        (cx - 22, cy - 8),
-        (cx, cy - 30),
-        (cx + 22, cy - 8),
+        (cx, cy + 22),
+        (cx - 28, cy - 6),
+        (cx, cy - 34),
+        (cx + 28, cy - 6),
     ]
     draw.polygon(diamond, outline="#d5dbe4", fill="#fff2b8")
-    draw.line([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]], fill="#d4d9e0", width=2)
-    for base_x, base_y in [(cx - 22, cy - 8), (cx, cy - 30), (cx + 22, cy - 8)]:
-        draw.rectangle((base_x - 4, base_y - 4, base_x + 4, base_y + 4), fill="#f5f7fb", outline="#c7cfda")
-    _draw_home_plate(draw, cx, cy + 18, fill="#f5f7fb", outline="#c7cfda")
+    draw.line([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]], fill="#d4d9e0", width=3)
+    for base_x, base_y in [(cx - 28, cy - 6), (cx, cy - 34), (cx + 28, cy - 6)]:
+        draw.rectangle((base_x - 5, base_y - 5, base_x + 5, base_y + 5), fill="#f5f7fb", outline="#c7cfda")
+    _draw_home_plate(draw, cx, cy + 28, fill="#f5f7fb", outline="#c7cfda")
 
     if not pd.isna(wind_speed_mph) and not pd.isna(wind_direction_deg):
         toward_deg = (float(wind_direction_deg) + 180.0) % 360.0
         angle = radians(toward_deg)
         origin_x = cx
-        origin_y = cy + 16
-        length = 86
+        origin_y = cy + 18
+        length = 104
         end_x = origin_x + sin(angle) * length
         end_y = origin_y - cos(angle) * length
-        draw.line((origin_x, origin_y, end_x, end_y), fill="#4f95e8", width=8)
-        head = 18
+        draw.line((origin_x, origin_y, end_x, end_y), fill="#4f95e8", width=10)
+        head = 22
         left_a = angle + radians(152)
         right_a = angle - radians(152)
-        draw.line((end_x, end_y, end_x + sin(left_a) * head, end_y - cos(left_a) * head), fill="#4f95e8", width=7)
-        draw.line((end_x, end_y, end_x + sin(right_a) * head, end_y - cos(right_a) * head), fill="#4f95e8", width=7)
+        draw.line((end_x, end_y, end_x + sin(left_a) * head, end_y - cos(left_a) * head), fill="#4f95e8", width=8)
+        draw.line((end_x, end_y, end_x + sin(right_a) * head, end_y - cos(right_a) * head), fill="#4f95e8", width=8)
     else:
-        draw.line((cx - 26, cy + 8, cx + 26, cy - 44), fill="#b8c7d9", width=6)
-        draw.line((cx + 26, cy - 44, cx + 10, cy - 42), fill="#b8c7d9", width=5)
-        draw.line((cx + 26, cy - 44, cx + 24, cy - 28), fill="#b8c7d9", width=5)
+        draw.line((cx - 30, cy + 12, cx + 30, cy - 54), fill="#b8c7d9", width=8)
+        draw.line((cx + 30, cy - 54, cx + 12, cy - 52), fill="#b8c7d9", width=6)
+        draw.line((cx + 30, cy - 54, cx + 28, cy - 36), fill="#b8c7d9", width=6)
 
     buffer = BytesIO()
     image.save(buffer, format="PNG")
