@@ -5,11 +5,11 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
+from .components import render_props_board
 from .config import AppConfig
 from .dashboard_views import latest_built_date
 from .odds_service import PropsBoardPayload, load_live_props_board
 from .query_engine import StatcastQueryEngine
-from .ui_components import render_metric_grid
 
 
 def _hosted_base_url() -> str:
@@ -54,7 +54,7 @@ def _default_date(config: AppConfig) -> date:
     return latest or date.today()
 
 
-def _apply_filters(frame: pd.DataFrame, book_details: pd.DataFrame, sportsbooks: tuple[str, ...]) -> pd.DataFrame:
+def _apply_filters(frame: pd.DataFrame, book_details: pd.DataFrame, sportsbooks: tuple[str, ...]) -> tuple[pd.DataFrame, str, bool]:
     work = frame
     st.sidebar.title("Odds Filters")
     prop_types = sorted(value for value in work["prop_type"].dropna().astype(str).unique().tolist())
@@ -86,7 +86,7 @@ def _apply_filters(frame: pd.DataFrame, book_details: pd.DataFrame, sportsbooks:
         index=0,
     )
     ascending = st.sidebar.checkbox("Ascending sort", value=False)
-    return work.sort_values(sort_column, ascending=ascending, na_position="last")
+    return work.sort_values(sort_column, ascending=ascending, na_position="last"), sort_column, ascending
 
 
 def _format_american(value: object) -> str:
@@ -159,36 +159,24 @@ def _display_board(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _build_detail_labels(frame: pd.DataFrame) -> list[str]:
-    labels = []
-    for _, row in frame.iterrows():
-        line_text = "" if pd.isna(row.get("line")) else f" {row.get('line')}"
-        labels.append(
-            f"{row.get('player', '')} | {row.get('prop_type', '')} | {row.get('side', '')}{line_text} | {row.get('game', '')}"
-        )
-    return labels
-
-
-def _render_book_details(filtered_board: pd.DataFrame, book_details: pd.DataFrame, target_date: date, source: str) -> None:
-    st.subheader("All Books")
-    if filtered_board.empty:
-        st.info("No props match the current filters.")
-        return
-    labels = _build_detail_labels(filtered_board)
-    selected_label = st.selectbox("Prop detail", options=labels, key=f"props-detail-{target_date.isoformat()}")
-    selected_row = filtered_board.iloc[labels.index(selected_label)]
-    st.caption(
-        f"{selected_row.get('player', '')} | {selected_row.get('prop_type', '')} | {selected_row.get('side', '')}"
-        + ("" if pd.isna(selected_row.get("line")) else f" {selected_row.get('line')}")
-    )
-    detail_frame = book_details.loc[book_details["row_id"] == selected_row["row_id"], ["sportsbook", "price_display"]].rename(
-        columns={"sportsbook": "Sportsbook", "price_display": "Price"}
-    )
-    render_metric_grid(
-        detail_frame,
-        key=f"props-book-detail-{selected_row['row_id']}",
-        height=min(420, max(140, 42 * (len(detail_frame) + 1))),
-        use_lightweight=False,
+def _render_instruction_banner() -> None:
+    st.markdown(
+        """
+        <div style="
+            margin: 0.35rem 0 0.9rem 0;
+            padding: 0.75rem 1rem;
+            border: 1px solid #d9e0ea;
+            border-radius: 14px;
+            background: linear-gradient(90deg, #f4f7fb 0%, #fbf6ea 100%);
+            color: #17304f;
+            font-size: 0.95rem;
+            font-weight: 600;
+            box-shadow: 0 6px 20px rgba(16, 37, 66, 0.04);
+        ">
+            Click any prop row to view all sportsbook odds.
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
 
@@ -229,8 +217,21 @@ def main() -> None:
         st.info("No props were returned for the selected slate date.")
         return
 
-    filtered = _apply_filters(board, book_details, payload.sportsbooks)
+    filtered, sort_column, ascending = _apply_filters(board, book_details, payload.sportsbooks)
     display = _display_board(filtered)
     st.caption(f"{len(display):,} prop rows")
-    render_metric_grid(display.drop(columns=["row_id"], errors="ignore"), key=f"props-board-{loaded_date.isoformat()}", height=720, use_lightweight=False)
-    _render_book_details(filtered, book_details, loaded_date, source)
+    _render_instruction_banner()
+    sort_label_map = {
+        "best_price": "Best Price",
+        "market_width": "Market Width",
+        "largest_discrepancy": "Largest Discrepancy",
+        "prop_type": "Prop Type",
+        "player": "Player",
+    }
+    render_props_board(
+        display,
+        book_details,
+        height=760,
+        initial_sort_column=sort_label_map.get(sort_column, "Best Price"),
+        initial_sort_ascending=ascending,
+    )

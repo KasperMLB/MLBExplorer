@@ -256,6 +256,7 @@ def load_live_props_board(config: AppConfig, target_date: date, rosters: pd.Data
                     "book_key": str(row["book_key"]),
                     "price": float(row["price"]),
                     "price_display": f"{int(row['price']):+d}",
+                    "sort_decimal": _american_to_decimal(row["price"]),
                 }
             )
         grouped_rows.append(
@@ -281,6 +282,6 @@ def load_live_props_board(config: AppConfig, target_date: date, rosters: pd.Data
         ascending=[True, True, True, False],
         na_position="last",
     ).reset_index(drop=True)
-    details = pd.DataFrame(detail_rows).sort_values(["sportsbook", "price"], ascending=[True, False], na_position="last").reset_index(drop=True)
+    details = pd.DataFrame(detail_rows).sort_values(["row_id", "sort_decimal", "sportsbook"], ascending=[True, False, True], na_position="last").reset_index(drop=True)
     sportsbooks = tuple(sorted(details["sportsbook"].dropna().astype(str).unique().tolist())) if not details.empty else tuple()
     return PropsBoardPayload(board=result, book_details=details, sportsbooks=sportsbooks)

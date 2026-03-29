@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .streamlit/secrets.toml
+node_modules/
 artifacts/
 statcast_*.csv
 statcast_clean.csv
