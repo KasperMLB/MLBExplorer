@@ -60,6 +60,58 @@ def _fmt_humidity(value: object) -> str:
     return f"{float(value):.0f}%"
 
 
+def _wind_direction_label(wind_direction_deg: object) -> str:
+    if wind_direction_deg is None or pd.isna(wind_direction_deg):
+        return "WIND UNAVAILABLE"
+    toward_deg = (float(wind_direction_deg) + 180.0) % 360.0
+    if 25 <= toward_deg < 65:
+        return "OUT TOWARDS RF"
+    if 65 <= toward_deg < 115:
+        return "OUT"
+    if 115 <= toward_deg < 155:
+        return "OUT TOWARDS LF"
+    if 155 <= toward_deg < 205:
+        return "NEUTRAL"
+    if 205 <= toward_deg < 245:
+        return "IN TOWARDS LF"
+    if 245 <= toward_deg < 295:
+        return "IN"
+    if 295 <= toward_deg < 335:
+        return "IN TOWARDS RF"
+    return "NEUTRAL"
+
+
+def _wind_pill_text(wind_speed_mph: object, wind_direction_deg: object) -> str:
+    if wind_speed_mph is None or pd.isna(wind_speed_mph) or wind_direction_deg is None or pd.isna(wind_direction_deg):
+        return "WIND UNAVAILABLE"
+    return f"{_wind_direction_label(wind_direction_deg)} | {int(round(float(wind_speed_mph)))} MPH"
+
+
+def _wind_pill_style(wind_speed_mph: object, wind_direction_deg: object) -> tuple[str, str]:
+    if wind_speed_mph is None or pd.isna(wind_speed_mph) or wind_direction_deg is None or pd.isna(wind_direction_deg):
+        return "#eef2f7", "#52606d"
+
+    speed = float(wind_speed_mph)
+    label = _wind_direction_label(wind_direction_deg)
+    if label.startswith("OUT"):
+        if speed <= 5:
+            return "#e8f7ee", "#17603a"
+        if speed <= 10:
+            return "#cfeeda", "#14532d"
+        return "#b4e4c6", "#0f4a28"
+    if label.startswith("IN"):
+        if speed <= 5:
+            return "#fdecec", "#991b1b"
+        if speed <= 10:
+            return "#f8d4d4", "#8b1e1e"
+        return "#f1b9b9", "#7f1d1d"
+    if speed <= 5:
+        return "#fff7d6", "#7a5a00"
+    if speed <= 10:
+        return "#ffefad", "#715400"
+    return "#ffe07a", "#614700"
+
+
 def _render_cards(frame: pd.DataFrame) -> None:
     if frame.empty:
         return
@@ -69,6 +121,8 @@ def _render_cards(frame: pd.DataFrame) -> None:
             status = str(row.get("status") or "Unavailable")
             status_fill = "#e6f6ec" if status == "Available" else "#fde8e8"
             status_text = "#166534" if status == "Available" else "#b91c1c"
+            wind_text = _wind_pill_text(row.get("wind_speed_mph"), row.get("wind_direction_deg"))
+            wind_fill, wind_text_color = _wind_pill_style(row.get("wind_speed_mph"), row.get("wind_direction_deg"))
             with st.container(border=True):
                 st.markdown(
                     f"""
@@ -85,7 +139,12 @@ def _render_cards(frame: pd.DataFrame) -> None:
                     st.markdown(f"<div style='font-size:1.0rem; color:#666;'>{row.get('game', '')}</div>", unsafe_allow_html=True)
                 with header_right:
                     st.markdown(
-                        f"<div style='text-align:right;'><span style='background:{status_fill}; color:{status_text}; padding:4px 10px; border-radius:999px; font-size:0.8rem; font-weight:600;'>{status}</span></div>",
+                        (
+                            "<div style='display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;'>"
+                            f"<span style='background:{wind_fill}; color:{wind_text_color}; padding:4px 10px; border-radius:999px; font-size:0.78rem; font-weight:700; letter-spacing:0.01em;'>{wind_text}</span>"
+                            f"<span style='background:{status_fill}; color:{status_text}; padding:4px 10px; border-radius:999px; font-size:0.8rem; font-weight:600;'>{status}</span>"
+                            "</div>"
+                        ),
                         unsafe_allow_html=True,
                     )
                 info_col, field_col = st.columns([1.0, 1.05], vertical_alignment="center")
