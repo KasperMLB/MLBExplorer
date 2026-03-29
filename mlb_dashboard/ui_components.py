@@ -1170,6 +1170,76 @@ def _draw_scouting_rows_section(
     return top + panel_height
 
 
+def _draw_top_matchups_game_section(
+    draw: ImageDraw.ImageDraw,
+    top: int,
+    left: int,
+    width: int,
+    section: dict,
+    font: ImageFont.ImageFont,
+    small_font: ImageFont.ImageFont,
+) -> int:
+    frame = section["frame"]
+    title = section["title"]
+    subtitle = str(section.get("subtitle", "")).strip()
+    row_height = 58
+    row_gap = 8
+    title_height = 62 if subtitle else 46
+    panel_height = title_height + len(frame) * (row_height + row_gap) + 14
+    if frame.empty:
+        panel_height = 88 if subtitle else 72
+    _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
+    _text(draw, (left + 18, top + 14), title, font, REPORT_TEXT)
+    if subtitle:
+        _text(draw, (left + 18, top + 38), subtitle, small_font, REPORT_MUTED)
+    if frame.empty:
+        _text(draw, (left + 18, top + title_height), "No data available", small_font, REPORT_MUTED)
+        return top + panel_height
+
+    metric_columns = [
+        "matchup_score",
+        "ceiling_score",
+        "zone_fit_score",
+        "swstr_pct",
+        "pulled_barrel_pct",
+        "barrel_bip_pct",
+        "avg_launch_angle",
+    ]
+    y = top + title_height
+    identity_width = max(220, min(310, int(width * 0.28)))
+    chip_area_left = left + 22 + identity_width + 12
+    chip_gap = 8
+    chip_width = max(84, int((left + width - 22 - chip_area_left - chip_gap * (len(metric_columns) - 1)) / len(metric_columns)))
+
+    for _, row in frame.iterrows():
+        row_top = y
+        row_bottom = row_top + row_height
+        _panel(draw, (left + 12, row_top, left + width - 12, row_bottom), fill="#fbfcfe", radius=14)
+        primary = _format_value("hitter_name", row.get("hitter_name"), export_mode=True)
+        team_value = _format_value("team", row.get("team"), export_mode=True)
+        _text(draw, (left + 28, row_top + 10), primary, small_font, REPORT_TEXT)
+        _text(draw, (left + 28, row_top + 31), team_value, small_font, REPORT_MUTED)
+
+        for idx, column in enumerate(metric_columns):
+            if column not in frame.columns:
+                continue
+            chip_x = chip_area_left + idx * (chip_width + chip_gap)
+            chip_fill = _background_hex(
+                column,
+                row.get(column),
+                frame[column],
+                lower_is_better=LOWER_IS_BETTER,
+                higher_is_better=HIGHER_IS_BETTER,
+            ) or "#e8eef5"
+            draw.rounded_rectangle((chip_x, row_top + 11, chip_x + chip_width, row_top + 43), radius=11, fill=chip_fill)
+            chip_label = DISPLAY_LABELS.get(column, column)
+            chip_text = f"{chip_label} {_format_value(column, row.get(column), export_mode=True)}"
+            _text(draw, (chip_x + 8, row_top + 19), chip_text, small_font, REPORT_TEXT)
+        y += row_height + row_gap
+
+    return top + panel_height
+
+
 def _draw_export_section(
     draw: ImageDraw.ImageDraw,
     top: int,
@@ -1179,6 +1249,8 @@ def _draw_export_section(
     font: ImageFont.ImageFont,
     small_font: ImageFont.ImageFont,
 ) -> int:
+    if section.get("section_type") == "top_matchups_game":
+        return _draw_top_matchups_game_section(draw, top, left, width, section, font, small_font)
     title = section["title"]
     frame = section["frame"]
     return _draw_dark_table(
@@ -1450,7 +1522,7 @@ def build_branded_report_image(title: str, subtitle: str, sections: list[dict]) 
     font = _load_font(36, bold=True)
     body_font = _load_font(26, bold=True)
     width = 1500
-    branding_height = 110
+    branding_height = 100
     total_height = branding_height + 24
     for section in sections:
         total_height += _export_section_height_estimate(section["title"], section["frame"], str(section.get("subtitle", "")))
@@ -1459,16 +1531,17 @@ def build_branded_report_image(title: str, subtitle: str, sections: list[dict]) 
     _panel(draw, (20, 20, width - 20, branding_height), fill="#f5f7fa", radius=24)
     _text(draw, (42, 34), "KASPER SCOUTING REPORT", body_font, REPORT_ACCENT)
     _text(draw, (42, 58), title, font, REPORT_TEXT)
-    _text(draw, (42, 88), subtitle, body_font, REPORT_TEXT)
+    _text(draw, (42, 82), subtitle, body_font, REPORT_TEXT)
 
-    y = branding_height + 18
+    y = branding_height + 14
     for section in sections:
         if section["frame"].empty:
             continue
-        y = _draw_export_section(draw, y, 8, width - 16, section, font, body_font) + 12
+        y = _draw_export_section(draw, y, 12, width - 24, section, font, body_font) + 8
 
+    cropped = image.crop((0, 0, width, min(max(y + 20, 420), image.height)))
     buffer = BytesIO()
-    image.save(buffer, format="PNG")
+    cropped.save(buffer, format="PNG")
     return buffer.getvalue()
 
 

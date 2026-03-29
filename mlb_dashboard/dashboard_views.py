@@ -410,8 +410,16 @@ def build_top_matchups_export_sections(
     hitter_columns: list[str],
 ) -> list[dict]:
     sections: list[dict] = []
-    export_columns = ["hitter_name", "team"] + [
-        column for column in hitter_columns if column not in {"hitter_name", "team", "game"}
+    export_columns = [
+        "hitter_name",
+        "team",
+        "matchup_score",
+        "ceiling_score",
+        "zone_fit_score",
+        "swstr_pct",
+        "pulled_barrel_pct",
+        "barrel_bip_pct",
+        "avg_launch_angle",
     ]
     for game in selected_games:
         away_hitters, home_hitters = hitters_by_game.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
@@ -424,6 +432,7 @@ def build_top_matchups_export_sections(
             {
                 "title": game_label,
                 "subtitle": f"{_format_export_start_time(game.get('game_date'))} | {_format_pitching_matchup(game)}",
+                "section_type": "top_matchups_game",
                 "frame": section_frame,
             }
         )
