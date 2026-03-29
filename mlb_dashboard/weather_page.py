@@ -133,13 +133,9 @@ def _render_cards(frame: pd.DataFrame) -> None:
                     """,
                     unsafe_allow_html=True,
                 )
-                header_left, header_right = st.columns([1.0, 0.38], vertical_alignment="center")
-                with header_left:
-                    st.markdown(f"<div style='font-size:1.0rem; color:#666;'>{row.get('game', '')}</div>", unsafe_allow_html=True)
-                with header_right:
-                    st.markdown("", unsafe_allow_html=True)
-                info_col, field_col = st.columns([1.0, 1.05], vertical_alignment="center")
+                info_col, field_col = st.columns([1.0, 1.05], vertical_alignment="top")
                 with info_col:
+                    st.markdown(f"<div style='font-size:1.0rem; color:#666; margin-bottom:18px;'>{row.get('game', '')}</div>", unsafe_allow_html=True)
                     venue = str(row.get("venue", "") or "Unknown venue")
                     location = str(row.get("location", "") or "")
                     conditions = str(row.get("conditions", "Unavailable") or "Unavailable")
