@@ -22,6 +22,13 @@ class OddsConfig:
     markets: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class PropsBoardPayload:
+    board: pd.DataFrame
+    book_details: pd.DataFrame
+    sportsbooks: tuple[str, ...]
+
+
 MARKET_LABELS = {
     "batter_home_runs": "Home Runs",
     "batter_hits": "Hits",
@@ -164,7 +171,7 @@ def fetch_event_odds(config: OddsConfig, event_id: str) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def load_live_props_board(config: AppConfig, target_date: date, rosters: pd.DataFrame) -> pd.DataFrame:
+def load_live_props_board(config: AppConfig, target_date: date, rosters: pd.DataFrame) -> PropsBoardPayload:
     odds_config = odds_config_from_app(config)
     events = fetch_event_list(odds_config)
     rows: list[dict] = []
@@ -211,41 +218,49 @@ def load_live_props_board(config: AppConfig, target_date: date, rosters: pd.Data
                         }
                     )
     if not rows:
-        return pd.DataFrame(
-            columns=[
-                "game",
-                "team",
-                "player",
-                "prop_type",
-                "side",
-                "line",
-                "best_books",
-                "best_price",
-                "all_books",
-                "market_width",
-                "largest_discrepancy",
-                "model_odds",
-                "edge_pct",
-                "ev_pct",
-                "book_list",
-                "book_titles",
-            ]
+        return PropsBoardPayload(
+            board=pd.DataFrame(
+                columns=[
+                    "row_id",
+                    "game",
+                    "team",
+                    "player",
+                    "prop_type",
+                    "side",
+                    "line",
+                    "best_books",
+                    "best_price",
+                    "market_width",
+                    "largest_discrepancy",
+                    "model_odds",
+                    "edge_pct",
+                    "ev_pct",
+                ]
+            ),
+            book_details=pd.DataFrame(columns=["row_id", "sportsbook", "book_key", "price", "price_display"]),
+            sportsbooks=tuple(),
         )
     raw = pd.DataFrame(rows)
     grouped_rows: list[dict] = []
-    for keys, group in raw.groupby(["game", "team", "player", "prop_type", "side", "line"], dropna=False, sort=False):
+    detail_rows: list[dict] = []
+    for idx, (keys, group) in enumerate(raw.groupby(["game", "team", "player", "prop_type", "side", "line"], dropna=False, sort=False), start=1):
         prices = group["price"].tolist()
         best_price = _best_price(prices)
         best_books = group.loc[group["price"] == best_price, "book_title"].astype(str).tolist() if best_price is not None else []
-        book_pairs = []
-        book_keys = []
-        book_titles = []
+        row_id = f"prop-{idx}"
         for _, row in group.sort_values(["book_title", "price"], ascending=[True, False]).iterrows():
-            book_pairs.append(f"{row['book_title']} {int(row['price']):+d}")
-            book_keys.append(str(row["book_key"]))
-            book_titles.append(str(row["book_title"]))
+            detail_rows.append(
+                {
+                    "row_id": row_id,
+                    "sportsbook": str(row["book_title"]),
+                    "book_key": str(row["book_key"]),
+                    "price": float(row["price"]),
+                    "price_display": f"{int(row['price']):+d}",
+                }
+            )
         grouped_rows.append(
             {
+                "row_id": row_id,
                 "game": keys[0],
                 "team": keys[1],
                 "player": keys[2],
@@ -254,15 +269,18 @@ def load_live_props_board(config: AppConfig, target_date: date, rosters: pd.Data
                 "line": keys[5],
                 "best_books": ", ".join(best_books),
                 "best_price": best_price,
-                "all_books": " | ".join(book_pairs),
                 "market_width": _market_width_implied(prices),
                 "largest_discrepancy": _largest_discrepancy_points(prices),
                 "model_odds": None,
                 "edge_pct": None,
                 "ev_pct": None,
-                "book_list": "|".join(sorted(set(book_keys))),
-                "book_titles": "|".join(sorted(set(book_titles))),
             }
         )
-    result = pd.DataFrame(grouped_rows)
-    return result.sort_values(["prop_type", "player", "line", "best_price"], ascending=[True, True, True, False], na_position="last").reset_index(drop=True)
+    result = pd.DataFrame(grouped_rows).sort_values(
+        ["prop_type", "player", "line", "best_price"],
+        ascending=[True, True, True, False],
+        na_position="last",
+    ).reset_index(drop=True)
+    details = pd.DataFrame(detail_rows).sort_values(["sportsbook", "price"], ascending=[True, False], na_position="last").reset_index(drop=True)
+    sportsbooks = tuple(sorted(details["sportsbook"].dropna().astype(str).unique().tolist())) if not details.empty else tuple()
+    return PropsBoardPayload(board=result, book_details=details, sportsbooks=sportsbooks)

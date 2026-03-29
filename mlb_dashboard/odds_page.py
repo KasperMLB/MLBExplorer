@@ -7,7 +7,7 @@ import streamlit as st
 
 from .config import AppConfig
 from .dashboard_views import latest_built_date
-from .odds_service import load_live_props_board
+from .odds_service import PropsBoardPayload, load_live_props_board
 from .query_engine import StatcastQueryEngine
 from .ui_components import render_metric_grid
 
@@ -45,20 +45,19 @@ def _default_date(config: AppConfig) -> date:
     return latest or date.today()
 
 
-def _apply_filters(frame: pd.DataFrame) -> pd.DataFrame:
-    work = frame.copy()
+def _apply_filters(frame: pd.DataFrame, book_details: pd.DataFrame, sportsbooks: tuple[str, ...]) -> pd.DataFrame:
+    work = frame
     st.sidebar.title("Odds Filters")
     prop_types = sorted(value for value in work["prop_type"].dropna().astype(str).unique().tolist())
     games = sorted(value for value in work["game"].dropna().astype(str).unique().tolist())
     teams = sorted(value for value in work["team"].dropna().astype(str).unique().tolist())
     players = sorted(value for value in work["player"].dropna().astype(str).unique().tolist())
-    books = sorted({book for text in work["book_titles"].fillna("").astype(str) for book in text.split("|") if book})
 
     selected_props = st.sidebar.multiselect("Prop types", prop_types, default=prop_types)
     selected_games = st.sidebar.multiselect("Games", games)
     selected_teams = st.sidebar.multiselect("Teams", teams)
     player_search = st.sidebar.text_input("Player search", value="")
-    selected_books = st.sidebar.multiselect("Sportsbooks", books)
+    selected_books = st.sidebar.multiselect("Sportsbooks", list(sportsbooks))
 
     if selected_props:
         work = work.loc[work["prop_type"].isin(selected_props)]
@@ -70,11 +69,8 @@ def _apply_filters(frame: pd.DataFrame) -> pd.DataFrame:
         needle = player_search.strip().casefold()
         work = work.loc[work["player"].fillna("").astype(str).str.casefold().str.contains(needle)]
     if selected_books:
-        work = work.loc[
-            work["book_titles"].fillna("").astype(str).apply(
-                lambda value: any(book in value.split("|") for book in selected_books)
-            )
-        ]
+        matching_ids = book_details.loc[book_details["sportsbook"].isin(selected_books), "row_id"].drop_duplicates()
+        work = work.loc[work["row_id"].isin(matching_ids)]
     sort_column = st.sidebar.selectbox(
         "Sort by",
         ["best_price", "market_width", "largest_discrepancy", "prop_type", "player"],
@@ -112,7 +108,22 @@ def _format_discrepancy(value: object) -> str:
 
 
 def _display_board(frame: pd.DataFrame) -> pd.DataFrame:
-    display = frame.copy()
+    display = frame.loc[
+        :,
+        [
+            "row_id",
+            "game",
+            "team",
+            "player",
+            "prop_type",
+            "side",
+            "line",
+            "best_books",
+            "best_price",
+            "market_width",
+            "largest_discrepancy",
+        ],
+    ].copy()
     display["best_price"] = display["best_price"].apply(_format_american)
     display["market_width"] = display["market_width"].apply(_format_pct)
     display["largest_discrepancy"] = display["largest_discrepancy"].apply(_format_discrepancy)
@@ -136,6 +147,39 @@ def _display_board(frame: pd.DataFrame) -> pd.DataFrame:
             "edge_pct": "Edge%",
             "ev_pct": "EV%",
         }
+    )
+
+
+def _build_detail_labels(frame: pd.DataFrame) -> list[str]:
+    labels = []
+    for _, row in frame.iterrows():
+        line_text = "" if pd.isna(row.get("line")) else f" {row.get('line')}"
+        labels.append(
+            f"{row.get('player', '')} | {row.get('prop_type', '')} | {row.get('side', '')}{line_text} | {row.get('game', '')}"
+        )
+    return labels
+
+
+def _render_book_details(filtered_board: pd.DataFrame, book_details: pd.DataFrame, target_date: date, source: str) -> None:
+    st.subheader("All Books")
+    if filtered_board.empty:
+        st.info("No props match the current filters.")
+        return
+    labels = _build_detail_labels(filtered_board)
+    selected_label = st.selectbox("Prop detail", options=labels, key=f"props-detail-{target_date.isoformat()}")
+    selected_row = filtered_board.iloc[labels.index(selected_label)]
+    st.caption(
+        f"{selected_row.get('player', '')} | {selected_row.get('prop_type', '')} | {selected_row.get('side', '')}"
+        + ("" if pd.isna(selected_row.get("line")) else f" {selected_row.get('line')}")
+    )
+    detail_frame = book_details.loc[book_details["row_id"] == selected_row["row_id"], ["sportsbook", "price_display"]].rename(
+        columns={"sportsbook": "Sportsbook", "price_display": "Price"}
+    )
+    render_metric_grid(
+        detail_frame,
+        key=f"props-book-detail-{selected_row['row_id']}",
+        height=min(420, max(140, 42 * (len(detail_frame) + 1))),
+        use_lightweight=False,
     )
 
 
@@ -163,13 +207,19 @@ def main() -> None:
         except Exception as exc:
             st.error(f"Unable to load live props: {exc}")
             return
-    board = st.session_state[state_key]
+    payload = st.session_state[state_key]
+    if not isinstance(payload, PropsBoardPayload):
+        st.error("Unexpected props payload shape.")
+        return
+    board = payload.board
+    book_details = payload.book_details
 
     if board.empty:
         st.info("No props were returned for the selected slate date.")
         return
 
-    filtered = _apply_filters(board)
-    display = _display_board(filtered.drop(columns=["book_list", "book_titles"], errors="ignore"))
+    filtered = _apply_filters(board, book_details, payload.sportsbooks)
+    display = _display_board(filtered)
     st.caption(f"{len(display):,} prop rows")
-    render_metric_grid(display, key=f"props-board-{target_date.isoformat()}", height=720, use_lightweight=(source == "hosted"))
+    render_metric_grid(display.drop(columns=["row_id"], errors="ignore"), key=f"props-board-{target_date.isoformat()}", height=720, use_lightweight=False)
+    _render_book_details(filtered, book_details, target_date, source)
