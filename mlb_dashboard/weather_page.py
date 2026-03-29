@@ -63,20 +63,42 @@ def _fmt_humidity(value: object) -> str:
 def _render_cards(frame: pd.DataFrame) -> None:
     if frame.empty:
         return
-    columns = st.columns(3)
+    columns = st.columns(2)
     for idx, row in enumerate(frame.to_dict("records")):
-        with columns[idx % 3]:
+        with columns[idx % 2]:
             status = str(row.get("status") or "Unavailable")
+            status_fill = "#e6f6ec" if status == "Available" else "#fde8e8"
+            status_text = "#166534" if status == "Available" else "#b91c1c"
             with st.container(border=True):
-                info_col, field_col = st.columns([1.05, 1.0], vertical_alignment="center")
+                st.markdown(
+                    f"""
+                    <style>
+                    div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlockBorderWrapper"] {{
+                        min-height: 330px;
+                    }}
+                    </style>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                header_left, header_right = st.columns([1.0, 0.38], vertical_alignment="center")
+                with header_left:
+                    st.markdown(f"<div style='font-size:1.0rem; color:#666;'>{row.get('game', '')}</div>", unsafe_allow_html=True)
+                with header_right:
+                    st.markdown(
+                        f"<div style='text-align:right;'><span style='background:{status_fill}; color:{status_text}; padding:4px 10px; border-radius:999px; font-size:0.8rem; font-weight:600;'>{status}</span></div>",
+                        unsafe_allow_html=True,
+                    )
+                info_col, field_col = st.columns([1.0, 1.05], vertical_alignment="center")
                 with info_col:
-                    st.markdown(f"<div style='font-size:0.9rem; color:#666;'>{row.get('game', '')}</div>", unsafe_allow_html=True)
-                    st.markdown(f"<div style='font-size:1.05rem; font-weight:700; margin-top:4px;'>{row.get('venue', '') or 'Unknown venue'}</div>", unsafe_allow_html=True)
-                    st.markdown(f"<div style='font-size:0.85rem; color:#666; margin-bottom:8px;'>{row.get('location', '')}</div>", unsafe_allow_html=True)
-                    st.markdown(f"<div style='font-size:1.6rem; font-weight:700; margin-bottom:10px;'>{_fmt_temp(row.get('temperature_f'))}</div>", unsafe_allow_html=True)
-                    st.markdown(f"Humidity: {_fmt_humidity(row.get('humidity'))}")
-                    st.markdown(f"Conditions: {row.get('conditions', 'Unavailable')}")
-                    st.markdown(f"<div style='font-size:0.85rem; margin-top:8px; color:#666;'>Status: {status}</div>", unsafe_allow_html=True)
+                    venue = str(row.get("venue", "") or "Unknown venue")
+                    location = str(row.get("location", "") or "")
+                    conditions = str(row.get("conditions", "Unavailable") or "Unavailable")
+                    short_conditions = conditions if len(conditions) <= 22 else conditions[:19] + "..."
+                    st.markdown(f"<div style='font-size:1.2rem; font-weight:700; line-height:1.25; min-height:3.0rem;'>{venue}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size:0.95rem; color:#666; min-height:1.4rem; margin-bottom:8px;'>{location}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size:2.25rem; font-weight:800; line-height:1.0; margin:10px 0 16px 0;'>{_fmt_temp(row.get('temperature_f'))}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size:1.0rem; margin-bottom:8px;'><strong>Humidity:</strong> {_fmt_humidity(row.get('humidity'))}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size:1.0rem; min-height:2.6rem;'><strong>Conditions:</strong> {short_conditions}</div>", unsafe_allow_html=True)
                 with field_col:
                     field_image = render_weather_field(
                         venue_name=str(row.get("venue") or ""),

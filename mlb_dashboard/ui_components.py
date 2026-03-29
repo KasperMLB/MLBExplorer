@@ -699,6 +699,25 @@ def render_weather_field(
             width=1,
         )
         draw.text((label_x, label_y), speed_text, fill="#1d4ed8", font=bold_font)
+        if 25 <= toward_deg < 65:
+            direction_text = "Toward RF"
+        elif 65 <= toward_deg < 115:
+            direction_text = "Out"
+        elif 115 <= toward_deg < 155:
+            direction_text = "Toward LF"
+        elif 205 <= toward_deg < 245:
+            direction_text = "Toward 1B"
+        elif 245 <= toward_deg < 295:
+            direction_text = "In"
+        elif 295 <= toward_deg < 335:
+            direction_text = "Toward 3B"
+        elif toward_deg >= 335 or toward_deg < 25:
+            direction_text = "Toward RF"
+        else:
+            direction_text = "Toward LF"
+        dir_bbox = draw.textbbox((0, 0), direction_text, font=small_font)
+        dir_x = max(12, min(width - 12 - (dir_bbox[2] - dir_bbox[0]), cx - (dir_bbox[2] - dir_bbox[0]) / 2))
+        draw.text((dir_x, 116), direction_text, fill="#475569", font=small_font)
     else:
         missing = "Wind unavailable"
         bbox = draw.textbbox((0, 0), missing, font=title_font)
