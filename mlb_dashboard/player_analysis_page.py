@@ -397,6 +397,8 @@ def _build_player_index(
 ) -> pd.DataFrame:
     hitter_frame = _filter_hitter_metrics(reusable.get("hitters", pd.DataFrame()), filters)
     pitcher_frame = add_pitcher_rank_score(_filter_pitcher_metrics(reusable.get("pitchers", pd.DataFrame()), filters))
+    hitter_team = hitter_frame["team"] if "team" in hitter_frame.columns else pd.Series("", index=hitter_frame.index, dtype="object")
+    pitcher_team = pitcher_frame["team"] if "team" in pitcher_frame.columns else pd.Series("", index=pitcher_frame.index, dtype="object")
 
     hitter_index = pd.DataFrame()
     if not hitter_frame.empty:
@@ -405,6 +407,7 @@ def _build_player_index(
                 entity_type="Hitter",
                 player_id=hitter_frame["batter"].astype(int),
                 player_name=hitter_frame["hitter_name"].astype(str),
+                team=hitter_team.fillna(""),
                 hand=hitter_frame.get("stand"),
                 key=hitter_frame["batter"].astype(int).map(lambda value: _player_key("hitter", value)),
                 sort_value=pd.to_numeric(hitter_frame["xwoba"], errors="coerce"),
@@ -419,6 +422,7 @@ def _build_player_index(
                 entity_type="Pitcher",
                 player_id=pitcher_frame["pitcher_id"].astype(int),
                 player_name=pitcher_frame["pitcher_name"].astype(str),
+                team=pitcher_team.fillna(""),
                 hand=pitcher_frame.get("p_throws"),
                 key=pitcher_frame["pitcher_id"].astype(int).map(lambda value: _player_key("pitcher", value)),
                 sort_value=pd.to_numeric(pitcher_frame["pitcher_score"], errors="coerce"),
