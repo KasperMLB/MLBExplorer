@@ -62,7 +62,7 @@ def _fmt_humidity(value: object) -> str:
 
 def _wind_direction_label(wind_direction_deg: object) -> str:
     if wind_direction_deg is None or pd.isna(wind_direction_deg):
-        return "WIND UNAVAILABLE"
+        return "DIR --"
     toward_deg = (float(wind_direction_deg) + 180.0) % 360.0
     if 25 <= toward_deg < 65:
         return "OUT TOWARDS RF"
@@ -83,7 +83,7 @@ def _wind_direction_label(wind_direction_deg: object) -> str:
 
 def _wind_speed_text(wind_speed_mph: object) -> str:
     if wind_speed_mph is None or pd.isna(wind_speed_mph):
-        return "WIND MPH --"
+        return "MPH --"
     return f"{int(round(float(wind_speed_mph)))} MPH"
 
 
@@ -152,10 +152,12 @@ def _render_cards(frame: pd.DataFrame) -> None:
                 with field_col:
                     st.markdown(
                         (
+                            "<div style='display:flex; justify-content:flex-start; margin-bottom:8px;'>"
+                            f"<span style='background:{status_fill}; color:{status_text}; padding:4px 10px; border-radius:999px; font-size:0.76rem; font-weight:700;'>{status}</span>"
+                            "</div>"
                             "<div style='display:flex; justify-content:flex-start; gap:8px; flex-wrap:wrap; margin-bottom:10px;'>"
                             f"<span style='background:{wind_direction_fill}; color:{wind_direction_text_color}; padding:4px 10px; border-radius:999px; font-size:0.76rem; font-weight:700; letter-spacing:0.01em;'>{wind_direction_text}</span>"
                             f"<span style='background:{wind_speed_fill}; color:{wind_speed_text_color}; padding:4px 10px; border-radius:999px; font-size:0.76rem; font-weight:700; letter-spacing:0.01em;'>{wind_speed_text}</span>"
-                            f"<span style='background:{status_fill}; color:{status_text}; padding:4px 10px; border-radius:999px; font-size:0.76rem; font-weight:700;'>{status}</span>"
                             "</div>"
                         ),
                         unsafe_allow_html=True,
