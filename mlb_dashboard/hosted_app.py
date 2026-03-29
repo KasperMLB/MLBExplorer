@@ -199,7 +199,7 @@ def _render_pitcher_tab(
             summary_table,
             key=f"summary-{game_pk}-{team_label}",
             mobile_safe=mobile_safe,
-            height=170,
+            height=132,
             lower_is_better=PITCHER_LOWER_IS_BETTER,
             higher_is_better=PITCHER_HIGHER_IS_BETTER,
         )
