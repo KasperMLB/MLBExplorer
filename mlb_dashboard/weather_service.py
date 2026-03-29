@@ -53,6 +53,7 @@ class WeatherSnapshot:
     wind_direction_deg: float | None
     conditions: str
     status: str
+    error_message: str
 
 
 def _weather_label(code: object) -> str:
@@ -124,7 +125,6 @@ def _fetch_open_meteo_payload(stadium: Stadium) -> dict:
             "wind_speed_unit": "mph",
             "precipitation_unit": "inch",
             "timezone": stadium.timezone,
-            "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m",
             "hourly": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m",
             "forecast_days": 2,
         },
@@ -134,25 +134,16 @@ def _fetch_open_meteo_payload(stadium: Stadium) -> dict:
     return response.json()
 
 
-def _current_snapshot(payload: dict) -> WeatherSnapshot:
-    current = payload.get("current") or {}
-    return WeatherSnapshot(
-        weather_time=str(current.get("time") or ""),
-        temperature_f=current.get("temperature_2m"),
-        humidity=current.get("relative_humidity_2m"),
-        wind_speed_mph=current.get("wind_speed_10m"),
-        wind_direction_deg=current.get("wind_direction_10m"),
-        conditions=_weather_label(current.get("weather_code")),
-        status="Available" if current else "Unavailable",
-    )
-
-
 def _game_time_snapshot(payload: dict, first_pitch: datetime | None, stadium: Stadium) -> WeatherSnapshot:
+    if first_pitch is None:
+        return WeatherSnapshot("", None, None, None, None, "Unavailable", "Unavailable", "Missing or invalid first-pitch time")
     hourly = payload.get("hourly") or {}
-    if first_pitch is None or not hourly:
-        return WeatherSnapshot("", None, None, None, None, "Unavailable", "Unavailable")
     times = list(hourly.get("time") or [])
+    if not times:
+        return WeatherSnapshot("", None, None, None, None, "Unavailable", "Unavailable", "Open-Meteo hourly forecast missing")
     idx = _nearest_index(times, first_pitch, stadium.timezone)
+    if idx is None:
+        return WeatherSnapshot("", None, None, None, None, "Unavailable", "Unavailable", "No forecast timestamp matched game time")
     return WeatherSnapshot(
         weather_time=str(_safe_get(times, idx) or ""),
         temperature_f=_safe_get(list(hourly.get("temperature_2m") or []), idx),
@@ -160,7 +151,8 @@ def _game_time_snapshot(payload: dict, first_pitch: datetime | None, stadium: St
         wind_speed_mph=_safe_get(list(hourly.get("wind_speed_10m") or []), idx),
         wind_direction_deg=_safe_get(list(hourly.get("wind_direction_10m") or []), idx),
         conditions=_weather_label(_safe_get(list(hourly.get("weather_code") or []), idx)),
-        status="Available" if idx is not None else "Unavailable",
+        status="Available",
+        error_message="",
     )
 
 
@@ -176,7 +168,7 @@ def build_slate_weather_rows(slate: pd.DataFrame) -> pd.DataFrame:
         stadium = STADIUMS_BY_TEAM.get(home_team)
         first_pitch = _parse_iso_datetime(game.get("game_date"))
 
-        base = {
+        row = {
             "game_pk": game.get("game_pk"),
             "game": game_label,
             "home_team": home_team,
@@ -184,7 +176,6 @@ def build_slate_weather_rows(slate: pd.DataFrame) -> pd.DataFrame:
             "venue": stadium.venue_name if stadium else "",
             "location": stadium.location_name if stadium else "",
             "roof_type": stadium.roof_type if stadium else "",
-            "weather_mode": "",
             "weather_time": "",
             "temperature_f": None,
             "wind_speed_mph": None,
@@ -193,35 +184,33 @@ def build_slate_weather_rows(slate: pd.DataFrame) -> pd.DataFrame:
             "humidity": None,
             "conditions": "Unavailable",
             "status": "Unavailable",
+            "error_message": "",
         }
 
         if stadium is None:
-            for mode in ("Current", "Game-Time"):
-                row = base.copy()
-                row["weather_mode"] = mode
-                records.append(row)
+            row["error_message"] = f"Missing stadium registry entry for home team {home_team or 'unknown'}"
+            records.append(row)
             continue
 
         try:
             payload = _fetch_open_meteo_payload(stadium)
-            current = _current_snapshot(payload)
-            game_time = _game_time_snapshot(payload, first_pitch, stadium)
-        except Exception:
-            current = WeatherSnapshot("", None, None, None, None, "Unavailable", "Unavailable")
-            game_time = WeatherSnapshot("", None, None, None, None, "Unavailable", "Unavailable")
+            snapshot = _game_time_snapshot(payload, first_pitch, stadium)
+        except requests.Timeout:
+            snapshot = WeatherSnapshot("", None, None, None, None, "Unavailable", "Unavailable", "Open-Meteo request timed out")
+        except requests.RequestException as exc:
+            snapshot = WeatherSnapshot("", None, None, None, None, "Unavailable", "Unavailable", f"Open-Meteo request failed: {exc}")
+        except Exception as exc:
+            snapshot = WeatherSnapshot("", None, None, None, None, "Unavailable", "Unavailable", f"Weather parsing failed: {exc}")
 
-        for mode, snapshot in (("Current", current), ("Game-Time", game_time)):
-            row = base.copy()
-            row["weather_mode"] = mode
-            row["weather_time"] = snapshot.weather_time
-            row["temperature_f"] = snapshot.temperature_f
-            row["wind_speed_mph"] = snapshot.wind_speed_mph
-            row["wind_direction_deg"] = snapshot.wind_direction_deg
-            row["wind_direction"] = _wind_direction_label(snapshot.wind_direction_deg)
-            row["humidity"] = snapshot.humidity
-            row["conditions"] = snapshot.conditions
-            row["status"] = snapshot.status
-            records.append(row)
+        row["weather_time"] = snapshot.weather_time
+        row["temperature_f"] = snapshot.temperature_f
+        row["wind_speed_mph"] = snapshot.wind_speed_mph
+        row["wind_direction_deg"] = snapshot.wind_direction_deg
+        row["wind_direction"] = _wind_direction_label(snapshot.wind_direction_deg)
+        row["humidity"] = snapshot.humidity
+        row["conditions"] = snapshot.conditions
+        row["status"] = snapshot.status
+        row["error_message"] = snapshot.error_message
+        records.append(row)
 
     return pd.DataFrame.from_records(records)
-

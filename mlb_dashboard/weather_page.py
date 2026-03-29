@@ -110,7 +110,6 @@ def _display_table(frame: pd.DataFrame) -> pd.DataFrame:
             "Humidity",
             "conditions",
             "status",
-            "weather_mode",
         ]
     ].rename(
         columns={
@@ -120,7 +119,6 @@ def _display_table(frame: pd.DataFrame) -> pd.DataFrame:
             "wind_direction": "Wind Direction",
             "conditions": "Conditions",
             "status": "Status",
-            "weather_mode": "Weather Mode",
         }
     )
 
@@ -140,7 +138,6 @@ def main() -> None:
     if loaded_date != target_date:
         st.caption(f"Using most recent available published slate: {loaded_date.isoformat()}")
 
-    weather_mode = st.sidebar.radio("Weather view", ["Current", "Game-Time"], index=0, horizontal=False)
     refresh_token = st.session_state.get("weather_refresh_token", 0)
     if st.sidebar.button("Refresh Weather"):
         refresh_token += 1
@@ -156,12 +153,16 @@ def main() -> None:
         st.info("No slate games were found for the selected date.")
         return
 
-    active = board.loc[board["weather_mode"] == weather_mode].copy()
-    st.caption(f"{len(active):,} slate parks")
+    active = board.copy()
+    available_count = int((active["status"] == "Available").sum()) if "status" in active else 0
+    unavailable_count = int((active["status"] != "Available").sum()) if "status" in active else 0
+    if available_count == 0 and unavailable_count > 0:
+        st.warning("Live game-time weather is temporarily unavailable.")
+    st.caption(f"{len(active):,} slate parks | {available_count} available | {unavailable_count} unavailable")
     _render_cards(active)
     render_metric_grid(
         _display_table(active),
-        key=f"weather-board-{loaded_date.isoformat()}-{weather_mode}",
+        key=f"weather-board-{loaded_date.isoformat()}",
         height=520,
         use_lightweight=(source == "hosted"),
     )
