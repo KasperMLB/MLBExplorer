@@ -620,61 +620,87 @@ def render_weather_field(
     image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
     draw = ImageDraw.Draw(image)
     badge_font = _load_font(14, bold=True)
-    small_font = _load_font(11)
+    tiny_font = _load_font(10)
 
-    draw.rounded_rectangle((6, 6, width - 6, height - 6), radius=16, fill="#f7fafc", outline="#d7dee8", width=1)
+    draw.rounded_rectangle((6, 6, width - 6, height - 6), radius=18, fill="#f8f6f1", outline="#dad7ce", width=1)
 
     cx = width // 2
-    home_y = height - 36
+    home_y = height - 34
     lf = float(lf_distance_ft or 330.0)
     cf = float(cf_distance_ft or 400.0)
     rf = float(rf_distance_ft or 330.0)
     max_distance = max(lf, cf, rf, 330.0)
-    scale = 96.0 / max_distance
-    left_radius = max(76, lf * scale)
-    center_radius = max(88, cf * scale)
-    right_radius = max(76, rf * scale)
+    scale = 108.0 / max_distance
+    left_extent = max(88, lf * scale)
+    center_extent = max(98, cf * scale)
+    right_extent = max(88, rf * scale)
 
-    badge_bottom = 46
+    field_left = cx - left_extent
+    field_right = cx + right_extent
+    wall_y = home_y - center_extent
+    left_shoulder = (cx - int(left_extent * 0.9), home_y - int(center_extent * 0.46))
+    apex_left = (cx - int(left_extent * 0.36), home_y - int(center_extent * 0.9))
+    apex = (cx, wall_y)
+    apex_right = (cx + int(right_extent * 0.36), home_y - int(center_extent * 0.9))
+    right_shoulder = (cx + int(right_extent * 0.9), home_y - int(center_extent * 0.46))
 
-    # Outfield bowl and grass
-    draw.ellipse((cx - 95, home_y - 158, cx + 95, home_y + 8), fill="#dcefdc", outline=None)
-    draw.pieslice(
-        (cx - int(left_radius), home_y - int(center_radius) - 20, cx + int(right_radius), home_y + int(center_radius)),
-        214,
-        326,
-        fill="#e7f5e7",
-        outline="#88b78f",
-    )
-    draw.pieslice(
-        (cx - int(left_radius), home_y - int(center_radius) - 20, cx + int(right_radius), home_y + int(center_radius)),
-        214,
-        326,
-        outline="#5f9b72",
-        width=4,
-    )
-
-    diamond = [
-        (cx, home_y - 2),
-        (cx - 24, home_y - 26),
-        (cx, home_y - 50),
-        (cx + 24, home_y - 26),
+    # Park silhouette and bowl
+    bowl_fill = [
+        (field_left + 12, home_y - 6),
+        left_shoulder,
+        apex_left,
+        apex,
+        apex_right,
+        right_shoulder,
+        (field_right - 12, home_y - 6),
+        (cx + 38, home_y + 18),
+        (cx - 38, home_y + 18),
     ]
-    draw.polygon(diamond, outline="#9c6d43", fill="#e6cfa7")
-    draw.line([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]], fill="#8f6a45", width=4)
-    draw.ellipse((cx - 5, home_y - 55, cx + 5, home_y - 45), fill="#ffffff", outline="#8f6a45")
-    _draw_home_plate(draw, cx, home_y, fill="#ffffff", outline="#8f6a45")
+    draw.polygon(bowl_fill, fill="#dfe7db")
+    draw.line([left_shoulder, apex_left, apex, apex_right, right_shoulder], fill="#5f7b69", width=6)
+    draw.line((field_left + 12, home_y - 6, left_shoulder[0], left_shoulder[1]), fill="#9aab9f", width=3)
+    draw.line((field_right - 12, home_y - 6, right_shoulder[0], right_shoulder[1]), fill="#9aab9f", width=3)
 
-    draw.line((cx, home_y, 40, 100), fill="#ced8e3", width=2)
-    draw.line((cx, home_y, width - 40, 100), fill="#ced8e3", width=2)
+    inner_bowl = [
+        (cx - 54, home_y + 8),
+        (cx - 70, home_y - 28),
+        (cx - 42, home_y - 74),
+        (cx, home_y - 96),
+        (cx + 42, home_y - 74),
+        (cx + 70, home_y - 28),
+        (cx + 54, home_y + 8),
+    ]
+    draw.polygon(inner_bowl, fill="#eef3e8")
 
-    draw.text((28, 92), f"LF {int(round(lf))}", fill="#58677b", font=small_font)
-    cf_text = f"CF {int(round(cf))}"
-    cf_bbox = draw.textbbox((0, 0), cf_text, font=small_font)
-    draw.text((cx - (cf_bbox[2] - cf_bbox[0]) / 2, 50), cf_text, fill="#58677b", font=small_font)
-    rf_text = f"RF {int(round(rf))}"
-    rf_bbox = draw.textbbox((0, 0), rf_text, font=small_font)
-    draw.text((width - 28 - (rf_bbox[2] - rf_bbox[0]), 92), rf_text, fill="#58677b", font=small_font)
+    # Minimal baseball identity near home plate.
+    draw.pieslice((cx - 30, home_y - 42, cx + 30, home_y + 18), 198, 342, fill="#d8bf95", outline=None)
+    diamond = [
+        (cx, home_y + 2),
+        (cx - 20, home_y - 18),
+        (cx, home_y - 38),
+        (cx + 20, home_y - 18),
+    ]
+    draw.polygon(diamond, outline="#9b6e49", fill="#e4c99d")
+    draw.line([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]], fill="#8d6542", width=3)
+    draw.ellipse((cx - 4, home_y - 42, cx + 4, home_y - 34), fill="#ffffff", outline="#8d6542")
+    _draw_home_plate(draw, cx, home_y + 4, fill="#fffdf8", outline="#8d6542")
+
+    # Small foul-line cues.
+    draw.line((cx, home_y + 4, field_left + 10, home_y - 10), fill="#d6ddd5", width=2)
+    draw.line((cx, home_y + 4, field_right - 10, home_y - 10), fill="#d6ddd5", width=2)
+
+    # Tiny fence labels/ticks.
+    label_color = "#667565"
+    lf_label = f"LF {int(round(lf))}"
+    cf_label = f"CF {int(round(cf))}"
+    rf_label = f"RF {int(round(rf))}"
+    draw.line((left_shoulder[0] - 6, left_shoulder[1] + 4, left_shoulder[0] - 18, left_shoulder[1] - 6), fill="#93a493", width=2)
+    draw.line((apex[0], apex[1] - 4, apex[0], apex[1] - 16), fill="#93a493", width=2)
+    draw.line((right_shoulder[0] + 6, right_shoulder[1] + 4, right_shoulder[0] + 18, right_shoulder[1] - 6), fill="#93a493", width=2)
+    draw.text((left_shoulder[0] - 48, left_shoulder[1] - 24), lf_label, fill=label_color, font=tiny_font)
+    cf_bbox = draw.textbbox((0, 0), cf_label, font=tiny_font)
+    draw.text((cx - (cf_bbox[2] - cf_bbox[0]) / 2, apex[1] - 30), cf_label, fill=label_color, font=tiny_font)
+    draw.text((right_shoulder[0] + 8, right_shoulder[1] - 24), rf_label, fill=label_color, font=tiny_font)
 
     if not pd.isna(wind_speed_mph) and not pd.isna(wind_direction_deg):
         toward_deg = (float(wind_direction_deg) + 180.0) % 360.0
@@ -695,7 +721,7 @@ def render_weather_field(
         else:
             direction_text = "Toward LF"
 
-        badge_text = f"{direction_text} • {int(round(float(wind_speed_mph)))} mph"
+        badge_text = f"{direction_text} | {int(round(float(wind_speed_mph)))} mph"
         badge_bbox = draw.textbbox((0, 0), badge_text, font=badge_font)
         badge_w = (badge_bbox[2] - badge_bbox[0]) + 22
         badge_h = (badge_bbox[3] - badge_bbox[1]) + 12
@@ -710,18 +736,26 @@ def render_weather_field(
         )
         draw.text((cx - (badge_bbox[2] - badge_bbox[0]) / 2, badge_y0 + 6), badge_text, fill="#1d4ed8", font=badge_font)
 
+        # Sweeping wind arc in the outfield space.
+        arc_cx = cx
+        arc_cy = home_y - 36
+        arc_rx = 78
+        arc_ry = 62
         angle = radians(toward_deg)
-        origin_x = cx
-        origin_y = home_y - 18
-        length = 76
-        end_x = origin_x + sin(angle) * length
-        end_y = origin_y - cos(angle) * length
-        draw.line((origin_x, origin_y, end_x, end_y), fill="#2563eb", width=7)
+        arc_span = 72.0
+        start_deg = toward_deg - arc_span
+        end_deg = toward_deg
+        arc_box = (arc_cx - arc_rx, arc_cy - arc_ry, arc_cx + arc_rx, arc_cy + arc_ry)
+        draw.arc(arc_box, start=start_deg, end=end_deg, fill="#2563eb", width=8)
+
+        end_x = arc_cx + sin(angle) * arc_rx
+        end_y = arc_cy - cos(angle) * arc_ry
+        tangent = angle + radians(90)
         head = 16
-        left_a = angle + radians(150)
-        right_a = angle - radians(150)
-        draw.line((end_x, end_y, end_x + sin(left_a) * head, end_y - cos(left_a) * head), fill="#2563eb", width=6)
-        draw.line((end_x, end_y, end_x + sin(right_a) * head, end_y - cos(right_a) * head), fill="#2563eb", width=6)
+        left_a = tangent + radians(24)
+        right_a = tangent - radians(24)
+        draw.line((end_x, end_y, end_x - cos(left_a) * head, end_y - sin(left_a) * head), fill="#2563eb", width=7)
+        draw.line((end_x, end_y, end_x - cos(right_a) * head, end_y - sin(right_a) * head), fill="#2563eb", width=7)
     else:
         missing = "Wind unavailable"
         missing_bbox = draw.textbbox((0, 0), missing, font=badge_font)
