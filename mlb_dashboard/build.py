@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
 
-from .cockroach_loader import CockroachPayload, load_cockroach_payload
+from .cockroach_loader import CockroachPayload, load_cockroach_payload, write_tracking_payload
 from .config import AppConfig, DEFAULT_PITCH_GROUPS, DEFAULT_RECENT_WINDOWS, DEFAULT_SPLITS, ensure_directories
 from .metrics import add_metric_flags, apply_year_weights, likely_starter_scores
 from .mlb_api import fetch_schedule, fetch_team_rosters_for_schedule
+from .dashboard_views import add_hitter_matchup_score, add_pitcher_rank_score
 
 try:
     import duckdb
@@ -46,6 +48,8 @@ REQUIRED_COLUMNS = [
     "strikes",
     "hc_x",
     "zone",
+    "bat_score",
+    "post_bat_score",
 ]
 
 
@@ -531,6 +535,649 @@ def _write_reusable_artifacts(
     pitcher_zone_profiles.to_parquet(config.reusable_dir / "pitcher_zone_profiles.parquet", index=False)
 
 
+def _pitcher_lookup(pitcher_metrics: pd.DataFrame) -> dict[int, dict[str, object]]:
+    if pitcher_metrics.empty:
+        return {}
+    work = pitcher_metrics.sort_values(["recent_window", "weighted_mode", "split_key"], na_position="last").drop_duplicates("pitcher_id")
+    lookup: dict[int, dict[str, object]] = {}
+    for _, row in work.iterrows():
+        pitcher_id = row.get("pitcher_id")
+        if pd.isna(pitcher_id):
+            continue
+        lookup[int(pitcher_id)] = {
+            "pitcher_name": row.get("pitcher_name"),
+            "p_throws": row.get("p_throws"),
+        }
+    return lookup
+
+
+def _base_hitter_pool(
+    hitter_metrics: pd.DataFrame,
+    rosters_frame: pd.DataFrame,
+    team: str,
+    split_key: str,
+    recent_window: str,
+    weighted_mode: str,
+) -> pd.DataFrame:
+    frame = hitter_metrics.loc[
+        (hitter_metrics["team"] == team)
+        & (hitter_metrics["split_key"] == split_key)
+        & (hitter_metrics["recent_window"] == recent_window)
+        & (hitter_metrics["weighted_mode"] == weighted_mode)
+    ].copy()
+    if frame.empty:
+        return frame
+    lookup = rosters_frame.loc[rosters_frame["team"] == team, ["player_id", "player_name"]].drop_duplicates("player_id") if not rosters_frame.empty else pd.DataFrame()
+    if lookup.empty:
+        return frame
+    enriched = frame.merge(lookup, left_on="batter", right_on="player_id", how="left")
+    enriched["hitter_name"] = enriched["player_name"].fillna(enriched["hitter_name"])
+    return enriched.drop(columns=["player_id", "player_name"], errors="ignore")
+
+
+def _build_hitter_tracking_snapshots(
+    target_date: date,
+    schedule: list[dict],
+    rosters_frame: pd.DataFrame,
+    hitter_metrics: pd.DataFrame,
+    pitcher_metrics: pd.DataFrame,
+    batter_zone_profiles: pd.DataFrame,
+    pitcher_zone_profiles: pd.DataFrame,
+) -> pd.DataFrame:
+    if not schedule or hitter_metrics.empty:
+        return pd.DataFrame()
+    pitcher_lookup = _pitcher_lookup(pitcher_metrics)
+    rows: list[pd.DataFrame] = []
+    build_date_value = pd.Timestamp.utcnow().date()
+    for game in schedule:
+        game_pk = game["game_pk"]
+        game_label = f"{game['away_team']} @ {game['home_team']}"
+        home_pitcher_id = game.get("home_probable_pitcher_id")
+        away_pitcher_id = game.get("away_probable_pitcher_id")
+        home_pitcher = pitcher_lookup.get(int(home_pitcher_id), {}) if home_pitcher_id else {}
+        away_pitcher = pitcher_lookup.get(int(away_pitcher_id), {}) if away_pitcher_id else {}
+        away_pitcher_hand = home_pitcher.get("p_throws")
+        home_pitcher_hand = away_pitcher.get("p_throws")
+        for split_key in DEFAULT_SPLITS:
+            for recent_window in DEFAULT_RECENT_WINDOWS:
+                for weighted_mode in ("weighted", "unweighted"):
+                    away_frame = _base_hitter_pool(hitter_metrics, rosters_frame, game["away_team"], split_key, recent_window, weighted_mode)
+                    home_frame = _base_hitter_pool(hitter_metrics, rosters_frame, game["home_team"], split_key, recent_window, weighted_mode)
+                    away_frame = add_hitter_matchup_score(
+                        away_frame,
+                        batter_zone_profiles=batter_zone_profiles,
+                        pitcher_zone_profiles=pitcher_zone_profiles,
+                        opposing_pitcher_id=home_pitcher_id,
+                        opposing_pitcher_hand=away_pitcher_hand,
+                    )
+                    home_frame = add_hitter_matchup_score(
+                        home_frame,
+                        batter_zone_profiles=batter_zone_profiles,
+                        pitcher_zone_profiles=pitcher_zone_profiles,
+                        opposing_pitcher_id=away_pitcher_id,
+                        opposing_pitcher_hand=home_pitcher_hand,
+                    )
+                    for frame, opponent, opposing_id, opposing_name, opposing_hand in (
+                        (away_frame, game["home_team"], home_pitcher_id, home_pitcher.get("pitcher_name"), away_pitcher_hand),
+                        (home_frame, game["away_team"], away_pitcher_id, away_pitcher.get("pitcher_name"), home_pitcher_hand),
+                    ):
+                        if frame.empty:
+                            continue
+                        work = frame.copy()
+                        work["build_date"] = build_date_value
+                        work["slate_date"] = target_date
+                        work["game_pk"] = game_pk
+                        work["game_label"] = game_label
+                        work["opponent"] = opponent
+                        work["opposing_pitcher_id"] = opposing_id
+                        work["opposing_pitcher_name"] = opposing_name
+                        work["opposing_pitcher_hand"] = opposing_hand
+                        work["snapshot_id"] = work.apply(
+                            lambda row: str(
+                                uuid.uuid5(
+                                    uuid.NAMESPACE_URL,
+                                    "|".join(
+                                        [
+                                            str(target_date),
+                                            str(game_pk),
+                                            str(int(row["batter"])) if pd.notna(row["batter"]) else "",
+                                            str(row["split_key"]),
+                                            str(row["recent_window"]),
+                                            str(row["weighted_mode"]),
+                                        ]
+                                    ),
+                                )
+                            ),
+                            axis=1,
+                        )
+                        rows.append(
+                            work[
+                                [
+                                    "snapshot_id",
+                                    "build_date",
+                                    "slate_date",
+                                    "game_pk",
+                                    "game_label",
+                                    "team",
+                                    "opponent",
+                                    "batter",
+                                    "hitter_name",
+                                    "opposing_pitcher_id",
+                                    "opposing_pitcher_name",
+                                    "opposing_pitcher_hand",
+                                    "split_key",
+                                    "recent_window",
+                                    "weighted_mode",
+                                    "matchup_score",
+                                    "ceiling_score",
+                                    "zone_fit_score",
+                                    "likely_starter_score",
+                                    "xwoba",
+                                    "xwoba_con",
+                                    "swstr_pct",
+                                    "pulled_barrel_pct",
+                                    "barrel_bbe_pct",
+                                    "barrel_bip_pct",
+                                    "fb_pct",
+                                    "hard_hit_pct",
+                                    "avg_launch_angle",
+                                    "pitch_count",
+                                    "bip",
+                                ]
+                            ].rename(columns={"batter": "batter_id"})
+                        )
+    if not rows:
+        return pd.DataFrame()
+    return pd.concat(rows, ignore_index=True)
+
+
+def _build_hitter_board_winners(snapshots: pd.DataFrame) -> pd.DataFrame:
+    if snapshots.empty:
+        return pd.DataFrame(columns=["slate_date", "game_pk", "batter_id", "hitter_name", "team", "board_name", "board_rank", "board_score", "source_metric"])
+    canonical = snapshots.loc[
+        (snapshots["split_key"] == "overall")
+        & (snapshots["recent_window"] == "season")
+        & (snapshots["weighted_mode"] == "weighted")
+    ].copy()
+    if canonical.empty:
+        return pd.DataFrame(columns=["slate_date", "game_pk", "batter_id", "hitter_name", "team", "board_name", "board_rank", "board_score", "source_metric"])
+
+    def _rank_board(frame: pd.DataFrame, board_name: str, score_column: str, depth: int = 10) -> pd.DataFrame:
+        ranked = frame.sort_values([score_column, "xwoba"], ascending=[False, False], na_position="last").head(depth).copy()
+        ranked["board_name"] = board_name
+        ranked["board_rank"] = range(1, len(ranked) + 1)
+        ranked["board_score"] = ranked[score_column]
+        ranked["source_metric"] = score_column
+        return ranked[["slate_date", "game_pk", "batter_id", "hitter_name", "team", "board_name", "board_rank", "board_score", "source_metric"]]
+
+    best_candidates: list[pd.DataFrame] = []
+    for _, game_frame in canonical.groupby("game_pk", sort=False):
+        best = game_frame.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last").head(3).copy()
+        if not best.empty:
+            best_candidates.append(best)
+    best_source = pd.concat(best_candidates, ignore_index=True) if best_candidates else pd.DataFrame(columns=canonical.columns)
+    boards = [
+        _rank_board(canonical, "top_slate_matchup", "matchup_score"),
+        _rank_board(canonical, "ceiling", "ceiling_score"),
+    ]
+    if not best_source.empty:
+        boards.append(_rank_board(best_source, "best_matchups", "matchup_score"))
+    return pd.concat(boards, ignore_index=True) if boards else pd.DataFrame(columns=["slate_date", "game_pk", "batter_id", "hitter_name", "team", "board_name", "board_rank", "board_score", "source_metric"])
+
+
+def _build_hitter_game_outcomes(target_date: date, raw_statcast: pd.DataFrame, snapshots: pd.DataFrame) -> pd.DataFrame:
+    if snapshots.empty:
+        return pd.DataFrame(columns=["slate_date", "game_pk", "team", "batter_id", "hitter_name", "had_plate_appearance", "started", "plate_appearances", "hits", "home_runs", "total_bases", "runs", "rbi", "walks", "strikeouts", "last_updated_at"])
+    snapshot_players = snapshots[["slate_date", "game_pk", "team", "batter_id", "hitter_name"]].drop_duplicates(["slate_date", "game_pk", "batter_id"]).copy()
+    day_frame = raw_statcast.loc[pd.to_datetime(raw_statcast["game_date"]).dt.date == target_date].copy()
+    if day_frame.empty:
+        empty = snapshot_players.copy()
+        empty["had_plate_appearance"] = False
+        empty["started"] = False
+        empty["plate_appearances"] = 0
+        empty["hits"] = 0
+        empty["home_runs"] = 0
+        empty["total_bases"] = 0
+        empty["runs"] = 0
+        empty["rbi"] = 0
+        empty["walks"] = 0
+        empty["strikeouts"] = 0
+        empty["last_updated_at"] = datetime.utcnow()
+        return empty
+    day_frame = day_frame.loc[day_frame["game_pk"].isin(snapshots["game_pk"].unique()) & day_frame["batter"].isin(snapshots["batter_id"].unique())].copy()
+    if day_frame.empty:
+        empty = snapshot_players.copy()
+        empty["had_plate_appearance"] = False
+        empty["started"] = False
+        empty["plate_appearances"] = 0
+        empty["hits"] = 0
+        empty["home_runs"] = 0
+        empty["total_bases"] = 0
+        empty["runs"] = 0
+        empty["rbi"] = 0
+        empty["walks"] = 0
+        empty["strikeouts"] = 0
+        empty["last_updated_at"] = datetime.utcnow()
+        return empty
+
+    pa_events = (
+        day_frame.sort_values(["game_pk", "batter", "at_bat_number", "pitch_number"])
+        .groupby(["game_pk", "team", "batter", "at_bat_number"], as_index=False)
+        .tail(1)
+        .copy()
+    )
+    event_text = pa_events["events"].fillna("").astype(str).str.lower()
+    pa_events["is_hit"] = event_text.isin({"single", "double", "triple", "home_run"}).astype(int)
+    pa_events["is_home_run"] = event_text.eq("home_run").astype(int)
+    pa_events["total_bases_value"] = event_text.map({"single": 1, "double": 2, "triple": 3, "home_run": 4}).fillna(0).astype(int)
+    pa_events["is_walk"] = event_text.isin({"walk", "intent_walk", "intentional_walk"}).astype(int)
+    pa_events["is_strikeout"] = event_text.isin({"strikeout", "strikeout_double_play"}).astype(int)
+    pa_events["rbi_value"] = (
+        pd.to_numeric(pa_events.get("post_bat_score"), errors="coerce").fillna(0)
+        - pd.to_numeric(pa_events.get("bat_score"), errors="coerce").fillna(0)
+    ).clip(lower=0).astype(int)
+    pa_events["run_value"] = pa_events["is_home_run"]
+
+    outcomes = (
+        pa_events.groupby(["game_pk", "team", "batter"], as_index=False)
+        .agg(
+            plate_appearances=("at_bat_number", "nunique"),
+            hits=("is_hit", "sum"),
+            home_runs=("is_home_run", "sum"),
+            total_bases=("total_bases_value", "sum"),
+            runs=("run_value", "sum"),
+            rbi=("rbi_value", "sum"),
+            walks=("is_walk", "sum"),
+            strikeouts=("is_strikeout", "sum"),
+        )
+    )
+    names = snapshots[["game_pk", "batter_id", "hitter_name"]].drop_duplicates(["game_pk", "batter_id"]).rename(columns={"batter_id": "batter"})
+    outcomes = outcomes.merge(names, on=["game_pk", "batter"], how="left")
+    outcomes["slate_date"] = target_date
+    outcomes["had_plate_appearance"] = outcomes["plate_appearances"].gt(0)
+    outcomes["started"] = outcomes["had_plate_appearance"]
+    outcomes["last_updated_at"] = datetime.utcnow()
+    outcomes = outcomes.rename(columns={"batter": "batter_id"})
+    outcomes = outcomes[
+        [
+            "slate_date",
+            "game_pk",
+            "team",
+            "batter_id",
+            "hitter_name",
+            "had_plate_appearance",
+            "started",
+            "plate_appearances",
+            "hits",
+            "home_runs",
+            "total_bases",
+            "runs",
+            "rbi",
+            "walks",
+            "strikeouts",
+            "last_updated_at",
+        ]
+    ]
+    full_outcomes = snapshot_players.merge(
+        outcomes,
+        on=["slate_date", "game_pk", "team", "batter_id", "hitter_name"],
+        how="left",
+    )
+    for column in ["plate_appearances", "hits", "home_runs", "total_bases", "runs", "rbi", "walks", "strikeouts"]:
+        full_outcomes[column] = pd.to_numeric(full_outcomes[column], errors="coerce").fillna(0).astype(int)
+    full_outcomes["had_plate_appearance"] = full_outcomes["had_plate_appearance"].fillna(False)
+    full_outcomes["started"] = full_outcomes["started"].fillna(False)
+    full_outcomes["last_updated_at"] = full_outcomes["last_updated_at"].fillna(datetime.utcnow())
+    return full_outcomes[
+        [
+            "slate_date",
+            "game_pk",
+            "team",
+            "batter_id",
+            "hitter_name",
+            "had_plate_appearance",
+            "started",
+            "plate_appearances",
+            "hits",
+            "home_runs",
+            "total_bases",
+            "runs",
+            "rbi",
+            "walks",
+            "strikeouts",
+            "last_updated_at",
+        ]
+    ]
+
+
+def _build_probable_pitcher_lookup(schedule: list[dict]) -> pd.DataFrame:
+    rows: list[dict] = []
+    for game in schedule:
+        game_pk = game["game_pk"]
+        game_label = f"{game['away_team']} @ {game['home_team']}"
+        away_id = game.get("away_probable_pitcher_id")
+        home_id = game.get("home_probable_pitcher_id")
+        if away_id:
+            rows.append(
+                {
+                    "slate_date": game.get("game_date"),
+                    "game_pk": game_pk,
+                    "game_label": game_label,
+                    "pitcher_id": int(away_id),
+                    "team": game["away_team"],
+                    "opponent": game["home_team"],
+                }
+            )
+        if home_id:
+            rows.append(
+                {
+                    "slate_date": game.get("game_date"),
+                    "game_pk": game_pk,
+                    "game_label": game_label,
+                    "pitcher_id": int(home_id),
+                    "team": game["home_team"],
+                    "opponent": game["away_team"],
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _build_pitcher_tracking_snapshots(
+    target_date: date,
+    probable_pitchers: pd.DataFrame,
+    pitcher_metrics: pd.DataFrame,
+) -> pd.DataFrame:
+    if probable_pitchers.empty or pitcher_metrics.empty:
+        return pd.DataFrame()
+    probable_ids = probable_pitchers["pitcher_id"].dropna().astype(int).unique()
+    candidates = pitcher_metrics.loc[pitcher_metrics["pitcher_id"].isin(probable_ids)].copy()
+    if candidates.empty:
+        return pd.DataFrame()
+    candidates = add_pitcher_rank_score(candidates)
+    build_date_value = pd.Timestamp.utcnow().date()
+    rows: list[pd.DataFrame] = []
+    for _, starter in probable_pitchers.drop_duplicates(["game_pk", "pitcher_id"]).iterrows():
+        pitcher_id = int(starter["pitcher_id"])
+        starter_frame = candidates.loc[candidates["pitcher_id"] == pitcher_id].copy()
+        if starter_frame.empty:
+            continue
+        starter_frame["build_date"] = build_date_value
+        starter_frame["slate_date"] = target_date
+        starter_frame["game_pk"] = starter["game_pk"]
+        starter_frame["game_label"] = starter["game_label"]
+        starter_frame["team"] = starter["team"]
+        starter_frame["opponent"] = starter["opponent"]
+        starter_frame["snapshot_id"] = starter_frame.apply(
+            lambda row: str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    "|".join(
+                        [
+                            str(target_date),
+                            str(int(starter["game_pk"])),
+                            str(int(pitcher_id)),
+                            str(row["split_key"]),
+                            str(row["recent_window"]),
+                            str(row["weighted_mode"]),
+                        ]
+                    ),
+                )
+            ),
+            axis=1,
+        )
+        rows.append(
+            starter_frame[
+                [
+                    "snapshot_id",
+                    "build_date",
+                    "slate_date",
+                    "game_pk",
+                    "game_label",
+                    "team",
+                    "opponent",
+                    "pitcher_id",
+                    "pitcher_name",
+                    "p_throws",
+                    "split_key",
+                    "recent_window",
+                    "weighted_mode",
+                    "pitcher_score",
+                    "xwoba",
+                    "swstr_pct",
+                    "barrel_bbe_pct",
+                    "barrel_bip_pct",
+                    "pulled_barrel_pct",
+                    "fb_pct",
+                    "gb_pct",
+                    "gb_fb_ratio",
+                    "hard_hit_pct",
+                    "avg_launch_angle",
+                    "pitch_count",
+                    "bip",
+                ]
+            ]
+        )
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+
+
+def _build_pitcher_arsenal_snapshots(
+    target_date: date,
+    probable_pitchers: pd.DataFrame,
+    pitcher_arsenal: pd.DataFrame,
+    pitcher_arsenal_by_hand: pd.DataFrame,
+) -> pd.DataFrame:
+    if probable_pitchers.empty:
+        return pd.DataFrame()
+    probable = probable_pitchers.drop_duplicates(["game_pk", "pitcher_id"]).copy()
+    probable_ids = probable["pitcher_id"].dropna().astype(int).unique()
+    rows: list[pd.DataFrame] = []
+    all_frame = pitcher_arsenal.loc[pitcher_arsenal["pitcher_id"].isin(probable_ids)].copy()
+    if not all_frame.empty:
+        all_frame["batter_side_key"] = "all"
+        rows.append(all_frame)
+    by_hand = pitcher_arsenal_by_hand.loc[pitcher_arsenal_by_hand["pitcher_id"].isin(probable_ids)].copy()
+    if not by_hand.empty:
+        rows.append(by_hand)
+    if not rows:
+        return pd.DataFrame()
+    combined = pd.concat(rows, ignore_index=True, sort=False)
+    enriched = combined.merge(probable[["game_pk", "pitcher_id"]].drop_duplicates(), on="pitcher_id", how="inner")
+    enriched["slate_date"] = target_date
+    return enriched[
+        [
+            "slate_date",
+            "game_pk",
+            "pitcher_id",
+            "pitcher_name",
+            "split_key",
+            "recent_window",
+            "weighted_mode",
+            "batter_side_key",
+            "pitch_name",
+            "usage_pct",
+            "swstr_pct",
+            "hard_hit_pct",
+            "avg_release_speed",
+            "avg_spin_rate",
+            "xwoba_con",
+        ]
+    ].drop_duplicates(
+        ["slate_date", "game_pk", "pitcher_id", "split_key", "recent_window", "weighted_mode", "batter_side_key", "pitch_name"]
+    )
+
+
+def _build_pitcher_count_snapshots(
+    target_date: date,
+    probable_pitchers: pd.DataFrame,
+    pitcher_usage_by_count: pd.DataFrame,
+) -> pd.DataFrame:
+    if probable_pitchers.empty or pitcher_usage_by_count.empty:
+        return pd.DataFrame()
+    probable = probable_pitchers.drop_duplicates(["game_pk", "pitcher_id"]).copy()
+    probable_ids = probable["pitcher_id"].dropna().astype(int).unique()
+    combined = pitcher_usage_by_count.loc[pitcher_usage_by_count["pitcher_id"].isin(probable_ids)].copy()
+    if combined.empty:
+        return pd.DataFrame()
+    enriched = combined.merge(probable[["game_pk", "pitcher_id"]].drop_duplicates(), on="pitcher_id", how="inner")
+    enriched["slate_date"] = target_date
+    return enriched[
+        [
+            "slate_date",
+            "game_pk",
+            "pitcher_id",
+            "pitcher_name",
+            "split_key",
+            "recent_window",
+            "weighted_mode",
+            "batter_side_key",
+            "pitch_name",
+            "count_bucket",
+            "usage_pct",
+        ]
+    ].drop_duplicates(
+        ["slate_date", "game_pk", "pitcher_id", "split_key", "recent_window", "weighted_mode", "batter_side_key", "pitch_name", "count_bucket"]
+    )
+
+
+def _build_pitcher_board_winners(snapshots: pd.DataFrame) -> pd.DataFrame:
+    if snapshots.empty:
+        return pd.DataFrame(columns=["slate_date", "game_pk", "pitcher_id", "pitcher_name", "team", "board_name", "board_rank", "board_score", "source_metric"])
+    canonical = snapshots.loc[
+        (snapshots["split_key"] == "overall")
+        & (snapshots["recent_window"] == "season")
+        & (snapshots["weighted_mode"] == "weighted")
+    ].copy()
+    if canonical.empty:
+        return pd.DataFrame(columns=["slate_date", "game_pk", "pitcher_id", "pitcher_name", "team", "board_name", "board_rank", "board_score", "source_metric"])
+    ranked = canonical.sort_values(["pitcher_score", "xwoba"], ascending=[False, True], na_position="last").head(10).copy()
+    ranked["board_name"] = "top_slate_pitchers"
+    ranked["board_rank"] = range(1, len(ranked) + 1)
+    ranked["board_score"] = ranked["pitcher_score"]
+    ranked["source_metric"] = "pitcher_score"
+    return ranked[["slate_date", "game_pk", "pitcher_id", "pitcher_name", "team", "board_name", "board_rank", "board_score", "source_metric"]]
+
+
+def _build_pitcher_game_outcomes(target_date: date, raw_statcast: pd.DataFrame, snapshots: pd.DataFrame) -> pd.DataFrame:
+    if snapshots.empty:
+        return pd.DataFrame(columns=["slate_date", "game_pk", "team", "pitcher_id", "pitcher_name", "had_pitch", "started", "outs_recorded", "batters_faced", "hits_allowed", "home_runs_allowed", "runs_allowed", "earned_runs", "walks", "strikeouts", "last_updated_at"])
+    snapshot_pitchers = snapshots[["slate_date", "game_pk", "team", "pitcher_id", "pitcher_name"]].drop_duplicates(["slate_date", "game_pk", "pitcher_id"]).copy()
+    day_frame = raw_statcast.loc[pd.to_datetime(raw_statcast["game_date"]).dt.date == target_date].copy()
+    if day_frame.empty:
+        empty = snapshot_pitchers.copy()
+        empty["had_pitch"] = False
+        empty["started"] = False
+        empty["outs_recorded"] = None
+        empty["batters_faced"] = 0
+        empty["hits_allowed"] = 0
+        empty["home_runs_allowed"] = 0
+        empty["runs_allowed"] = None
+        empty["earned_runs"] = None
+        empty["walks"] = 0
+        empty["strikeouts"] = 0
+        empty["last_updated_at"] = datetime.utcnow()
+        return empty
+    day_frame = day_frame.loc[day_frame["game_pk"].isin(snapshots["game_pk"].unique()) & day_frame["pitcher"].isin(snapshots["pitcher_id"].unique())].copy()
+    if day_frame.empty:
+        empty = snapshot_pitchers.copy()
+        empty["had_pitch"] = False
+        empty["started"] = False
+        empty["outs_recorded"] = None
+        empty["batters_faced"] = 0
+        empty["hits_allowed"] = 0
+        empty["home_runs_allowed"] = 0
+        empty["runs_allowed"] = None
+        empty["earned_runs"] = None
+        empty["walks"] = 0
+        empty["strikeouts"] = 0
+        empty["last_updated_at"] = datetime.utcnow()
+        return empty
+    pa_events = (
+        day_frame.sort_values(["game_pk", "pitcher", "at_bat_number", "pitch_number"])
+        .groupby(["game_pk", "fielding_team", "pitcher", "at_bat_number"], as_index=False)
+        .tail(1)
+        .copy()
+    )
+    event_text = pa_events["events"].fillna("").astype(str).str.lower()
+    pa_events["is_hit_allowed"] = event_text.isin({"single", "double", "triple", "home_run"}).astype(int)
+    pa_events["is_home_run_allowed"] = event_text.eq("home_run").astype(int)
+    pa_events["is_walk"] = event_text.isin({"walk", "intent_walk", "intentional_walk"}).astype(int)
+    pa_events["is_strikeout"] = event_text.isin({"strikeout", "strikeout_double_play"}).astype(int)
+    pa_events["runs_allowed_delta"] = (
+        pd.to_numeric(pa_events.get("post_bat_score"), errors="coerce")
+        - pd.to_numeric(pa_events.get("bat_score"), errors="coerce")
+    )
+    outcomes = (
+        pa_events.groupby(["game_pk", "fielding_team", "pitcher"], as_index=False)
+        .agg(
+            batters_faced=("at_bat_number", "nunique"),
+            hits_allowed=("is_hit_allowed", "sum"),
+            home_runs_allowed=("is_home_run_allowed", "sum"),
+            walks=("is_walk", "sum"),
+            strikeouts=("is_strikeout", "sum"),
+            runs_allowed=("runs_allowed_delta", lambda s: pd.to_numeric(s, errors="coerce").clip(lower=0).sum() if s.notna().any() else None),
+        )
+    )
+    names = snapshots[["game_pk", "pitcher_id", "pitcher_name"]].drop_duplicates(["game_pk", "pitcher_id"]).rename(columns={"pitcher_id": "pitcher"})
+    outcomes = outcomes.merge(names, on=["game_pk", "pitcher"], how="left")
+    outcomes["slate_date"] = target_date
+    outcomes["had_pitch"] = outcomes["batters_faced"].gt(0)
+    outcomes["started"] = outcomes["had_pitch"]
+    outcomes["outs_recorded"] = None
+    outcomes["earned_runs"] = None
+    outcomes["last_updated_at"] = datetime.utcnow()
+    outcomes = outcomes.rename(columns={"pitcher": "pitcher_id", "fielding_team": "team"})
+    outcomes = outcomes[
+        [
+            "slate_date",
+            "game_pk",
+            "team",
+            "pitcher_id",
+            "pitcher_name",
+            "had_pitch",
+            "started",
+            "outs_recorded",
+            "batters_faced",
+            "hits_allowed",
+            "home_runs_allowed",
+            "runs_allowed",
+            "earned_runs",
+            "walks",
+            "strikeouts",
+            "last_updated_at",
+        ]
+    ]
+    full_outcomes = snapshot_pitchers.merge(
+        outcomes,
+        on=["slate_date", "game_pk", "team", "pitcher_id", "pitcher_name"],
+        how="left",
+    )
+    for column in ["batters_faced", "hits_allowed", "home_runs_allowed", "walks", "strikeouts"]:
+        full_outcomes[column] = pd.to_numeric(full_outcomes[column], errors="coerce").fillna(0).astype(int)
+    full_outcomes["had_pitch"] = full_outcomes["had_pitch"].fillna(False)
+    full_outcomes["started"] = full_outcomes["started"].fillna(False)
+    full_outcomes["last_updated_at"] = full_outcomes["last_updated_at"].fillna(datetime.utcnow())
+    return full_outcomes[
+        [
+            "slate_date",
+            "game_pk",
+            "team",
+            "pitcher_id",
+            "pitcher_name",
+            "had_pitch",
+            "started",
+            "outs_recorded",
+            "batters_faced",
+            "hits_allowed",
+            "home_runs_allowed",
+            "runs_allowed",
+            "earned_runs",
+            "walks",
+            "strikeouts",
+            "last_updated_at",
+        ]
+    ]
+
+
 def run_build(context: BuildContext) -> None:
     ensure_directories(context.config)
     csv_paths = _csv_glob(context.csv_dir)
@@ -567,6 +1214,35 @@ def run_build(context: BuildContext) -> None:
     )
     schedule = fetch_schedule(context.target_date)
     rosters = fetch_team_rosters_for_schedule(schedule, context.target_date)
+    rosters_frame = pd.DataFrame(rosters) if rosters else pd.DataFrame(columns=["team", "player_id", "player_name"])
+    snapshots = _build_hitter_tracking_snapshots(
+        context.target_date,
+        schedule,
+        rosters_frame,
+        hitter_metrics,
+        pitcher_metrics,
+        batter_zone_profiles,
+        pitcher_zone_profiles,
+    )
+    board_winners = _build_hitter_board_winners(snapshots)
+    outcomes = _build_hitter_game_outcomes(context.target_date, raw_statcast, snapshots)
+    probable_pitchers = _build_probable_pitcher_lookup(schedule)
+    pitcher_snapshots = _build_pitcher_tracking_snapshots(context.target_date, probable_pitchers, pitcher_metrics)
+    pitcher_arsenal_snapshots = _build_pitcher_arsenal_snapshots(context.target_date, probable_pitchers, pitcher_arsenal, pitcher_arsenal_by_hand)
+    pitcher_count_snapshots = _build_pitcher_count_snapshots(context.target_date, probable_pitchers, pitcher_usage_by_count)
+    pitcher_board_winners = _build_pitcher_board_winners(pitcher_snapshots)
+    pitcher_outcomes = _build_pitcher_game_outcomes(context.target_date, raw_statcast, pitcher_snapshots)
+    write_tracking_payload(
+        context.config,
+        snapshots,
+        outcomes,
+        board_winners,
+        pitcher_snapshots=pitcher_snapshots,
+        pitcher_outcomes=pitcher_outcomes,
+        pitcher_board_winners=pitcher_board_winners,
+        pitcher_arsenal_snapshots=pitcher_arsenal_snapshots,
+        pitcher_count_snapshots=pitcher_count_snapshots,
+    )
     _save_daily_files(
         context,
         schedule,

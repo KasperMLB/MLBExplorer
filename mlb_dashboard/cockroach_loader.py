@@ -212,6 +212,267 @@ def _read_query(conn, sql: str) -> pd.DataFrame:
     return pd.read_sql_query(sql, conn)
 
 
+def _create_tracking_tables(conn, config: AppConfig) -> None:
+    snapshot_columns = {
+        "snapshot_id": "STRING PRIMARY KEY",
+        "build_date": "DATE NOT NULL",
+        "slate_date": "DATE NOT NULL",
+        "game_pk": "INT8 NOT NULL",
+        "game_label": "STRING NOT NULL",
+        "team": "STRING NOT NULL",
+        "opponent": "STRING NOT NULL",
+        "batter_id": "INT8 NOT NULL",
+        "hitter_name": "STRING NOT NULL",
+        "opposing_pitcher_id": "INT8",
+        "opposing_pitcher_name": "STRING",
+        "opposing_pitcher_hand": "STRING",
+        "split_key": "STRING NOT NULL",
+        "recent_window": "STRING NOT NULL",
+        "weighted_mode": "STRING NOT NULL",
+        "matchup_score": "FLOAT8",
+        "ceiling_score": "FLOAT8",
+        "zone_fit_score": "FLOAT8",
+        "likely_starter_score": "FLOAT8",
+        "xwoba": "FLOAT8",
+        "xwoba_con": "FLOAT8",
+        "swstr_pct": "FLOAT8",
+        "pulled_barrel_pct": "FLOAT8",
+        "barrel_bbe_pct": "FLOAT8",
+        "barrel_bip_pct": "FLOAT8",
+        "fb_pct": "FLOAT8",
+        "hard_hit_pct": "FLOAT8",
+        "avg_launch_angle": "FLOAT8",
+        "pitch_count": "INT8",
+        "bip": "INT8",
+    }
+    outcome_columns = {
+        "slate_date": "DATE NOT NULL",
+        "game_pk": "INT8 NOT NULL",
+        "team": "STRING NOT NULL",
+        "batter_id": "INT8 NOT NULL",
+        "hitter_name": "STRING NOT NULL",
+        "had_plate_appearance": "BOOL",
+        "started": "BOOL",
+        "plate_appearances": "INT8",
+        "hits": "INT8",
+        "home_runs": "INT8",
+        "total_bases": "INT8",
+        "runs": "INT8",
+        "rbi": "INT8",
+        "walks": "INT8",
+        "strikeouts": "INT8",
+        "last_updated_at": "TIMESTAMPTZ",
+    }
+    board_columns = {
+        "slate_date": "DATE NOT NULL",
+        "game_pk": "INT8 NOT NULL",
+        "batter_id": "INT8 NOT NULL",
+        "hitter_name": "STRING NOT NULL",
+        "team": "STRING NOT NULL",
+        "board_name": "STRING NOT NULL",
+        "board_rank": "INT8 NOT NULL",
+        "board_score": "FLOAT8",
+        "source_metric": "STRING NOT NULL",
+    }
+    pitcher_snapshot_columns = {
+        "snapshot_id": "STRING PRIMARY KEY",
+        "build_date": "DATE NOT NULL",
+        "slate_date": "DATE NOT NULL",
+        "game_pk": "INT8 NOT NULL",
+        "game_label": "STRING NOT NULL",
+        "team": "STRING NOT NULL",
+        "opponent": "STRING NOT NULL",
+        "pitcher_id": "INT8 NOT NULL",
+        "pitcher_name": "STRING NOT NULL",
+        "p_throws": "STRING",
+        "split_key": "STRING NOT NULL",
+        "recent_window": "STRING NOT NULL",
+        "weighted_mode": "STRING NOT NULL",
+        "pitcher_score": "FLOAT8",
+        "xwoba": "FLOAT8",
+        "swstr_pct": "FLOAT8",
+        "barrel_bbe_pct": "FLOAT8",
+        "barrel_bip_pct": "FLOAT8",
+        "pulled_barrel_pct": "FLOAT8",
+        "fb_pct": "FLOAT8",
+        "gb_pct": "FLOAT8",
+        "gb_fb_ratio": "FLOAT8",
+        "hard_hit_pct": "FLOAT8",
+        "avg_launch_angle": "FLOAT8",
+        "pitch_count": "INT8",
+        "bip": "INT8",
+    }
+    pitcher_outcome_columns = {
+        "slate_date": "DATE NOT NULL",
+        "game_pk": "INT8 NOT NULL",
+        "team": "STRING NOT NULL",
+        "pitcher_id": "INT8 NOT NULL",
+        "pitcher_name": "STRING NOT NULL",
+        "had_pitch": "BOOL",
+        "started": "BOOL",
+        "outs_recorded": "INT8",
+        "batters_faced": "INT8",
+        "hits_allowed": "INT8",
+        "home_runs_allowed": "INT8",
+        "runs_allowed": "INT8",
+        "earned_runs": "INT8",
+        "walks": "INT8",
+        "strikeouts": "INT8",
+        "last_updated_at": "TIMESTAMPTZ",
+    }
+    pitcher_board_columns = {
+        "slate_date": "DATE NOT NULL",
+        "game_pk": "INT8 NOT NULL",
+        "pitcher_id": "INT8 NOT NULL",
+        "pitcher_name": "STRING NOT NULL",
+        "team": "STRING NOT NULL",
+        "board_name": "STRING NOT NULL",
+        "board_rank": "INT8 NOT NULL",
+        "board_score": "FLOAT8",
+        "source_metric": "STRING NOT NULL",
+    }
+    pitcher_arsenal_columns = {
+        "slate_date": "DATE NOT NULL",
+        "game_pk": "INT8 NOT NULL",
+        "pitcher_id": "INT8 NOT NULL",
+        "pitcher_name": "STRING NOT NULL",
+        "split_key": "STRING NOT NULL",
+        "recent_window": "STRING NOT NULL",
+        "weighted_mode": "STRING NOT NULL",
+        "batter_side_key": "STRING NOT NULL",
+        "pitch_name": "STRING NOT NULL",
+        "usage_pct": "FLOAT8",
+        "swstr_pct": "FLOAT8",
+        "hard_hit_pct": "FLOAT8",
+        "avg_release_speed": "FLOAT8",
+        "avg_spin_rate": "FLOAT8",
+        "xwoba_con": "FLOAT8",
+    }
+    pitcher_count_columns = {
+        "slate_date": "DATE NOT NULL",
+        "game_pk": "INT8 NOT NULL",
+        "pitcher_id": "INT8 NOT NULL",
+        "pitcher_name": "STRING NOT NULL",
+        "split_key": "STRING NOT NULL",
+        "recent_window": "STRING NOT NULL",
+        "weighted_mode": "STRING NOT NULL",
+        "batter_side_key": "STRING NOT NULL",
+        "pitch_name": "STRING NOT NULL",
+        "count_bucket": "STRING NOT NULL",
+        "usage_pct": "FLOAT8",
+    }
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_hitter_snapshot_table} ({', '.join(f'{name} {definition}' for name, definition in snapshot_columns.items())})")
+    conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS hitter_model_snapshots_unique_idx ON {config.cockroach_hitter_snapshot_table} (slate_date, game_pk, batter_id, split_key, recent_window, weighted_mode)")
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_hitter_outcome_table} ({', '.join(f'{name} {definition}' for name, definition in outcome_columns.items())})")
+    conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS hitter_game_outcomes_unique_idx ON {config.cockroach_hitter_outcome_table} (slate_date, game_pk, batter_id)")
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_hitter_board_table} ({', '.join(f'{name} {definition}' for name, definition in board_columns.items())})")
+    conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS hitter_board_winners_unique_idx ON {config.cockroach_hitter_board_table} (slate_date, board_name, board_rank)")
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_pitcher_snapshot_table} ({', '.join(f'{name} {definition}' for name, definition in pitcher_snapshot_columns.items())})")
+    conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS pitcher_model_snapshots_unique_idx ON {config.cockroach_pitcher_snapshot_table} (slate_date, game_pk, pitcher_id, split_key, recent_window, weighted_mode)")
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_pitcher_outcome_table} ({', '.join(f'{name} {definition}' for name, definition in pitcher_outcome_columns.items())})")
+    conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS pitcher_game_outcomes_unique_idx ON {config.cockroach_pitcher_outcome_table} (slate_date, game_pk, pitcher_id)")
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_pitcher_board_table} ({', '.join(f'{name} {definition}' for name, definition in pitcher_board_columns.items())})")
+    conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS pitcher_board_winners_unique_idx ON {config.cockroach_pitcher_board_table} (slate_date, board_name, board_rank)")
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_pitcher_arsenal_snapshot_table} ({', '.join(f'{name} {definition}' for name, definition in pitcher_arsenal_columns.items())})")
+    conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS pitcher_arsenal_snapshots_unique_idx ON {config.cockroach_pitcher_arsenal_snapshot_table} (slate_date, game_pk, pitcher_id, split_key, recent_window, weighted_mode, batter_side_key, pitch_name)")
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_pitcher_count_snapshot_table} ({', '.join(f'{name} {definition}' for name, definition in pitcher_count_columns.items())})")
+    conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS pitcher_count_usage_snapshots_unique_idx ON {config.cockroach_pitcher_count_snapshot_table} (slate_date, game_pk, pitcher_id, split_key, recent_window, weighted_mode, batter_side_key, pitch_name, count_bucket)")
+
+
+def _prepare_records(frame: pd.DataFrame, columns: list[str]) -> list[tuple]:
+    work = frame.loc[:, columns].copy()
+    for column in work.columns:
+        if column == "last_updated_at":
+            work[column] = pd.to_datetime(work[column], errors="coerce").apply(lambda value: value.to_pydatetime() if pd.notna(value) else None)
+        elif column in {"slate_date", "build_date"}:
+            work[column] = pd.to_datetime(work[column], errors="coerce").dt.date
+        else:
+            work[column] = work[column].where(pd.notna(work[column]), None)
+    return [tuple(row[column] for column in columns) for _, row in work.iterrows()]
+
+
+def _upsert_frame(conn, table_name: str, frame: pd.DataFrame, conflict_columns: list[str]) -> None:
+    if frame.empty:
+        return
+    columns = list(frame.columns)
+    placeholders = ", ".join(["%s"] * len(columns))
+    assignments = ", ".join(f"{column}=EXCLUDED.{column}" for column in columns if column not in conflict_columns)
+    sql = (
+        f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders}) "
+        f"ON CONFLICT ({', '.join(conflict_columns)}) DO UPDATE SET {assignments}"
+    )
+    records = _prepare_records(frame, columns)
+    with conn.cursor() as cur:
+        cur.executemany(sql, records)
+
+
+def write_tracking_payload(
+    config: AppConfig,
+    snapshots: pd.DataFrame,
+    outcomes: pd.DataFrame,
+    board_winners: pd.DataFrame,
+    pitcher_snapshots: pd.DataFrame | None = None,
+    pitcher_outcomes: pd.DataFrame | None = None,
+    pitcher_board_winners: pd.DataFrame | None = None,
+    pitcher_arsenal_snapshots: pd.DataFrame | None = None,
+    pitcher_count_snapshots: pd.DataFrame | None = None,
+) -> None:
+    _ensure_driver()
+    if not config.database_url:
+        return
+    database_url = _normalize_database_url(config.database_url)
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        _create_tracking_tables(conn, config)
+        _upsert_frame(
+            conn,
+            config.cockroach_hitter_snapshot_table,
+            snapshots,
+            ["slate_date", "game_pk", "batter_id", "split_key", "recent_window", "weighted_mode"],
+        )
+        _upsert_frame(
+            conn,
+            config.cockroach_hitter_outcome_table,
+            outcomes,
+            ["slate_date", "game_pk", "batter_id"],
+        )
+        _upsert_frame(
+            conn,
+            config.cockroach_hitter_board_table,
+            board_winners,
+            ["slate_date", "board_name", "board_rank"],
+        )
+        _upsert_frame(
+            conn,
+            config.cockroach_pitcher_snapshot_table,
+            pitcher_snapshots if pitcher_snapshots is not None else pd.DataFrame(),
+            ["slate_date", "game_pk", "pitcher_id", "split_key", "recent_window", "weighted_mode"],
+        )
+        _upsert_frame(
+            conn,
+            config.cockroach_pitcher_outcome_table,
+            pitcher_outcomes if pitcher_outcomes is not None else pd.DataFrame(),
+            ["slate_date", "game_pk", "pitcher_id"],
+        )
+        _upsert_frame(
+            conn,
+            config.cockroach_pitcher_board_table,
+            pitcher_board_winners if pitcher_board_winners is not None else pd.DataFrame(),
+            ["slate_date", "board_name", "board_rank"],
+        )
+        _upsert_frame(
+            conn,
+            config.cockroach_pitcher_arsenal_snapshot_table,
+            pitcher_arsenal_snapshots if pitcher_arsenal_snapshots is not None else pd.DataFrame(),
+            ["slate_date", "game_pk", "pitcher_id", "split_key", "recent_window", "weighted_mode", "batter_side_key", "pitch_name"],
+        )
+        _upsert_frame(
+            conn,
+            config.cockroach_pitcher_count_snapshot_table,
+            pitcher_count_snapshots if pitcher_count_snapshots is not None else pd.DataFrame(),
+            ["slate_date", "game_pk", "pitcher_id", "split_key", "recent_window", "weighted_mode", "batter_side_key", "pitch_name", "count_bucket"],
+        )
+
+
 def load_cockroach_payload(config: AppConfig) -> CockroachPayload:
     _ensure_driver()
     if not config.database_url:
