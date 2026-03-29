@@ -1182,18 +1182,23 @@ def _draw_top_matchups_game_section(
     frame = section["frame"]
     title = section["title"]
     subtitle = str(section.get("subtitle", "")).strip()
-    row_height = 58
+    title_font = _load_font(32, bold=True)
+    subtitle_font = _load_font(20, bold=False)
+    hitter_font = _load_font(21, bold=True)
+    team_font = _load_font(18, bold=False)
+    chip_font = _load_font(16, bold=True)
+    row_height = 68
     row_gap = 8
-    title_height = 62 if subtitle else 46
+    title_height = 72 if subtitle else 52
     panel_height = title_height + len(frame) * (row_height + row_gap) + 14
     if frame.empty:
-        panel_height = 88 if subtitle else 72
+        panel_height = 98 if subtitle else 80
     _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
-    _text(draw, (left + 18, top + 14), title, font, REPORT_TEXT)
+    _text(draw, (left + 18, top + 14), title, title_font, REPORT_TEXT)
     if subtitle:
-        _text(draw, (left + 18, top + 38), subtitle, small_font, REPORT_MUTED)
+        _text(draw, (left + 18, top + 44), subtitle, subtitle_font, REPORT_MUTED)
     if frame.empty:
-        _text(draw, (left + 18, top + title_height), "No data available", small_font, REPORT_MUTED)
+        _text(draw, (left + 18, top + title_height), "No data available", subtitle_font, REPORT_MUTED)
         return top + panel_height
 
     metric_columns = [
@@ -1217,8 +1222,8 @@ def _draw_top_matchups_game_section(
         _panel(draw, (left + 12, row_top, left + width - 12, row_bottom), fill="#fbfcfe", radius=14)
         primary = _format_value("hitter_name", row.get("hitter_name"), export_mode=True)
         team_value = _format_value("team", row.get("team"), export_mode=True)
-        _text(draw, (left + 28, row_top + 10), primary, small_font, REPORT_TEXT)
-        _text(draw, (left + 28, row_top + 31), team_value, small_font, REPORT_MUTED)
+        _text(draw, (left + 28, row_top + 11), primary, hitter_font, REPORT_TEXT)
+        _text(draw, (left + 28, row_top + 39), team_value, team_font, REPORT_MUTED)
 
         for idx, column in enumerate(metric_columns):
             if column not in frame.columns:
@@ -1231,10 +1236,10 @@ def _draw_top_matchups_game_section(
                 lower_is_better=LOWER_IS_BETTER,
                 higher_is_better=HIGHER_IS_BETTER,
             ) or "#e8eef5"
-            draw.rounded_rectangle((chip_x, row_top + 11, chip_x + chip_width, row_top + 43), radius=11, fill=chip_fill)
+            draw.rounded_rectangle((chip_x, row_top + 14, chip_x + chip_width, row_top + 50), radius=11, fill=chip_fill)
             chip_label = DISPLAY_LABELS.get(column, column)
             chip_text = f"{chip_label} {_format_value(column, row.get(column), export_mode=True)}"
-            _text(draw, (chip_x + 8, row_top + 19), chip_text, small_font, REPORT_TEXT)
+            _text(draw, (chip_x + 8, row_top + 25), chip_text, chip_font, REPORT_TEXT)
         y += row_height + row_gap
 
     return top + panel_height
