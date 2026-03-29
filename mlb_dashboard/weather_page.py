@@ -152,12 +152,10 @@ def _render_cards(frame: pd.DataFrame) -> None:
                 with field_col:
                     st.markdown(
                         (
-                            "<div style='display:flex; justify-content:flex-start; margin-bottom:8px;'>"
-                            f"<span style='background:{status_fill}; color:{status_text}; padding:4px 10px; border-radius:999px; font-size:0.76rem; font-weight:700;'>{status}</span>"
-                            "</div>"
-                            "<div style='display:flex; justify-content:flex-start; gap:8px; flex-wrap:wrap; margin-bottom:10px;'>"
-                            f"<span style='background:{wind_direction_fill}; color:{wind_direction_text_color}; padding:4px 10px; border-radius:999px; font-size:0.76rem; font-weight:700; letter-spacing:0.01em;'>{wind_direction_text}</span>"
-                            f"<span style='background:{wind_speed_fill}; color:{wind_speed_text_color}; padding:4px 10px; border-radius:999px; font-size:0.76rem; font-weight:700; letter-spacing:0.01em;'>{wind_speed_text}</span>"
+                            "<div style='display:flex; justify-content:flex-start; gap:6px; flex-wrap:nowrap; margin-bottom:10px; overflow-x:auto;'>"
+                            f"<span style='background:{wind_direction_fill}; color:{wind_direction_text_color}; padding:3px 8px; border-radius:999px; font-size:0.70rem; font-weight:700; letter-spacing:0.01em; white-space:nowrap;'>{wind_direction_text}</span>"
+                            f"<span style='background:{wind_speed_fill}; color:{wind_speed_text_color}; padding:3px 8px; border-radius:999px; font-size:0.70rem; font-weight:700; letter-spacing:0.01em; white-space:nowrap;'>{wind_speed_text}</span>"
+                            f"<span style='background:{status_fill}; color:{status_text}; padding:3px 8px; border-radius:999px; font-size:0.70rem; font-weight:700; white-space:nowrap;'>{status}</span>"
                             "</div>"
                         ),
                         unsafe_allow_html=True,
