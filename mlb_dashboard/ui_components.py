@@ -1182,12 +1182,12 @@ def _draw_top_matchups_game_section(
     frame = section["frame"]
     title = section["title"]
     subtitle = str(section.get("subtitle", "")).strip()
-    title_font = _load_font(40, bold=True)
-    subtitle_font = _load_font(26, bold=True)
-    hitter_font = _load_font(28, bold=True)
+    title_font = _load_font(38, bold=True)
+    subtitle_font = _load_font(24, bold=True)
+    hitter_font = _load_font(30, bold=True)
     team_font = _load_font(24, bold=True)
-    chip_font = _load_font(22, bold=True)
-    row_height = 92
+    chip_font = _load_font(20, bold=True)
+    row_height = 122
     row_gap = 12
     title_height = 94 if subtitle else 62
     panel_height = title_height + len(frame) * (row_height + row_gap) + 14
@@ -1211,10 +1211,13 @@ def _draw_top_matchups_game_section(
         "avg_launch_angle",
     ]
     y = top + title_height
-    identity_width = max(260, min(360, int(width * 0.30)))
+    identity_width = max(250, min(340, int(width * 0.31)))
     chip_area_left = left + 22 + identity_width + 12
-    chip_gap = 8
-    chip_width = max(104, int((left + width - 22 - chip_area_left - chip_gap * (len(metric_columns) - 1)) / len(metric_columns)))
+    chip_gap_x = 10
+    chip_gap_y = 10
+    chip_columns = 4
+    chip_width = max(120, int((left + width - 22 - chip_area_left - chip_gap_x * (chip_columns - 1) - 18) / chip_columns))
+    chip_height = 36
 
     for _, row in frame.iterrows():
         row_top = y
@@ -1228,7 +1231,10 @@ def _draw_top_matchups_game_section(
         for idx, column in enumerate(metric_columns):
             if column not in frame.columns:
                 continue
-            chip_x = chip_area_left + idx * (chip_width + chip_gap)
+            chip_row = idx // chip_columns
+            chip_col = idx % chip_columns
+            chip_x = chip_area_left + chip_col * (chip_width + chip_gap_x)
+            chip_y = row_top + 16 + chip_row * (chip_height + chip_gap_y)
             chip_fill = _background_hex(
                 column,
                 row.get(column),
@@ -1236,13 +1242,45 @@ def _draw_top_matchups_game_section(
                 lower_is_better=LOWER_IS_BETTER,
                 higher_is_better=HIGHER_IS_BETTER,
             ) or "#e8eef5"
-            draw.rounded_rectangle((chip_x, row_top + 18, chip_x + chip_width, row_top + 62), radius=12, fill=chip_fill)
+            draw.rounded_rectangle((chip_x, chip_y, chip_x + chip_width, chip_y + chip_height), radius=12, fill=chip_fill)
             chip_label = DISPLAY_LABELS.get(column, column)
             chip_text = f"{chip_label} {_format_value(column, row.get(column), export_mode=True)}"
-            _text(draw, (chip_x + 10, row_top + 30), chip_text, chip_font, REPORT_TEXT)
+            _text(draw, (chip_x + 10, chip_y + 8), chip_text, chip_font, REPORT_TEXT)
         y += row_height + row_gap
 
     return top + panel_height
+
+
+def _build_top_matchups_report_image(title: str, subtitle: str, sections: list[dict]) -> bytes:
+    if not HAS_PILLOW:
+        raise RuntimeError("Pillow is required for PNG/JPG export.")
+    title_font = _load_font(34, bold=True)
+    subtitle_font = _load_font(20, bold=True)
+    section_title_font = _load_font(34, bold=True)
+    section_body_font = _load_font(22, bold=True)
+    width = 1240
+    header_height = 96
+    total_height = header_height + 24
+    for section in sections:
+        total_height += _export_section_height_estimate(section["title"], section["frame"], str(section.get("subtitle", "")))
+
+    image = Image.new("RGB", (width, total_height), REPORT_BG)
+    draw = ImageDraw.Draw(image)
+    _panel(draw, (18, 18, width - 18, header_height), fill="#f5f7fa", radius=22)
+    _text(draw, (36, 32), "KASPER SCOUTING REPORT", _load_font(20, bold=True), REPORT_ACCENT)
+    _text(draw, (36, 52), title, title_font, REPORT_TEXT)
+    _text(draw, (36, 78), subtitle, subtitle_font, REPORT_TEXT)
+
+    y = header_height + 12
+    for section in sections:
+        if section["frame"].empty:
+            continue
+        y = _draw_export_section(draw, y, 12, width - 24, section, section_title_font, section_body_font) + 8
+
+    cropped = image.crop((0, 0, width, min(max(y + 18, 380), image.height)))
+    buffer = BytesIO()
+    cropped.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _draw_export_section(
@@ -1657,14 +1695,14 @@ def render_slate_export_hub(key: str, title: str, sections: list[dict], heading:
         return
 
     subtitle = "Top matchup hitters by game | Generated from the Kasper matchup dashboard"
-    png_slides = _build_export_bundle(title=title, subtitle=subtitle, sections=sections, layout_mode="Standard report")
-    jpg_slides = [png_to_jpg_bytes(slide) for slide in png_slides]
+    png_bytes = _build_top_matchups_report_image(title=title, subtitle=subtitle, sections=sections)
+    jpg_bytes = png_to_jpg_bytes(png_bytes)
     safe_name = f"{key}-top_matchups"
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
             label="Download PNG",
-            data=png_slides[0],
+            data=png_bytes,
             file_name=f"{safe_name}.png",
             mime="image/png",
             use_container_width=True,
@@ -1673,7 +1711,7 @@ def render_slate_export_hub(key: str, title: str, sections: list[dict], heading:
     with col2:
         st.download_button(
             label="Download JPG",
-            data=jpg_slides[0],
+            data=jpg_bytes,
             file_name=f"{safe_name}.jpg",
             mime="image/jpeg",
             use_container_width=True,
