@@ -185,6 +185,9 @@ def build_slate_weather_rows(slate: pd.DataFrame) -> pd.DataFrame:
             "conditions": "Unavailable",
             "status": "Unavailable",
             "error_message": "",
+            "lf_distance_ft": stadium.lf_distance_ft if stadium else None,
+            "cf_distance_ft": stadium.cf_distance_ft if stadium else None,
+            "rf_distance_ft": stadium.rf_distance_ft if stadium else None,
         }
 
         if stadium is None:

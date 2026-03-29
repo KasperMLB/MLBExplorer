@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from math import cos, radians, sin
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
@@ -601,6 +602,111 @@ def render_zone_heatmap(title: str, subtitle: str, zone_map: pd.DataFrame, value
         st.info("No zone heatmap data available.")
         return
     st.image(_build_zone_heatmap_image(title, subtitle, zone_map, value_mode=value_mode), use_container_width=False)
+
+
+def render_weather_field(
+    venue_name: str,
+    lf_distance_ft: object,
+    cf_distance_ft: object,
+    rf_distance_ft: object,
+    wind_speed_mph: object,
+    wind_direction_deg: object,
+) -> bytes | None:
+    if not HAS_PILLOW:
+        return None
+
+    width = 280
+    height = 220
+    image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(image)
+    title_font = _load_font(14)
+    bold_font = _load_font(15, bold=True)
+    small_font = _load_font(12)
+
+    draw.rounded_rectangle((6, 6, width - 6, height - 6), radius=16, fill="#f7fafc", outline="#d7dee8", width=1)
+
+    cx = width // 2
+    home_y = height - 38
+    lf = float(lf_distance_ft or 330.0)
+    cf = float(cf_distance_ft or 400.0)
+    rf = float(rf_distance_ft or 330.0)
+    max_distance = max(lf, cf, rf, 330.0)
+    scale = 84.0 / max_distance
+    left_radius = max(66, lf * scale)
+    center_radius = max(72, cf * scale)
+    right_radius = max(66, rf * scale)
+
+    draw.ellipse((cx - 86, home_y - 145, cx + 86, home_y + 22), fill="#dff2df", outline=None)
+    draw.pieslice((cx - int(left_radius), home_y - int(center_radius) - 18, cx + int(right_radius), home_y + int(center_radius)), 208, 332, fill="#e2f4e0", outline="#7fb38b")
+    draw.pieslice((cx - int(left_radius), home_y - int(center_radius) - 18, cx + int(right_radius), home_y + int(center_radius)), 208, 332, outline="#6aa17c", width=3)
+
+    diamond = [
+        (cx, home_y - 8),
+        (cx - 22, home_y - 30),
+        (cx, home_y - 52),
+        (cx + 22, home_y - 30),
+    ]
+    draw.polygon(diamond, outline="#9c6d43", fill="#e6cfa7")
+    draw.line([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]], fill="#8f6a45", width=3)
+    draw.ellipse((cx - 5, home_y - 57, cx + 5, home_y - 47), fill="#ffffff", outline="#8f6a45")
+    _draw_home_plate(draw, cx, home_y - 6, fill="#ffffff", outline="#8f6a45")
+
+    draw.line((cx, home_y - 6, 44, 98), fill="#d7dfe8", width=2)
+    draw.line((cx, home_y - 6, width - 44, 98), fill="#d7dfe8", width=2)
+
+    draw.text((34, 88), f"LF {int(round(lf))}", fill="#445266", font=small_font)
+    cf_text = f"CF {int(round(cf))}"
+    cf_bbox = draw.textbbox((0, 0), cf_text, font=small_font)
+    draw.text((cx - (cf_bbox[2] - cf_bbox[0]) / 2, 18), cf_text, fill="#445266", font=small_font)
+    rf_text = f"RF {int(round(rf))}"
+    rf_bbox = draw.textbbox((0, 0), rf_text, font=small_font)
+    draw.text((width - 36 - (rf_bbox[2] - rf_bbox[0]), 88), rf_text, fill="#445266", font=small_font)
+
+    venue_bbox = draw.textbbox((0, 0), venue_name, font=title_font)
+    venue_x = max(14, min(width - 14 - (venue_bbox[2] - venue_bbox[0]), cx - (venue_bbox[2] - venue_bbox[0]) / 2))
+    draw.text((venue_x, height - 22), venue_name, fill="#516273", font=title_font)
+
+    if not pd.isna(wind_speed_mph) and not pd.isna(wind_direction_deg):
+        toward_deg = (float(wind_direction_deg) + 180.0) % 360.0
+        angle = radians(toward_deg)
+        origin_x = cx
+        origin_y = home_y - 18
+        length = 52
+        end_x = origin_x + sin(angle) * length
+        end_y = origin_y - cos(angle) * length
+        draw.line((origin_x, origin_y, end_x, end_y), fill="#2563eb", width=5)
+        head = 10
+        left_a = angle + radians(150)
+        right_a = angle - radians(150)
+        draw.line((end_x, end_y, end_x + sin(left_a) * head, end_y - cos(left_a) * head), fill="#2563eb", width=4)
+        draw.line((end_x, end_y, end_x + sin(right_a) * head, end_y - cos(right_a) * head), fill="#2563eb", width=4)
+        speed_text = f"{int(round(float(wind_speed_mph)))} mph"
+        text_bbox = draw.textbbox((0, 0), speed_text, font=bold_font)
+        label_x = end_x + 8 if end_x <= origin_x else end_x - (text_bbox[2] - text_bbox[0]) - 8
+        label_y = end_y - (text_bbox[3] - text_bbox[1]) / 2
+        label_x = max(12, min(width - 12 - (text_bbox[2] - text_bbox[0]), label_x))
+        label_y = max(12, min(height - 36, label_y))
+        draw.rounded_rectangle(
+            (
+                label_x - 6,
+                label_y - 4,
+                label_x + (text_bbox[2] - text_bbox[0]) + 6,
+                label_y + (text_bbox[3] - text_bbox[1]) + 4,
+            ),
+            radius=8,
+            fill="#ffffff",
+            outline="#cbd5e1",
+            width=1,
+        )
+        draw.text((label_x, label_y), speed_text, fill="#1d4ed8", font=bold_font)
+    else:
+        missing = "Wind unavailable"
+        bbox = draw.textbbox((0, 0), missing, font=title_font)
+        draw.text((cx - (bbox[2] - bbox[0]) / 2, home_y - 94), missing, fill="#94a3b8", font=title_font)
+
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _table_section_height(title: str, frame: pd.DataFrame) -> int:

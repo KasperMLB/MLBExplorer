@@ -8,7 +8,7 @@ import streamlit as st
 from .config import AppConfig
 from .dashboard_views import latest_built_date
 from .query_engine import StatcastQueryEngine
-from .ui_components import render_metric_grid
+from .ui_components import render_metric_grid, render_weather_field
 from .weather_service import build_slate_weather_rows
 
 
@@ -54,13 +54,6 @@ def _fmt_temp(value: object) -> str:
     return f"{float(value):.0f} F"
 
 
-def _fmt_wind(speed: object, direction: object) -> str:
-    if speed is None or pd.isna(speed):
-        return "--"
-    direction_text = str(direction).strip()
-    return f"{float(speed):.0f} mph {direction_text}".strip()
-
-
 def _fmt_humidity(value: object) -> str:
     if value is None or pd.isna(value):
         return "--"
@@ -74,22 +67,29 @@ def _render_cards(frame: pd.DataFrame) -> None:
     for idx, row in enumerate(frame.to_dict("records")):
         with columns[idx % 3]:
             status = str(row.get("status") or "Unavailable")
-            border = "#2f8f4e" if status == "Available" else "#c94b4b"
-            st.markdown(
-                f"""
-                <div style="border:1px solid {border}; border-radius:12px; padding:14px; margin-bottom:12px; background:#ffffff;">
-                  <div style="font-size:0.9rem; color:#666;">{row.get("game", "")}</div>
-                  <div style="font-size:1.05rem; font-weight:700; margin-top:4px;">{row.get("venue", "") or "Unknown venue"}</div>
-                  <div style="font-size:0.85rem; color:#666; margin-bottom:8px;">{row.get("location", "")}</div>
-                  <div style="font-size:1.6rem; font-weight:700;">{_fmt_temp(row.get("temperature_f"))}</div>
-                  <div style="font-size:0.95rem; margin-top:6px;">Wind: {_fmt_wind(row.get("wind_speed_mph"), row.get("wind_direction"))}</div>
-                  <div style="font-size:0.95rem;">Humidity: {_fmt_humidity(row.get("humidity"))}</div>
-                  <div style="font-size:0.95rem;">Conditions: {row.get("conditions", "Unavailable")}</div>
-                  <div style="font-size:0.85rem; margin-top:8px; color:#666;">Status: {status}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            with st.container(border=True):
+                info_col, field_col = st.columns([1.05, 1.0], vertical_alignment="center")
+                with info_col:
+                    st.markdown(f"<div style='font-size:0.9rem; color:#666;'>{row.get('game', '')}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size:1.05rem; font-weight:700; margin-top:4px;'>{row.get('venue', '') or 'Unknown venue'}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size:0.85rem; color:#666; margin-bottom:8px;'>{row.get('location', '')}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size:1.6rem; font-weight:700; margin-bottom:10px;'>{_fmt_temp(row.get('temperature_f'))}</div>", unsafe_allow_html=True)
+                    st.markdown(f"Humidity: {_fmt_humidity(row.get('humidity'))}")
+                    st.markdown(f"Conditions: {row.get('conditions', 'Unavailable')}")
+                    st.markdown(f"<div style='font-size:0.85rem; margin-top:8px; color:#666;'>Status: {status}</div>", unsafe_allow_html=True)
+                with field_col:
+                    field_image = render_weather_field(
+                        venue_name=str(row.get("venue") or ""),
+                        lf_distance_ft=row.get("lf_distance_ft"),
+                        cf_distance_ft=row.get("cf_distance_ft"),
+                        rf_distance_ft=row.get("rf_distance_ft"),
+                        wind_speed_mph=row.get("wind_speed_mph"),
+                        wind_direction_deg=row.get("wind_direction_deg"),
+                    )
+                    if field_image is not None:
+                        st.image(field_image, use_container_width=True)
+                    else:
+                        st.caption("Field graphic unavailable")
 
 
 def _display_table(frame: pd.DataFrame) -> pd.DataFrame:
