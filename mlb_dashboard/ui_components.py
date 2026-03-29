@@ -684,11 +684,12 @@ def _table_section_height(title: str, frame: pd.DataFrame) -> int:
     return 32 + 28 + 26 * (len(frame) + 1)
 
 
-def _export_section_height_estimate(title: str, frame: pd.DataFrame) -> int:
+def _export_section_height_estimate(title: str, frame: pd.DataFrame, subtitle: str = "") -> int:
     lowered = title.lower()
+    subtitle_height = 20 if subtitle else 0
     if "summary" in lowered:
-        return _table_section_height(title, frame) + 24
-    return 54 + len(frame) * 62 + 36
+        return _table_section_height(title, frame) + 24 + subtitle_height
+    return 54 + len(frame) * 62 + 36 + subtitle_height
 
 
 def _summary_card_color(column: str, row: pd.Series, lower_is_better: set[str] | None, higher_is_better: set[str] | None) -> str:
@@ -1001,22 +1002,33 @@ def _draw_dark_table(
     lower_is_better: set[str] | None = None,
     higher_is_better: set[str] | None = None,
 ) -> int:
+    subtitle = ""
+    if isinstance(title, dict):  # pragma: no cover
+        subtitle = str(title.get("subtitle", "")).strip()
+        title = str(title.get("title", ""))
     if frame.empty:
-        panel_height = 76
+        panel_height = 92 if subtitle else 76
         _panel(draw, (left, top, left + width, top + panel_height))
         _text(draw, (left + 16, top + 16), title, font, REPORT_TEXT)
-        _text(draw, (left + 16, top + 42), "No data available", small_font, REPORT_MUTED)
+        if subtitle:
+            _text(draw, (left + 16, top + 42), subtitle, small_font, REPORT_MUTED)
+            _text(draw, (left + 16, top + 62), "No data available", small_font, REPORT_MUTED)
+        else:
+            _text(draw, (left + 16, top + 42), "No data available", small_font, REPORT_MUTED)
         return top + panel_height
 
     header_height = 34
     row_height = 32
     padding_x = 12
     padding_y = 8
-    panel_height = 46 + _report_table_height(frame, row_height=row_height, header_height=header_height)
+    title_block_height = 64 if subtitle else 46
+    panel_height = title_block_height + _report_table_height(frame, row_height=row_height, header_height=header_height)
     _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
     _text(draw, (left + 16, top + 14), title, font, REPORT_TEXT)
+    if subtitle:
+        _text(draw, (left + 16, top + 40), subtitle, small_font, REPORT_MUTED)
 
-    y = top + 46
+    y = top + title_block_height
     display_frame = _display_frame(frame).copy()
     headers = list(display_frame.columns)
     source_by_label = {DISPLAY_LABELS.get(col, col): col for col in frame.columns}
@@ -1174,7 +1186,7 @@ def _draw_export_section(
         top,
         left,
         width,
-        title,
+        {"title": title, "subtitle": section.get("subtitle", "")},
         frame,
         font,
         small_font,
@@ -1441,7 +1453,7 @@ def build_branded_report_image(title: str, subtitle: str, sections: list[dict]) 
     branding_height = 110
     total_height = branding_height + 24
     for section in sections:
-        total_height += _export_section_height_estimate(section["title"], section["frame"])
+        total_height += _export_section_height_estimate(section["title"], section["frame"], str(section.get("subtitle", "")))
     image = Image.new("RGB", (width, total_height), REPORT_BG)
     draw = ImageDraw.Draw(image)
     _panel(draw, (20, 20, width - 20, branding_height), fill="#f5f7fa", radius=24)
@@ -1551,3 +1563,41 @@ def render_export_hub(key: str, title: str, export_options: dict[str, list[dict]
                 use_container_width=True,
                 key=f"{key}-jpg-zip",
             )
+
+
+def render_slate_export_hub(key: str, title: str, sections: list[dict], heading: str = "Export Top Matchups") -> None:
+    if not sections:
+        return
+    st.markdown(f"#### {heading}")
+    if not HAS_PILLOW:
+        st.caption("Install `Pillow` to enable PNG/JPG export.")
+        return
+    prep_key = f"{key}-prepared"
+    if not st.session_state.get(prep_key, False):
+        st.button("Prepare exports", key=f"{key}-prepare", use_container_width=True, on_click=lambda: st.session_state.__setitem__(prep_key, True))
+        st.caption("Exports are generated on demand to keep the hosted app fast and stable.")
+        return
+
+    subtitle = "Top matchup hitters by game | Generated from the Kasper matchup dashboard"
+    png_slides = _build_export_bundle(title=title, subtitle=subtitle, sections=sections, layout_mode="Standard report")
+    jpg_slides = [png_to_jpg_bytes(slide) for slide in png_slides]
+    safe_name = f"{key}-top_matchups"
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            label="Download PNG",
+            data=png_slides[0],
+            file_name=f"{safe_name}.png",
+            mime="image/png",
+            use_container_width=True,
+            key=f"{key}-png",
+        )
+    with col2:
+        st.download_button(
+            label="Download JPG",
+            data=jpg_slides[0],
+            file_name=f"{safe_name}.jpg",
+            mime="image/jpeg",
+            use_container_width=True,
+            key=f"{key}-jpg",
+        )

@@ -29,6 +29,7 @@ from .dashboard_views import (
     build_zone_overlay_map,
     build_best_matchups,
     build_game_export_options,
+    build_top_matchups_export_sections,
     hitter_columns_for_preset,
     latest_built_date,
     pivot_count_usage,
@@ -36,7 +37,14 @@ from .dashboard_views import (
     with_game_label,
 )
 from .query_engine import QueryFilters, StatcastQueryEngine
-from .ui_components import build_pitcher_summary_table, render_export_hub, render_matchup_header, render_metric_grid, render_zone_heatmap
+from .ui_components import (
+    build_pitcher_summary_table,
+    render_export_hub,
+    render_matchup_header,
+    render_metric_grid,
+    render_slate_export_hub,
+    render_zone_heatmap,
+)
 
 
 def _default_target_date(config: AppConfig) -> date:
@@ -200,6 +208,8 @@ def _render_top_sections(
     else:
         preset_columns = hitter_columns_for_preset(hitter_preset)
         ranked_hitters = all_hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
+        export_sections = build_top_matchups_export_sections(selected_games, hitters_by_game, preset_columns)
+        render_slate_export_hub("top-matchups-export", "Top Matchups Export", export_sections)
         render_metric_grid(
             ranked_hitters[["game"] + [column for column in preset_columns if column in all_hitters.columns]].head(10),
             key="top-slate-hitters",

@@ -382,11 +382,52 @@ def with_game_label(frame: pd.DataFrame, game_label: str) -> pd.DataFrame:
     return enriched
 
 
+def _format_export_start_time(value: object) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return "Start time TBD"
+    timestamp = pd.to_datetime(value, errors="coerce", utc=True)
+    if pd.isna(timestamp):
+        return "Start time TBD"
+    return timestamp.strftime("%I:%M %p UTC").lstrip("0")
+
+
+def _format_pitching_matchup(game: dict) -> str:
+    away_pitcher = game.get("away_probable_pitcher_name") or "TBD"
+    home_pitcher = game.get("home_probable_pitcher_name") or "TBD"
+    return f"Pitching: {away_pitcher} vs {home_pitcher}"
+
+
 def build_best_matchups(away_hitters: pd.DataFrame, home_hitters: pd.DataFrame) -> pd.DataFrame:
     combined = pd.concat([away_hitters, home_hitters], ignore_index=True, sort=False)
     if combined.empty:
         return combined
     return combined.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last").head(3)
+
+
+def build_top_matchups_export_sections(
+    selected_games: list[dict],
+    hitters_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]],
+    hitter_columns: list[str],
+) -> list[dict]:
+    sections: list[dict] = []
+    export_columns = ["hitter_name", "team"] + [
+        column for column in hitter_columns if column not in {"hitter_name", "team", "game"}
+    ]
+    for game in selected_games:
+        away_hitters, home_hitters = hitters_by_game.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
+        best_matchups = build_best_matchups(away_hitters, home_hitters)
+        if best_matchups.empty:
+            continue
+        game_label = f"{game['away_team']} @ {game['home_team']}"
+        section_frame = best_matchups[[column for column in export_columns if column in best_matchups.columns]].copy()
+        sections.append(
+            {
+                "title": game_label,
+                "subtitle": f"{_format_export_start_time(game.get('game_date'))} | {_format_pitching_matchup(game)}",
+                "frame": section_frame,
+            }
+        )
+    return sections
 
 
 def sort_arsenal_frame(frame: pd.DataFrame) -> pd.DataFrame:
