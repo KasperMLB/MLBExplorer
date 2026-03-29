@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -23,15 +23,24 @@ def _load_remote_daily(base_url: str, target_date: date) -> pd.DataFrame:
     return pd.read_parquet(f"{base_url}/daily/{target_date.isoformat()}/slate.parquet")
 
 
-def _load_slate(config: AppConfig, target_date: date) -> tuple[pd.DataFrame, str]:
+def _load_slate(config: AppConfig, target_date: date) -> tuple[pd.DataFrame, str, date]:
     local_slate_path = config.daily_dir / target_date.isoformat() / "slate.parquet"
     if local_slate_path.exists():
         engine = StatcastQueryEngine(config)
-        return pd.DataFrame(engine.load_daily_slate(target_date)), "local"
+        return pd.DataFrame(engine.load_daily_slate(target_date)), "local", target_date
     base_url = _hosted_base_url()
     if not base_url:
-        return pd.DataFrame(), "none"
-    return _load_remote_daily(base_url, target_date), "hosted"
+        return pd.DataFrame(), "none", target_date
+    last_error: Exception | None = None
+    for offset in range(8):
+        candidate = target_date - timedelta(days=offset)
+        try:
+            return _load_remote_daily(base_url, candidate), "hosted", candidate
+        except Exception as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    return pd.DataFrame(), "none", target_date
 
 
 def _default_date(config: AppConfig) -> date:
@@ -123,11 +132,13 @@ def main() -> None:
 
     config = AppConfig()
     target_date = st.sidebar.date_input("Slate date", value=_default_date(config))
-    slate, source = _load_slate(config, target_date)
+    slate, source, loaded_date = _load_slate(config, target_date)
     if source == "none":
         st.error("No local artifacts or hosted artifact base URL were found for loading slate context.")
         return
     st.caption(f"Context source: {source}")
+    if loaded_date != target_date:
+        st.caption(f"Using most recent available published slate: {loaded_date.isoformat()}")
 
     weather_mode = st.sidebar.radio("Weather view", ["Current", "Game-Time"], index=0, horizontal=False)
     refresh_token = st.session_state.get("weather_refresh_token", 0)
@@ -135,7 +146,7 @@ def main() -> None:
         refresh_token += 1
         st.session_state["weather_refresh_token"] = refresh_token
 
-    state_key = f"weather_board::{target_date.isoformat()}::{refresh_token}"
+    state_key = f"weather_board::{loaded_date.isoformat()}::{refresh_token}"
     if state_key not in st.session_state:
         with st.spinner("Loading weather..."):
             st.session_state[state_key] = build_slate_weather_rows(slate)
@@ -150,8 +161,7 @@ def main() -> None:
     _render_cards(active)
     render_metric_grid(
         _display_table(active),
-        key=f"weather-board-{target_date.isoformat()}-{weather_mode}",
+        key=f"weather-board-{loaded_date.isoformat()}-{weather_mode}",
         height=520,
         use_lightweight=(source == "hosted"),
     )
-
