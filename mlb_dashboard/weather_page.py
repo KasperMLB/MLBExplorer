@@ -165,7 +165,7 @@ def _render_cards(frame: pd.DataFrame) -> None:
                         wind_direction_deg=row.get("wind_direction_deg"),
                     )
                     if field_image is not None:
-                        image_spacer, image_col = st.columns([0.14, 0.86], vertical_alignment="top")
+                        image_spacer, image_col = st.columns([0.24, 0.76], vertical_alignment="top")
                         with image_col:
                             st.image(field_image, use_container_width=True)
                     else:
