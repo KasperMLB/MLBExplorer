@@ -27,6 +27,7 @@ HITTER_PRESETS = {
         "hitter_name",
         "team",
         "matchup_score",
+        "ceiling_score",
         "xwoba",
         "xwoba_con",
         "pulled_barrel_pct",
@@ -38,6 +39,7 @@ HITTER_PRESETS = {
         "hitter_name",
         "team",
         "matchup_score",
+        "ceiling_score",
         "swstr_pct",
         "xwoba",
         "xwoba_con",
@@ -49,6 +51,7 @@ HITTER_PRESETS = {
         "hitter_name",
         "team",
         "matchup_score",
+        "ceiling_score",
         "pulled_barrel_pct",
         "barrel_bip_pct",
         "fb_pct",
@@ -60,6 +63,7 @@ HITTER_PRESETS = {
         "hitter_name",
         "team",
         "matchup_score",
+        "ceiling_score",
         "zone_fit_score",
         "pitch_count",
         "bip",
@@ -330,6 +334,18 @@ def add_hitter_matchup_score(
     pulled_barrel_scale = normalize_series(enriched["pulled_barrel_pct"])
     pulled_barrel_bonus = ((pulled_barrel_scale - 0.5).clip(lower=0.0) / 0.5) * 0.08
     enriched["matchup_score"] = (base_score * (1.0 + pulled_barrel_bonus)).clip(lower=0.0, upper=100.0)
+    matchup_norm = normalize_series(enriched["matchup_score"])
+    barrel_bip_norm = normalize_series(enriched["barrel_bip_pct"])
+    fb_norm = normalize_series(enriched["fb_pct"])
+    hh_norm = normalize_series(enriched["hard_hit_pct"])
+    ceiling_base = (
+        (matchup_norm * 0.35)
+        + (pulled_barrel_scale * 0.30)
+        + (barrel_bip_norm * 0.20)
+        + (fb_norm * 0.10)
+        + (hh_norm * 0.05)
+    )
+    enriched["ceiling_score"] = (ceiling_base * 100.0).clip(lower=0.0, upper=100.0)
     return enriched.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
 
 

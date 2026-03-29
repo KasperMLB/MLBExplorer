@@ -36,7 +36,7 @@ PERCENT_COLUMNS = {
     "Pre two-strike",
     "Full count",
 }
-RATE_COLUMNS = {"xwoba", "xwoba_con", "avg_launch_angle", "avg_release_speed", "avg_spin_rate", "gb_fb_ratio", "matchup_score", "pitcher_score", "zone_fit_score"}
+RATE_COLUMNS = {"xwoba", "xwoba_con", "avg_launch_angle", "avg_release_speed", "avg_spin_rate", "gb_fb_ratio", "matchup_score", "ceiling_score", "pitcher_score", "zone_fit_score"}
 LOWER_IS_BETTER = {"swstr_pct"}
 HIGHER_IS_BETTER = {
     "pulled_barrel_pct",
@@ -50,6 +50,7 @@ HIGHER_IS_BETTER = {
     "avg_release_speed",
     "avg_spin_rate",
     "matchup_score",
+    "ceiling_score",
     "zone_fit_score",
     "gb_pct",
     "gb_fb_ratio",
@@ -81,6 +82,7 @@ DISPLAY_LABELS = {
     "p_throws": "Throws",
     "likely_starter_score": "Likely",
     "matchup_score": "Matchup",
+    "ceiling_score": "Ceiling",
     "zone_fit_score": "Zone Fit",
     "pitcher_score": "Pitch Score",
     "player_name": "Player",
@@ -124,6 +126,7 @@ MEDIUM_COLUMNS = {
     "avg_spin_rate",
     "usage_pct",
     "matchup_score",
+    "ceiling_score",
     "pitcher_score",
     "whiff_rate",
     "ball_in_play_rate",
@@ -181,7 +184,7 @@ def _format_value(column: str, value: object, export_mode: bool = False) -> str:
         decimals = 0 if not export_mode else 3
         return f"{float(value):.{decimals}f}"
     if column in RATE_COLUMNS:
-        decimals = 3 if export_mode else (3 if "xwoba" in column or column in {"matchup_score", "zone_fit_score"} else 1)
+        decimals = 3 if export_mode else (3 if "xwoba" in column or column in {"matchup_score", "ceiling_score", "zone_fit_score"} else 1)
         return f"{float(value):.{decimals}f}"
     if isinstance(value, float):
         decimals = 3 if export_mode else 2
@@ -423,7 +426,7 @@ def render_metric_grid(
         width, min_width, max_width = _column_width(column, frame[column])
         if column in PERCENT_COLUMNS:
             formatter = percent_formatter
-        elif column in {"xwoba", "xwoba_con", "matchup_score", "pitcher_score"}:
+        elif column in {"xwoba", "xwoba_con", "matchup_score", "ceiling_score", "pitcher_score"}:
             formatter = rate_formatter
         elif column in {"avg_launch_angle", "avg_release_speed", "gb_fb_ratio"}:
             formatter = one_decimal_formatter
