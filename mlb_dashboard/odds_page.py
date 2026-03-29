@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -26,18 +26,27 @@ def _load_remote_daily(base_url: str, target_date: date) -> tuple[pd.DataFrame, 
     return slate, rosters
 
 
-def _load_context(config: AppConfig, target_date: date) -> tuple[pd.DataFrame, pd.DataFrame, str]:
+def _load_context(config: AppConfig, target_date: date) -> tuple[pd.DataFrame, pd.DataFrame, str, date]:
     local_slate_path = config.daily_dir / target_date.isoformat() / "slate.parquet"
     if local_slate_path.exists():
         engine = StatcastQueryEngine(config)
         slate = pd.DataFrame(engine.load_daily_slate(target_date))
         rosters = engine.load_daily_rosters(target_date)
-        return slate, rosters, "local"
+        return slate, rosters, "local", target_date
     base_url = _hosted_base_url()
     if not base_url:
-        return pd.DataFrame(), pd.DataFrame(), "none"
-    slate, rosters = _load_remote_daily(base_url, target_date)
-    return slate, rosters, "hosted"
+        return pd.DataFrame(), pd.DataFrame(), "none", target_date
+    last_error: Exception | None = None
+    for offset in range(8):
+        candidate = target_date - timedelta(days=offset)
+        try:
+            slate, rosters = _load_remote_daily(base_url, candidate)
+            return slate, rosters, "hosted", candidate
+        except Exception as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    return pd.DataFrame(), pd.DataFrame(), "none", target_date
 
 
 def _default_date(config: AppConfig) -> date:
@@ -190,20 +199,22 @@ def main() -> None:
 
     config = AppConfig()
     target_date = st.sidebar.date_input("Slate date", value=_default_date(config))
-    slate, rosters, source = _load_context(config, target_date)
+    slate, rosters, source, loaded_date = _load_context(config, target_date)
     if source == "none":
         st.error("No local artifacts or hosted artifact base URL were found for loading slate context.")
         return
     st.caption(f"Context source: {source}")
+    if loaded_date != target_date:
+        st.caption(f"Using most recent available published slate: {loaded_date.isoformat()}")
 
     refresh_token = st.session_state.get("props_refresh_token", 0)
     if st.sidebar.button("Refresh Odds"):
         refresh_token += 1
         st.session_state["props_refresh_token"] = refresh_token
-    state_key = f"props_board::{target_date.isoformat()}::{refresh_token}"
+    state_key = f"props_board::{loaded_date.isoformat()}::{refresh_token}"
     if state_key not in st.session_state:
         try:
-            st.session_state[state_key] = load_live_props_board(config, target_date, rosters)
+            st.session_state[state_key] = load_live_props_board(config, loaded_date, rosters)
         except Exception as exc:
             st.error(f"Unable to load live props: {exc}")
             return
@@ -221,5 +232,5 @@ def main() -> None:
     filtered = _apply_filters(board, book_details, payload.sportsbooks)
     display = _display_board(filtered)
     st.caption(f"{len(display):,} prop rows")
-    render_metric_grid(display.drop(columns=["row_id"], errors="ignore"), key=f"props-board-{target_date.isoformat()}", height=720, use_lightweight=False)
-    _render_book_details(filtered, book_details, target_date, source)
+    render_metric_grid(display.drop(columns=["row_id"], errors="ignore"), key=f"props-board-{loaded_date.isoformat()}", height=720, use_lightweight=False)
+    _render_book_details(filtered, book_details, loaded_date, source)
