@@ -1184,12 +1184,12 @@ def _draw_top_matchups_game_section(
     subtitle = str(section.get("subtitle", "")).strip()
     title_font = _load_font(42, bold=True)
     subtitle_font = _load_font(24, bold=True)
-    hitter_font = _load_font(28, bold=True)
-    team_font = _load_font(20, bold=True)
+    hitter_font = _load_font(36, bold=True)
+    team_font = _load_font(24, bold=True)
     header_font = _load_font(18, bold=True)
-    value_font = _load_font(24, bold=True)
+    value_font = _load_font(30, bold=True)
     row_height = 66
-    row_gap = 8
+    row_gap = 6
     title_height = 88 if subtitle else 58
     metric_columns = [
         "matchup_score",
