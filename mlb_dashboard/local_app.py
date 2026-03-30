@@ -214,6 +214,7 @@ def _render_top_sections(
             ranked_hitters[["game"] + [column for column in preset_columns if column in all_hitters.columns]].head(10),
             key="top-slate-hitters",
             height=320,
+            use_lightweight=True,
         )
 
     st.header("Top Slate Pitchers")
@@ -228,6 +229,7 @@ def _render_top_sections(
             height=320,
             lower_is_better=PITCHER_LOWER_IS_BETTER,
             higher_is_better=PITCHER_HIGHER_IS_BETTER,
+            use_lightweight=True,
         )
 
 
@@ -326,8 +328,14 @@ def main() -> None:
 
         with st.expander(f"{game['away_team']} @ {game['home_team']}", expanded=idx == 0):
             render_matchup_header(game)
-            matchup_tab, rolling_tab, pitcher_zone_tab, hitter_zone_tab = st.tabs(["Matchup", "Rolling", "Pitcher Zones", "Hitter Zones"])
-            with matchup_tab:
+            active_section = st.radio(
+                "Section",
+                ["Matchup", "Rolling", "Pitcher Zones", "Hitter Zones"],
+                horizontal=True,
+                key=f"section-local-{game['game_pk']}",
+                label_visibility="collapsed",
+            )
+            if active_section == "Matchup":
                 st.markdown("#### Best Matchups")
                 best_matchups = render_metric_grid(best_matchups[BEST_MATCHUP_COLUMNS], key=f"best-{game['game_pk']}", height=170)
 
@@ -371,7 +379,7 @@ def main() -> None:
                         height=360,
                     )
 
-            with rolling_tab:
+            elif active_section == "Rolling":
                 roll_tabs = st.tabs(["Rolling 5", "Rolling 10", "Rolling 15"])
                 away_hitter_names = set(away_hitters.get("hitter_name", pd.Series(dtype="object")).dropna().tolist())
                 home_hitter_names = set(home_hitters.get("hitter_name", pd.Series(dtype="object")).dropna().tolist())
@@ -390,6 +398,7 @@ def main() -> None:
                                 hitter_frame[[column for column in HITTER_ROLLING_COLUMNS if column in hitter_frame.columns]],
                                 key=f"h-roll-{game['game_pk']}-{label}",
                                 height=260,
+                                use_lightweight=True,
                             )
                         with cols[1]:
                             st.markdown("##### Pitchers")
@@ -403,9 +412,10 @@ def main() -> None:
                                 height=260,
                                 lower_is_better=PITCHER_LOWER_IS_BETTER | {"barrel_bip_pct"},
                                 higher_is_better=PITCHER_HIGHER_IS_BETTER | {"avg_release_speed"},
+                                use_lightweight=True,
                             )
 
-            with pitcher_zone_tab:
+            elif active_section == "Pitcher Zones":
                 zone_tabs = st.tabs([game["away_team"], game["home_team"]])
                 for pitcher_row, tab, team_label in [
                     (away_pitcher, zone_tabs[0], game["away_team"]),
@@ -455,9 +465,10 @@ def main() -> None:
                                 key=f"p-zone-{game['game_pk']}-{team_label}",
                                 height=240,
                                 higher_is_better={"usage_rate"},
+                                use_lightweight=True,
                             )
 
-            with hitter_zone_tab:
+            elif active_section == "Hitter Zones":
                 zone_tabs = st.tabs([game["away_team"], game["home_team"]])
                 for team_label, tab in [(game["away_team"], zone_tabs[0]), (game["home_team"], zone_tabs[1])]:
                     with tab:
@@ -510,6 +521,7 @@ def main() -> None:
                             key=f"h-zone-{game['game_pk']}-{team_label}",
                             height=240,
                             higher_is_better={"hit_rate", "hr_rate", "damage_rate"},
+                            use_lightweight=True,
                         )
 
             export_options = build_game_export_options(

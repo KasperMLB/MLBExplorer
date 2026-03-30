@@ -81,6 +81,12 @@ def _render_hosted_grid(
     )
 
 
+def _frame_by_pitcher_id(frame: pd.DataFrame) -> dict[object, pd.DataFrame]:
+    if frame.empty or "pitcher_id" not in frame.columns:
+        return {}
+    return {pitcher_id: group.copy() for pitcher_id, group in frame.groupby("pitcher_id", sort=False)}
+
+
 @st.cache_data(show_spinner=False)
 def _load_artifacts(
     base_url: str,
@@ -360,9 +366,17 @@ def main() -> None:
 
     hitters_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
     pitchers_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
+    filtered_pitchers = _filter_pitcher_frame(pitchers, split, recent_window, weighted_mode)
+    filtered_summary = _filter_pitcher_frame(pitcher_summary_by_hand, split, recent_window, weighted_mode)
+    filtered_arsenal = _filter_pitcher_frame(arsenal, split, recent_window, weighted_mode)
+    filtered_arsenal_by_hand = _filter_pitcher_frame(arsenal_by_hand, split, recent_window, weighted_mode)
+    filtered_count = _filter_pitcher_frame(usage_by_count, split, recent_window, weighted_mode)
+    summary_by_pitcher = _frame_by_pitcher_id(filtered_summary)
+    arsenal_by_pitcher = _frame_by_pitcher_id(filtered_arsenal)
+    arsenal_by_hand_by_pitcher = _frame_by_pitcher_id(filtered_arsenal_by_hand)
+    count_by_pitcher = _frame_by_pitcher_id(filtered_count)
 
     for game in selected_games:
-        filtered_pitchers = _filter_pitcher_frame(pitchers, split, recent_window, weighted_mode)
         away_pitcher = filtered_pitchers.loc[filtered_pitchers["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
         home_pitcher = filtered_pitchers.loc[filtered_pitchers["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
         away_hand = home_pitcher["p_throws"].iloc[0] if not home_pitcher.empty else None
@@ -440,18 +454,16 @@ def main() -> None:
     for idx, game in enumerate(selected_games):
         away_hitters, home_hitters = hitters_by_game.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
         away_pitcher, home_pitcher = pitchers_by_game.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        filtered_summary = _filter_pitcher_frame(pitcher_summary_by_hand, split, recent_window, weighted_mode)
-        filtered_arsenal = _filter_pitcher_frame(arsenal, split, recent_window, weighted_mode)
-        filtered_arsenal_by_hand = _filter_pitcher_frame(arsenal_by_hand, split, recent_window, weighted_mode)
-        filtered_count = _filter_pitcher_frame(usage_by_count, split, recent_window, weighted_mode)
-        away_summary_by_hand = filtered_summary.loc[filtered_summary["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
-        home_summary_by_hand = filtered_summary.loc[filtered_summary["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
-        away_arsenal = filtered_arsenal.loc[filtered_arsenal["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
-        home_arsenal = filtered_arsenal.loc[filtered_arsenal["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
-        away_by_hand = filtered_arsenal_by_hand.loc[filtered_arsenal_by_hand["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
-        home_by_hand = filtered_arsenal_by_hand.loc[filtered_arsenal_by_hand["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
-        away_count = filtered_count.loc[filtered_count["pitcher_id"] == game.get("away_probable_pitcher_id")].copy()
-        home_count = filtered_count.loc[filtered_count["pitcher_id"] == game.get("home_probable_pitcher_id")].copy()
+        away_pitcher_id = game.get("away_probable_pitcher_id")
+        home_pitcher_id = game.get("home_probable_pitcher_id")
+        away_summary_by_hand = summary_by_pitcher.get(away_pitcher_id, pd.DataFrame()).copy()
+        home_summary_by_hand = summary_by_pitcher.get(home_pitcher_id, pd.DataFrame()).copy()
+        away_arsenal = arsenal_by_pitcher.get(away_pitcher_id, pd.DataFrame()).copy()
+        home_arsenal = arsenal_by_pitcher.get(home_pitcher_id, pd.DataFrame()).copy()
+        away_by_hand = arsenal_by_hand_by_pitcher.get(away_pitcher_id, pd.DataFrame()).copy()
+        home_by_hand = arsenal_by_hand_by_pitcher.get(home_pitcher_id, pd.DataFrame()).copy()
+        away_count = count_by_pitcher.get(away_pitcher_id, pd.DataFrame()).copy()
+        home_count = count_by_pitcher.get(home_pitcher_id, pd.DataFrame()).copy()
         best_matchups = build_best_matchups(away_hitters, home_hitters)
 
         with st.expander(f"{game['away_team']} @ {game['home_team']}", expanded=idx == 0):

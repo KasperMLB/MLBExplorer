@@ -283,6 +283,36 @@ def _display_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.rename(columns=DISPLAY_LABELS)
 
 
+@st.cache_data(show_spinner=False)
+def _build_lightweight_grid_payload(
+    frame: pd.DataFrame,
+    lower_is_better: tuple[str, ...],
+    higher_is_better: tuple[str, ...],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    display_frame = pd.DataFrame(index=frame.index)
+    styles = pd.DataFrame("", index=frame.index, columns=[DISPLAY_LABELS.get(column, column) for column in frame.columns])
+
+    lower_set = set(lower_is_better)
+    higher_set = set(higher_is_better)
+
+    for column in frame.columns:
+        display_column = DISPLAY_LABELS.get(column, column)
+        display_frame[display_column] = [_format_value(column, value) for value in frame[column]]
+        if column in PERCENT_COLUMNS or column in RATE_COLUMNS:
+            column_styles: list[str] = []
+            for value in frame[column]:
+                background = _background_hex(
+                    column,
+                    value,
+                    frame[column],
+                    lower_is_better=lower_set,
+                    higher_is_better=higher_set,
+                )
+                column_styles.append(f"background-color: {background}; color: #1f1f1f" if background else "")
+            styles[display_column] = column_styles
+    return display_frame, styles
+
+
 def _prepare_grid_frame(
     frame: pd.DataFrame,
     lower_is_better: set[str] | None = None,
@@ -344,23 +374,13 @@ def render_metric_grid(
         st.info("No data available for this selection.")
         return frame
     if use_lightweight or not HAS_AGGRID:
-        display_frame = _display_frame(frame).copy()
-        source_by_label = {DISPLAY_LABELS.get(column, column): column for column in frame.columns}
-        formatters = {DISPLAY_LABELS.get(column, column): (lambda value, source=column: _format_value(source, value)) for column in frame.columns}
-        styles = pd.DataFrame("", index=display_frame.index, columns=display_frame.columns)
-        for source_column in frame.columns:
-            display_column = DISPLAY_LABELS.get(source_column, source_column)
-            if source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS:
-                styles[display_column] = [
-                    (
-                        f"background-color: {_background_hex(source_column, value, frame[source_column], lower_is_better=lower_is_better or LOWER_IS_BETTER, higher_is_better=higher_is_better or HIGHER_IS_BETTER)}; color: #1f1f1f"
-                        if _background_hex(source_column, value, frame[source_column], lower_is_better=lower_is_better or LOWER_IS_BETTER, higher_is_better=higher_is_better or HIGHER_IS_BETTER)
-                        else ""
-                    )
-                    for value in frame[source_column]
-                ]
+        display_frame, styles = _build_lightweight_grid_payload(
+            frame,
+            tuple(sorted(lower_is_better or LOWER_IS_BETTER)),
+            tuple(sorted(higher_is_better or HIGHER_IS_BETTER)),
+        )
         st.dataframe(
-            display_frame.style.format(formatters).apply(lambda _: styles, axis=None),
+            display_frame.style.apply(lambda _: styles, axis=None),
             hide_index=True,
             use_container_width=True,
             height=height,
@@ -522,6 +542,7 @@ def _draw_home_plate(draw: ImageDraw.ImageDraw, center_x: int, top_y: int, fill:
     draw.polygon(points, fill=fill, outline=outline)
 
 
+@st.cache_data(show_spinner=False)
 def _build_zone_heatmap_image(title: str, subtitle: str, zone_map: pd.DataFrame, value_mode: str = "percent") -> bytes:
     if not HAS_PILLOW:
         raise RuntimeError("Pillow is required for heatmap rendering.")
