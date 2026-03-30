@@ -1182,21 +1182,21 @@ def _draw_top_matchups_game_section(
     frame = section["frame"]
     title = section["title"]
     subtitle = str(section.get("subtitle", "")).strip()
-    title_font = _load_font(48, bold=True)
-    subtitle_font = _load_font(32, bold=True)
-    hitter_font = _load_font(42, bold=True)
-    team_font = _load_font(30, bold=True)
-    chip_font = _load_font(30, bold=True)
-    row_height = 108
+    title_font = _load_font(44, bold=True)
+    subtitle_font = _load_font(28, bold=True)
+    hitter_font = _load_font(36, bold=True)
+    team_font = _load_font(25, bold=True)
+    chip_font = _load_font(26, bold=True)
+    row_height = 90
     row_gap = 10
-    title_height = 110 if subtitle else 70
+    title_height = 94 if subtitle else 62
     panel_height = title_height + len(frame) * (row_height + row_gap) + 14
     if frame.empty:
-        panel_height = 138 if subtitle else 102
+        panel_height = 118 if subtitle else 90
     _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
     _text(draw, (left + 18, top + 14), title, title_font, REPORT_TEXT)
     if subtitle:
-        _text(draw, (left + 18, top + 64), subtitle, subtitle_font, REPORT_MUTED)
+        _text(draw, (left + 18, top + 54), subtitle, subtitle_font, REPORT_MUTED)
     if frame.empty:
         _text(draw, (left + 18, top + title_height), "No data available", subtitle_font, REPORT_MUTED)
         return top + panel_height
@@ -1209,12 +1209,12 @@ def _draw_top_matchups_game_section(
         "avg_launch_angle",
     ]
     y = top + title_height
-    identity_width = max(220, min(300, int(width * 0.24)))
+    identity_width = max(220, min(290, int(width * 0.23)))
     chip_area_left = left + 22 + identity_width + 12
     chip_gap_x = 8
     chip_columns = 5
-    chip_width = max(150, int((left + width - 22 - chip_area_left - chip_gap_x * (chip_columns - 1) - 18) / chip_columns))
-    chip_height = 52
+    chip_width = max(144, int((left + width - 22 - chip_area_left - chip_gap_x * (chip_columns - 1) - 18) / chip_columns))
+    chip_height = 44
 
     for _, row in frame.iterrows():
         row_top = y
@@ -1223,13 +1223,13 @@ def _draw_top_matchups_game_section(
         primary = _format_value("hitter_name", row.get("hitter_name"), export_mode=True)
         team_value = _format_value("team", row.get("team"), export_mode=True)
         _text(draw, (left + 28, row_top + 10), primary, hitter_font, REPORT_TEXT)
-        _text(draw, (left + 28, row_top + 58), team_value, team_font, REPORT_MUTED)
+        _text(draw, (left + 28, row_top + 52), team_value, team_font, REPORT_MUTED)
 
         for idx, column in enumerate(metric_columns):
             if column not in frame.columns:
                 continue
             chip_x = chip_area_left + idx * (chip_width + chip_gap_x)
-            chip_y = row_top + 26
+            chip_y = row_top + 22
             chip_fill = _background_hex(
                 column,
                 row.get(column),
@@ -1240,7 +1240,7 @@ def _draw_top_matchups_game_section(
             draw.rounded_rectangle((chip_x, chip_y, chip_x + chip_width, chip_y + chip_height), radius=12, fill=chip_fill)
             chip_label = DISPLAY_LABELS.get(column, column)
             chip_text = f"{chip_label} {_format_value(column, row.get(column), export_mode=True)}"
-            _text(draw, (chip_x + 12, chip_y + 10), chip_text, chip_font, REPORT_TEXT)
+            _text(draw, (chip_x + 10, chip_y + 8), chip_text, chip_font, REPORT_TEXT)
         y += row_height + row_gap
 
     return top + panel_height
@@ -1249,12 +1249,12 @@ def _draw_top_matchups_game_section(
 def _build_top_matchups_report_image(title: str, subtitle: str, sections: list[dict]) -> bytes:
     if not HAS_PILLOW:
         raise RuntimeError("Pillow is required for PNG/JPG export.")
-    title_font = _load_font(42, bold=True)
-    subtitle_font = _load_font(26, bold=True)
+    title_font = _load_font(38, bold=True)
+    subtitle_font = _load_font(22, bold=True)
     section_title_font = _load_font(36, bold=True)
     section_body_font = _load_font(24, bold=True)
     width = 1240
-    header_height = 110
+    header_height = 98
     total_height = header_height + 24
     for section in sections:
         total_height += _export_section_height_estimate(section["title"], section["frame"], str(section.get("subtitle", "")))
@@ -1262,9 +1262,9 @@ def _build_top_matchups_report_image(title: str, subtitle: str, sections: list[d
     image = Image.new("RGB", (width, total_height), REPORT_BG)
     draw = ImageDraw.Draw(image)
     _panel(draw, (18, 18, width - 18, header_height), fill="#f5f7fa", radius=22)
-    _text(draw, (36, 28), "KASPER SCOUTING REPORT", _load_font(24, bold=True), REPORT_ACCENT)
-    _text(draw, (36, 50), title, title_font, REPORT_TEXT)
-    _text(draw, (36, 82), subtitle, subtitle_font, REPORT_TEXT)
+    _text(draw, (36, 26), "KASPER SCOUTING REPORT", _load_font(20, bold=True), REPORT_ACCENT)
+    _text(draw, (36, 46), title, title_font, REPORT_TEXT)
+    _text(draw, (36, 72), subtitle, subtitle_font, REPORT_TEXT)
 
     y = header_height + 12
     for section in sections:
