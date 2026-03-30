@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from io import BytesIO
 from math import cos, radians, sin
+from pathlib import Path
+import warnings
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
@@ -833,11 +835,46 @@ REPORT_MUTED = "#4b5563"
 REPORT_ACCENT = "#1f4e79"
 
 
+_FONT_WARNING_EMITTED = False
+
+
+def _font_candidates(bold: bool) -> list[Path]:
+    repo_root = Path(__file__).resolve().parent.parent
+    bundled_dir = repo_root / "assets" / "fonts"
+    candidates: list[Path] = []
+
+    if bundled_dir.exists():
+        patterns = ["*Bold*.ttf", "*Bold*.otf"] if bold else ["*Regular*.ttf", "*Regular*.otf", "*.ttf", "*.otf"]
+        for pattern in patterns:
+            candidates.extend(sorted(bundled_dir.glob(pattern)))
+
+    streamlit_media_dir = repo_root / ".venv" / "Lib" / "site-packages" / "streamlit" / "static" / "static" / "media"
+    if streamlit_media_dir.exists():
+        patterns = ["KaTeX_SansSerif-Bold*.ttf", "KaTeX_Main-Bold*.ttf"] if bold else ["KaTeX_SansSerif-Regular*.ttf", "KaTeX_Main-Regular*.ttf"]
+        for pattern in patterns:
+            candidates.extend(sorted(streamlit_media_dir.glob(pattern)))
+
+    system_candidates = [
+        Path(r"C:\Windows\Fonts\arialbd.ttf") if bold else Path(r"C:\Windows\Fonts\arial.ttf"),
+        Path(r"C:\Windows\Fonts\seguisb.ttf") if bold else Path(r"C:\Windows\Fonts\segoeui.ttf"),
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf") if bold else Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        Path("/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf") if bold else Path("/usr/share/fonts/dejavu/DejaVuSans.ttf"),
+    ]
+    candidates.extend(system_candidates)
+    return [path for path in candidates if path.exists()]
+
+
 def _load_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
-    try:
-        return ImageFont.truetype("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf", size=size)
-    except Exception:  # pragma: no cover
-        return ImageFont.load_default()
+    global _FONT_WARNING_EMITTED
+    for path in _font_candidates(bold):
+        try:
+            return ImageFont.truetype(str(path), size=size)
+        except Exception:
+            continue
+    if not _FONT_WARNING_EMITTED:  # pragma: no cover
+        warnings.warn("Poster font fallback hit ImageFont.load_default(); scalable TTF font was not found.", RuntimeWarning)
+        _FONT_WARNING_EMITTED = True
+    return ImageFont.load_default()
 
 
 def _section_team(title: str) -> str:
