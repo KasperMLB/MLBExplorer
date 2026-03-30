@@ -418,6 +418,7 @@ def build_top_matchups_export_sections(
         "swstr_pct",
         "pulled_barrel_pct",
         "avg_launch_angle",
+        "ceiling_score",
     ]
     for game in selected_games:
         away_hitters, home_hitters = hitters_by_game.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
