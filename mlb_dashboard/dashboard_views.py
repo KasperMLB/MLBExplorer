@@ -414,11 +414,9 @@ def build_top_matchups_export_sections(
         "hitter_name",
         "team",
         "matchup_score",
-        "ceiling_score",
         "zone_fit_score",
         "swstr_pct",
         "pulled_barrel_pct",
-        "barrel_bip_pct",
         "avg_launch_angle",
     ]
     for game in selected_games:
