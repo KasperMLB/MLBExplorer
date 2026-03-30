@@ -1186,11 +1186,21 @@ def _draw_top_matchups_game_section(
     subtitle_font = _load_font(24, bold=True)
     hitter_font = _load_font(28, bold=True)
     team_font = _load_font(20, bold=True)
-    chip_font = _load_font(20, bold=True)
-    row_height = 68
+    header_font = _load_font(18, bold=True)
+    value_font = _load_font(24, bold=True)
+    row_height = 66
     row_gap = 8
     title_height = 88 if subtitle else 58
-    panel_height = title_height + len(frame) * (row_height + row_gap) + 14
+    metric_columns = [
+        "matchup_score",
+        "zone_fit_score",
+        "swstr_pct",
+        "pulled_barrel_pct",
+        "avg_launch_angle",
+        "ceiling_score",
+    ]
+    header_row_height = 28
+    panel_height = title_height + header_row_height + 8 + len(frame) * (row_height + row_gap) + 14
     if frame.empty:
         panel_height = 106 if subtitle else 80
     _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
@@ -1204,17 +1214,16 @@ def _draw_top_matchups_game_section(
     y = top + title_height
     identity_width = max(210, min(260, int(width * 0.21)))
     chip_area_left = left + 22 + identity_width + 10
-    metric_columns = [
-        "matchup_score",
-        "zone_fit_score",
-        "swstr_pct",
-        "pulled_barrel_pct",
-        "avg_launch_angle",
-        "ceiling_score",
-    ]
     chip_gap_x = 6
     chip_width = max(130, int((left + width - 22 - chip_area_left - chip_gap_x * (len(metric_columns) - 1) - 18) / len(metric_columns)))
     chip_height = 38
+    _text(draw, (left + 24, y + 4), "Hitter", header_font, REPORT_MUTED)
+    _text(draw, (left + 24, y + 18), "Team", header_font, REPORT_MUTED)
+    for idx, column in enumerate(metric_columns):
+        chip_x = chip_area_left + idx * (chip_width + chip_gap_x)
+        header_label = DISPLAY_LABELS.get(column, column)
+        _text(draw, (chip_x + 4, y + 10), header_label, header_font, REPORT_MUTED)
+    y += header_row_height + 8
 
     for _, row in frame.iterrows():
         row_top = y
@@ -1238,9 +1247,8 @@ def _draw_top_matchups_game_section(
                 higher_is_better=HIGHER_IS_BETTER,
             ) or "#e8eef5"
             draw.rounded_rectangle((chip_x, chip_y, chip_x + chip_width, chip_y + chip_height), radius=10, fill=chip_fill)
-            chip_label = DISPLAY_LABELS.get(column, column)
-            chip_text = f"{chip_label} {_format_value(column, row.get(column), export_mode=True)}"
-            _text(draw, (chip_x + 8, chip_y + 7), chip_text, chip_font, REPORT_TEXT)
+            chip_text = _format_value(column, row.get(column), export_mode=True)
+            _text(draw, (chip_x + 10, chip_y + 6), chip_text, value_font, REPORT_TEXT)
         y += row_height + row_gap
 
     return top + panel_height
