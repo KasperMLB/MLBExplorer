@@ -1182,39 +1182,38 @@ def _draw_top_matchups_game_section(
     frame = section["frame"]
     title = section["title"]
     subtitle = str(section.get("subtitle", "")).strip()
-    title_font = _load_font(44, bold=True)
-    subtitle_font = _load_font(28, bold=True)
-    hitter_font = _load_font(36, bold=True)
-    team_font = _load_font(25, bold=True)
-    chip_font = _load_font(26, bold=True)
-    row_height = 90
-    row_gap = 10
-    title_height = 94 if subtitle else 62
+    title_font = _load_font(40, bold=True)
+    subtitle_font = _load_font(24, bold=True)
+    hitter_font = _load_font(28, bold=True)
+    team_font = _load_font(20, bold=True)
+    stat_font = _load_font(22, bold=True)
+    row_height = 58
+    row_gap = 8
+    title_height = 86 if subtitle else 56
     panel_height = title_height + len(frame) * (row_height + row_gap) + 14
     if frame.empty:
-        panel_height = 118 if subtitle else 90
+        panel_height = 102 if subtitle else 78
     _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
     _text(draw, (left + 18, top + 14), title, title_font, REPORT_TEXT)
     if subtitle:
-        _text(draw, (left + 18, top + 54), subtitle, subtitle_font, REPORT_MUTED)
+        _text(draw, (left + 18, top + 48), subtitle, subtitle_font, REPORT_MUTED)
     if frame.empty:
         _text(draw, (left + 18, top + title_height), "No data available", subtitle_font, REPORT_MUTED)
         return top + panel_height
 
-    metric_columns = [
-        "matchup_score",
-        "zone_fit_score",
-        "swstr_pct",
-        "pulled_barrel_pct",
-        "avg_launch_angle",
-    ]
     y = top + title_height
-    identity_width = max(220, min(290, int(width * 0.23)))
-    chip_area_left = left + 22 + identity_width + 12
-    chip_gap_x = 8
-    chip_columns = 5
-    chip_width = max(144, int((left + width - 22 - chip_area_left - chip_gap_x * (chip_columns - 1) - 18) / chip_columns))
-    chip_height = 44
+    identity_width = max(240, min(320, int(width * 0.27)))
+    stats_left = left + 22 + identity_width + 16
+    stats_width = left + width - 28 - stats_left
+    stat_columns = [
+        ("MUP", "matchup_score"),
+        ("ZF", "zone_fit_score"),
+        ("SW", "swstr_pct"),
+        ("PB", "pulled_barrel_pct"),
+        ("LA", "avg_launch_angle"),
+    ]
+    stat_gap = 10
+    stat_width = max(96, int((stats_width - stat_gap * (len(stat_columns) - 1)) / len(stat_columns)))
 
     for _, row in frame.iterrows():
         row_top = y
@@ -1222,25 +1221,15 @@ def _draw_top_matchups_game_section(
         _panel(draw, (left + 12, row_top, left + width - 12, row_bottom), fill="#fbfcfe", radius=14)
         primary = _format_value("hitter_name", row.get("hitter_name"), export_mode=True)
         team_value = _format_value("team", row.get("team"), export_mode=True)
-        _text(draw, (left + 28, row_top + 10), primary, hitter_font, REPORT_TEXT)
-        _text(draw, (left + 28, row_top + 52), team_value, team_font, REPORT_MUTED)
+        _text(draw, (left + 28, row_top + 8), primary, hitter_font, REPORT_TEXT)
+        _text(draw, (left + 28, row_top + 32), team_value, team_font, REPORT_MUTED)
 
-        for idx, column in enumerate(metric_columns):
+        for idx, (label, column) in enumerate(stat_columns):
             if column not in frame.columns:
                 continue
-            chip_x = chip_area_left + idx * (chip_width + chip_gap_x)
-            chip_y = row_top + 22
-            chip_fill = _background_hex(
-                column,
-                row.get(column),
-                frame[column],
-                lower_is_better=LOWER_IS_BETTER,
-                higher_is_better=HIGHER_IS_BETTER,
-            ) or "#e8eef5"
-            draw.rounded_rectangle((chip_x, chip_y, chip_x + chip_width, chip_y + chip_height), radius=12, fill=chip_fill)
-            chip_label = DISPLAY_LABELS.get(column, column)
-            chip_text = f"{chip_label} {_format_value(column, row.get(column), export_mode=True)}"
-            _text(draw, (chip_x + 10, chip_y + 8), chip_text, chip_font, REPORT_TEXT)
+            stat_x = stats_left + idx * (stat_width + stat_gap)
+            stat_text = f"{label} {_format_value(column, row.get(column), export_mode=True)}"
+            _text(draw, (stat_x, row_top + 18), stat_text, stat_font, REPORT_TEXT)
         y += row_height + row_gap
 
     return top + panel_height
