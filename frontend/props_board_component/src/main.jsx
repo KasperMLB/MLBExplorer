@@ -1,9 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { Streamlit, withStreamlitConnection } from "streamlit-component-lib";
-import { PropsBoard } from "./props_board.jsx";
+import { App } from "./app.jsx";
 
-const ConnectedBoard = withStreamlitConnection(PropsBoard);
+const ConnectedBoard = withStreamlitConnection(App);
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

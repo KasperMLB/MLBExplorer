@@ -8,6 +8,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
 import streamlit as st
+from .components import render_zone_tool as render_zone_tool_component
 
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -625,6 +626,20 @@ def render_zone_heatmap(title: str, subtitle: str, zone_map: pd.DataFrame, value
         st.info("No zone heatmap data available.")
         return
     st.image(_build_zone_heatmap_image(title, subtitle, zone_map, value_mode=value_mode), use_container_width=False)
+
+
+def render_zone_tool(title: str, subtitle: str, zone_map: pd.DataFrame, key: str, value_mode: str = "percent", map_kind: str = "zone") -> None:
+    if zone_map.empty:
+        st.info("No zone heatmap data available.")
+        return
+    render_zone_tool_component(
+        zone_rows=zone_map[["zone", "sample_size", "zone_value", "display_value"]],
+        key=key,
+        title=title,
+        subtitle=subtitle,
+        value_mode=value_mode,
+        map_kind=map_kind,
+    )
 
 
 def render_weather_field(

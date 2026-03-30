@@ -32,3 +32,25 @@ def render_props_board(
         default=0,
         height=height,
     )
+
+
+def render_zone_tool(
+    zone_rows: pd.DataFrame,
+    key: str,
+    title: str,
+    subtitle: str,
+    height: int = 560,
+    value_mode: str = "percent",
+    map_kind: str = "zone",
+) -> None:
+    _component_func(
+        componentType="zone_tool",
+        zoneRows=_records(zone_rows),
+        title=title,
+        subtitle=subtitle,
+        valueMode=value_mode,
+        mapKind=map_kind,
+        default=0,
+        key=key,
+        height=height,
+    )

@@ -43,7 +43,7 @@ from .ui_components import (
     render_matchup_header,
     render_metric_grid,
     render_slate_export_hub,
-    render_zone_heatmap,
+    render_zone_tool,
 )
 
 
@@ -236,6 +236,56 @@ def _render_top_sections(
         )
 
 
+def _build_pitcher_export_sections(
+    team_label: str,
+    pitcher_summary_by_hand: pd.DataFrame,
+    pitcher_arsenal: pd.DataFrame,
+    pitcher_by_hand: pd.DataFrame,
+    pitcher_count_usage: pd.DataFrame,
+) -> list[dict]:
+    export_sections: list[dict] = []
+    for side_key, side_label in BATTER_SIDE_LABELS.items():
+        summary_frame = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["batter_side_key"] == side_key]
+        if not summary_frame.empty:
+            export_sections.append(
+                {
+                    "title": f"{team_label} Summary {side_label}",
+                    "frame": summary_frame[PITCHER_SUMMARY_COLUMNS],
+                    "lower_is_better": PITCHER_LOWER_IS_BETTER,
+                    "higher_is_better": PITCHER_HIGHER_IS_BETTER,
+                }
+            )
+
+        side_arsenal = sort_arsenal_frame(pitcher_arsenal) if side_key == "all" else sort_arsenal_frame(
+            pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key]
+        )
+        if not side_arsenal.empty:
+            export_sections.append(
+                {
+                    "title": f"{team_label} Arsenal {side_label}",
+                    "frame": side_arsenal[ARSENAL_COLUMNS],
+                    "lower_is_better": {"hard_hit_pct", "xwoba_con"},
+                    "higher_is_better": {"usage_pct", "swstr_pct", "avg_release_speed", "avg_spin_rate"},
+                }
+            )
+
+        side_count = pitcher_count_usage.loc[pitcher_count_usage["batter_side_key"] == side_key]
+        if side_key == "all":
+            side_usage = pitcher_arsenal[["pitch_name", "usage_pct"]] if not pitcher_arsenal.empty else pd.DataFrame(columns=["pitch_name", "usage_pct"])
+        else:
+            side_usage = pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key, ["pitch_name", "usage_pct"]]
+        count_frame = pivot_count_usage(side_count, side_usage)
+        if not count_frame.empty:
+            export_sections.append(
+                {
+                    "title": f"{team_label} Count Usage {side_label}",
+                    "frame": count_frame[COUNT_USAGE_COLUMNS],
+                    "higher_is_better": set(COUNT_BUCKET_ORDER),
+                }
+            )
+    return export_sections
+
+
 def main() -> None:
     st.set_page_config(page_title="MLB Local Explorer", layout="wide")
     st.title("MLB Local Explorer")
@@ -328,6 +378,8 @@ def main() -> None:
         away_by_hand, home_by_hand = pitcher_by_hand_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
         away_count, home_count = pitcher_count_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
         best_matchups = build_best_matchups(away_hitters, home_hitters)
+        away_export_sections = _build_pitcher_export_sections(game["away_team"], away_summary_by_hand, away_arsenal, away_by_hand, away_count)
+        home_export_sections = _build_pitcher_export_sections(game["home_team"], home_summary_by_hand, home_arsenal, home_by_hand, home_count)
 
         with st.expander(f"{game['away_team']} @ {game['home_team']}", expanded=idx == 0):
             render_matchup_header(game)
@@ -346,7 +398,7 @@ def main() -> None:
                 pitcher_cols = st.columns(2)
                 with pitcher_cols[0]:
                     st.markdown(f"##### {game['away_team']} starter")
-                    away_export_sections, _, _, _, _ = _render_pitcher_tab(
+                    _render_pitcher_tab(
                         game["game_pk"],
                         game["away_team"],
                         away_summary_by_hand,
@@ -356,7 +408,7 @@ def main() -> None:
                     )
                 with pitcher_cols[1]:
                     st.markdown(f"##### {game['home_team']} starter")
-                    home_export_sections, _, _, _, _ = _render_pitcher_tab(
+                    _render_pitcher_tab(
                         game["game_pk"],
                         game["home_team"],
                         home_summary_by_hand,
@@ -452,16 +504,20 @@ def main() -> None:
                             overlay_map = build_zone_overlay_map(hitter_map, pitcher_map)
                             heatmap_cols = st.columns(2)
                             with heatmap_cols[0]:
-                                render_zone_heatmap(
+                                render_zone_tool(
                                     f"{pitcher_row['pitcher_name'].iloc[0]} Usage",
                                     f"{selected_pitch} | Pitcher zone attack",
                                     pitcher_map,
+                                    key=f"p-zone-map-{game['game_pk']}-{team_label}-{selected_pitch}",
+                                    map_kind="pitcher",
                                 )
                             with heatmap_cols[1]:
-                                render_zone_heatmap(
+                                render_zone_tool(
                                     f"Overlay vs {selected_hitter or 'Opposing Hitter'}",
                                     f"{selected_pitch} | Hitter damage x pitcher usage",
                                     overlay_map,
+                                    key=f"p-zone-overlay-{game['game_pk']}-{team_label}-{selected_pitch}",
+                                    map_kind="overlay",
                                 )
                             render_metric_grid(
                                 zone_frame[[column for column in PITCHER_ZONE_COLUMNS if column in zone_frame.columns]],
@@ -507,17 +563,21 @@ def main() -> None:
                         overlay_map = build_zone_overlay_map(hitter_map, pitcher_map)
                         heatmap_cols = st.columns(2)
                         with heatmap_cols[0]:
-                            render_zone_heatmap(
+                            render_zone_tool(
                                 f"{selected_hitter or team_label} Damage",
                                 f"{selected_pitch} | Hitter zone quality",
                                 hitter_map,
+                                key=f"h-zone-map-{game['game_pk']}-{team_label}-{selected_pitch}",
+                                map_kind="hitter",
                             )
                         with heatmap_cols[1]:
                             opposing_name = opposing_pitcher["pitcher_name"].iloc[0] if not opposing_pitcher.empty else "Opposing Pitcher"
-                            render_zone_heatmap(
+                            render_zone_tool(
                                 f"Overlay vs {opposing_name}",
                                 f"{selected_pitch} | Hitter damage x pitcher usage",
                                 overlay_map,
+                                key=f"h-zone-overlay-{game['game_pk']}-{team_label}-{selected_pitch}",
+                                map_kind="overlay",
                             )
                         render_metric_grid(
                             hitter_detail[[column for column in BATTER_ZONE_COLUMNS if column in hitter_detail.columns]],
