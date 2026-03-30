@@ -108,6 +108,7 @@ def _render_pitcher_tab(
             height=132,
             lower_is_better=PITCHER_LOWER_IS_BETTER,
             higher_is_better=PITCHER_HIGHER_IS_BETTER,
+            use_lightweight=True,
         )
         for side_key in BATTER_SIDE_LABELS:
             summary_frame = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["batter_side_key"] == side_key]
@@ -138,6 +139,7 @@ def _render_pitcher_tab(
                         height=250,
                         lower_is_better={"hard_hit_pct", "xwoba_con"},
                         higher_is_better={"usage_pct", "swstr_pct", "avg_release_speed", "avg_spin_rate"},
+                        use_lightweight=True,
                     )
                     export_sections.append(
                         {
@@ -167,6 +169,7 @@ def _render_pitcher_tab(
                         key=f"count-{game_pk}-{team_label}-{side_key}",
                         height=250,
                         higher_is_better=set(COUNT_BUCKET_ORDER),
+                        use_lightweight=True,
                     )
                     export_sections.append(
                         {
