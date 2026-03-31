@@ -17,10 +17,12 @@ except ImportError:  # pragma: no cover
 @dataclass
 class CockroachPayload:
     live_pitch_mix: pd.DataFrame
+    pitcher_baseline_event_rows: pd.DataFrame
     hitter_rolling: pd.DataFrame
     pitcher_rolling: pd.DataFrame
     batter_zone_profiles: pd.DataFrame
     pitcher_zone_profiles: pd.DataFrame
+    batter_family_zone_profiles: pd.DataFrame
 
 
 def _ensure_driver() -> None:
@@ -47,6 +49,26 @@ def _normalize_live_pitch_mix(frame: pd.DataFrame) -> pd.DataFrame:
     normalized["fielding_team"] = normalized.apply(lambda row: row["home_team"] if row["inning_topbot"] == "Top" else row["away_team"], axis=1)
     normalized["release_spin_rate"] = pd.to_numeric(normalized.get("release_spin_rate"), errors="coerce")
     normalized["pitcher_name"] = normalized["player_name"]
+    return add_metric_flags(normalized)
+
+
+def _normalize_pitcher_baseline_event_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    normalized = frame.copy()
+    normalized["game_date"] = pd.to_datetime(normalized["game_date"], errors="coerce")
+    normalized["game_year"] = pd.to_numeric(normalized.get("source_season"), errors="coerce").fillna(2025).astype(int)
+    normalized["team"] = normalized.apply(
+        lambda row: row["away_team"] if row.get("inning_topbot") == "Top" else row["home_team"],
+        axis=1,
+    )
+    normalized["fielding_team"] = normalized.apply(
+        lambda row: row["home_team"] if row.get("inning_topbot") == "Top" else row["away_team"],
+        axis=1,
+    )
+    normalized["pitcher_name"] = normalized["player_name"]
+    normalized["player_name"] = normalized["player_name"].fillna(normalized["pitcher_name"])
+    normalized["release_pos_y"] = pd.to_numeric(normalized.get("release_pos_y"), errors="coerce")
     return add_metric_flags(normalized)
 
 
@@ -208,8 +230,25 @@ def _normalize_pitcher_zone_profiles(frame: pd.DataFrame) -> pd.DataFrame:
     return normalized
 
 
+def _normalize_batter_family_zone_profiles(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    normalized = frame.copy()
+    normalized["pitch_family"] = normalized.get("pitch_family", pd.Series(dtype="object")).fillna("").astype(str).str.strip().str.lower()
+    normalized["zone_bucket"] = normalized.get("zone_bucket", pd.Series(dtype="object")).fillna("").astype(str).str.strip().str.lower()
+    return normalized
+
+
 def _read_query(conn, sql: str) -> pd.DataFrame:
     return pd.read_sql_query(sql, conn)
+
+
+def _read_frame(conn, sql: str, params: dict | None = None) -> pd.DataFrame:
+    with conn.cursor() as cur:
+        cur.execute(sql, params or {})
+        rows = cur.fetchall()
+        columns = [desc.name for desc in cur.description] if cur.description else []
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _create_tracking_tables(conn, config: AppConfig) -> None:
@@ -239,6 +278,7 @@ def _create_tracking_tables(conn, config: AppConfig) -> None:
         "pulled_barrel_pct": "FLOAT8",
         "barrel_bbe_pct": "FLOAT8",
         "barrel_bip_pct": "FLOAT8",
+        "sweet_spot_pct": "FLOAT8",
         "fb_pct": "FLOAT8",
         "hard_hit_pct": "FLOAT8",
         "avg_launch_angle": "FLOAT8",
@@ -289,8 +329,13 @@ def _create_tracking_tables(conn, config: AppConfig) -> None:
         "recent_window": "STRING NOT NULL",
         "weighted_mode": "STRING NOT NULL",
         "pitcher_score": "FLOAT8",
+        "strikeout_score": "FLOAT8",
         "xwoba": "FLOAT8",
+        "called_strike_pct": "FLOAT8",
+        "csw_pct": "FLOAT8",
         "swstr_pct": "FLOAT8",
+        "ball_pct": "FLOAT8",
+        "siera": "FLOAT8",
         "barrel_bbe_pct": "FLOAT8",
         "barrel_bip_pct": "FLOAT8",
         "pulled_barrel_pct": "FLOAT8",
@@ -379,6 +424,48 @@ def _create_tracking_tables(conn, config: AppConfig) -> None:
     conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS pitcher_count_usage_snapshots_unique_idx ON {config.cockroach_pitcher_count_snapshot_table} (slate_date, game_pk, pitcher_id, split_key, recent_window, weighted_mode, batter_side_key, pitch_name, count_bucket)")
 
 
+def _create_props_odds_table(conn, config: AppConfig) -> None:
+    columns = {
+        "rowid": "INT8 NOT NULL DEFAULT unique_rowid()",
+        "fetched_at": "STRING",
+        "cache_key": "STRING",
+        "provider": "STRING",
+        "event_id": "STRING",
+        "commence_time": "STRING",
+        "away_team": "STRING",
+        "home_team": "STRING",
+        "sportsbook": "STRING",
+        "sportsbook_key": "STRING",
+        "market_key": "STRING",
+        "market": "STRING",
+        "player_name_raw": "STRING",
+        "player_name": "STRING",
+        "odds_american": "INT8",
+        "line": "FLOAT8",
+        "selection_label": "STRING",
+        "selection_scope": "STRING",
+        "selection_side": "STRING",
+        "market_family": "STRING",
+        "market_variant": "STRING",
+        "threshold": "INT8",
+        "display_label": "STRING",
+        "is_primary_line": "BOOL",
+        "is_modeled": "BOOL",
+        "player_event_market_key": "STRING",
+        "row_source_type": "STRING",
+        "coverage_completion_status": "STRING",
+        "hr_books_requested": "STRING",
+        "hr_books_present": "STRING",
+        "hr_books_missing": "STRING",
+    }
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {config.cockroach_props_odds_table} ({', '.join(f'{name} {definition}' for name, definition in columns.items())}, PRIMARY KEY (rowid))"
+    )
+    conn.execute(
+        f"CREATE INDEX IF NOT EXISTS props_odds_lookup_idx ON {config.cockroach_props_odds_table} (market_key, player_name, fetched_at, event_id, rowid)"
+    )
+
+
 def _prepare_records(frame: pd.DataFrame, columns: list[str]) -> list[tuple]:
     work = frame.loc[:, columns].copy()
     for column in work.columns:
@@ -401,6 +488,17 @@ def _upsert_frame(conn, table_name: str, frame: pd.DataFrame, conflict_columns: 
         f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders}) "
         f"ON CONFLICT ({', '.join(conflict_columns)}) DO UPDATE SET {assignments}"
     )
+    records = _prepare_records(frame, columns)
+    with conn.cursor() as cur:
+        cur.executemany(sql, records)
+
+
+def _insert_frame(conn, table_name: str, frame: pd.DataFrame) -> None:
+    if frame.empty:
+        return
+    columns = list(frame.columns)
+    placeholders = ", ".join(["%s"] * len(columns))
+    sql = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
     records = _prepare_records(frame, columns)
     with conn.cursor() as cur:
         cur.executemany(sql, records)
@@ -473,6 +571,197 @@ def write_tracking_payload(
         )
 
 
+def read_hitter_backtest_data(
+    config: AppConfig,
+    start_date,
+    end_date,
+    split_key: str | None = None,
+    recent_window: str | None = None,
+    weighted_mode: str | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    _ensure_driver()
+    if not config.database_url:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    where = ["slate_date BETWEEN %(start_date)s AND %(end_date)s"]
+    params: dict[str, object] = {"start_date": start_date, "end_date": end_date}
+    if split_key:
+        where.append("split_key = %(split_key)s")
+        params["split_key"] = split_key
+    if recent_window:
+        where.append("recent_window = %(recent_window)s")
+        params["recent_window"] = recent_window
+    if weighted_mode:
+        where.append("weighted_mode = %(weighted_mode)s")
+        params["weighted_mode"] = weighted_mode
+    where_sql = " AND ".join(where)
+    database_url = _normalize_database_url(config.database_url)
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        snapshots = _read_frame(
+            conn,
+            f"""
+            SELECT *
+            FROM {config.cockroach_hitter_snapshot_table}
+            WHERE {where_sql}
+            ORDER BY slate_date DESC, game_pk, matchup_score DESC NULLS LAST
+            """,
+            params,
+        )
+        outcomes = _read_frame(
+            conn,
+            f"""
+            SELECT *
+            FROM {config.cockroach_hitter_outcome_table}
+            WHERE slate_date BETWEEN %(start_date)s AND %(end_date)s
+            ORDER BY slate_date DESC, game_pk, hitter_name
+            """,
+            {"start_date": start_date, "end_date": end_date},
+        )
+        boards = _read_frame(
+            conn,
+            f"""
+            SELECT *
+            FROM {config.cockroach_hitter_board_table}
+            WHERE slate_date BETWEEN %(start_date)s AND %(end_date)s
+            ORDER BY slate_date DESC, board_name, board_rank
+            """,
+            {"start_date": start_date, "end_date": end_date},
+        )
+    return snapshots, outcomes, boards
+
+
+def read_pitcher_backtest_data(
+    config: AppConfig,
+    start_date,
+    end_date,
+    split_key: str | None = None,
+    recent_window: str | None = None,
+    weighted_mode: str | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    _ensure_driver()
+    if not config.database_url:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    where = ["slate_date BETWEEN %(start_date)s AND %(end_date)s"]
+    params: dict[str, object] = {"start_date": start_date, "end_date": end_date}
+    if split_key:
+        where.append("split_key = %(split_key)s")
+        params["split_key"] = split_key
+    if recent_window:
+        where.append("recent_window = %(recent_window)s")
+        params["recent_window"] = recent_window
+    if weighted_mode:
+        where.append("weighted_mode = %(weighted_mode)s")
+        params["weighted_mode"] = weighted_mode
+    where_sql = " AND ".join(where)
+    database_url = _normalize_database_url(config.database_url)
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        snapshots = _read_frame(
+            conn,
+            f"""
+            SELECT *
+            FROM {config.cockroach_pitcher_snapshot_table}
+            WHERE {where_sql}
+            ORDER BY slate_date DESC, game_pk, pitcher_score DESC NULLS LAST
+            """,
+            params,
+        )
+        outcomes = _read_frame(
+            conn,
+            f"""
+            SELECT *
+            FROM {config.cockroach_pitcher_outcome_table}
+            WHERE slate_date BETWEEN %(start_date)s AND %(end_date)s
+            ORDER BY slate_date DESC, game_pk, pitcher_name
+            """,
+            {"start_date": start_date, "end_date": end_date},
+        )
+        boards = _read_frame(
+            conn,
+            f"""
+            SELECT *
+            FROM {config.cockroach_pitcher_board_table}
+            WHERE slate_date BETWEEN %(start_date)s AND %(end_date)s
+            ORDER BY slate_date DESC, board_name, board_rank
+            """,
+            {"start_date": start_date, "end_date": end_date},
+        )
+    return snapshots, outcomes, boards
+
+
+def read_prop_odds_history(
+    config: AppConfig,
+    start_date,
+    end_date,
+    markets: tuple[str, ...] = ("batter_home_runs", "pitcher_strikeouts"),
+) -> pd.DataFrame:
+    _ensure_driver()
+    if not config.database_url:
+        return pd.DataFrame()
+    database_url = _normalize_database_url(config.database_url)
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        return _read_frame(
+            conn,
+            f"""
+            SELECT fetched_at, cache_key, provider, event_id, commence_time, away_team, home_team, sportsbook,
+                   sportsbook_key, market_key, market, player_name_raw, player_name, odds_american, line,
+                   selection_label, selection_scope, selection_side, market_family, market_variant, threshold,
+                   display_label, is_primary_line, is_modeled, player_event_market_key, row_source_type,
+                   coverage_completion_status, hr_books_requested, hr_books_present, hr_books_missing
+            FROM {config.cockroach_props_odds_table}
+            WHERE market_key = ANY(%(markets)s)
+              AND CAST(substr(commence_time, 1, 10) AS DATE) BETWEEN %(start_date)s AND %(end_date)s
+            ORDER BY fetched_at DESC, player_name, market_key, sportsbook
+            """,
+            {"markets": list(markets), "start_date": start_date, "end_date": end_date},
+        )
+
+
+def write_props_odds_snapshot(config: AppConfig, frame: pd.DataFrame) -> None:
+    _ensure_driver()
+    if not config.database_url or frame.empty:
+        return
+    database_url = _normalize_database_url(config.database_url)
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        _create_props_odds_table(conn, config)
+        _insert_frame(
+            conn,
+            config.cockroach_props_odds_table,
+            frame[
+                [
+                    "fetched_at",
+                    "cache_key",
+                    "provider",
+                    "event_id",
+                    "commence_time",
+                    "away_team",
+                    "home_team",
+                    "sportsbook",
+                    "sportsbook_key",
+                    "market_key",
+                    "market",
+                    "player_name_raw",
+                    "player_name",
+                    "odds_american",
+                    "line",
+                    "selection_label",
+                    "selection_scope",
+                    "selection_side",
+                    "market_family",
+                    "market_variant",
+                    "threshold",
+                    "display_label",
+                    "is_primary_line",
+                    "is_modeled",
+                    "player_event_market_key",
+                    "row_source_type",
+                    "coverage_completion_status",
+                    "hr_books_requested",
+                    "hr_books_present",
+                    "hr_books_missing",
+                ]
+            ].copy(),
+        )
+
+
 def load_cockroach_payload(config: AppConfig) -> CockroachPayload:
     _ensure_driver()
     if not config.database_url:
@@ -480,19 +769,25 @@ def load_cockroach_payload(config: AppConfig) -> CockroachPayload:
     database_url = _normalize_database_url(config.database_url)
     with psycopg.connect(database_url, autocommit=True) as conn:
         live_pitch_mix = _read_query(conn, f"SELECT * FROM {config.cockroach_live_pitch_mix_table}")
+        pitcher_baseline_event_rows = _read_query(conn, f"SELECT * FROM {config.cockroach_pitcher_baseline_event_table}")
         hitter_rolling = _read_query(conn, f"SELECT * FROM {config.cockroach_hitter_rolling_table}")
         pitcher_rolling = _read_query(conn, f"SELECT * FROM {config.cockroach_pitcher_rolling_table}")
         batter_zone_profiles = _read_query(conn, f"SELECT * FROM {config.cockroach_batter_zone_table}")
         pitcher_zone_profiles = _read_query(conn, f"SELECT * FROM {config.cockroach_pitcher_zone_table}")
+        batter_family_zone_profiles = _read_query(conn, f"SELECT * FROM {config.cockroach_batter_family_zone_table}")
     live_pitch_mix = _normalize_live_pitch_mix(live_pitch_mix)
+    pitcher_baseline_event_rows = _normalize_pitcher_baseline_event_rows(pitcher_baseline_event_rows)
     hitter_rolling_mapped = pd.concat([_map_hitter_rolling(hitter_rolling), _compute_hitter_rolling_15(live_pitch_mix)], ignore_index=True, sort=False)
     pitcher_rolling_mapped = _map_pitcher_rolling(pitcher_rolling, live_pitch_mix)
     batter_zone_profiles = _normalize_batter_zone_profiles(batter_zone_profiles)
     pitcher_zone_profiles = _normalize_pitcher_zone_profiles(pitcher_zone_profiles)
+    batter_family_zone_profiles = _normalize_batter_family_zone_profiles(batter_family_zone_profiles)
     return CockroachPayload(
         live_pitch_mix=live_pitch_mix,
+        pitcher_baseline_event_rows=pitcher_baseline_event_rows,
         hitter_rolling=hitter_rolling_mapped,
         pitcher_rolling=pitcher_rolling_mapped,
         batter_zone_profiles=batter_zone_profiles,
         pitcher_zone_profiles=pitcher_zone_profiles,
+        batter_family_zone_profiles=batter_family_zone_profiles,
     )

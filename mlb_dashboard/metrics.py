@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 
 SWINGING_STRIKE_DESCRIPTIONS = {"swinging_strike", "swinging_strike_blocked"}
+CALLED_STRIKE_DESCRIPTIONS = {"called_strike", "automatic_strike"}
+BALL_DESCRIPTIONS = {"ball", "blocked_ball", "pitchout", "intent_ball"}
 IN_PLAY_TYPES = {"line_drive", "fly_ball", "ground_ball", "popup"}
 HIT_EVENTS = {"single", "double", "triple", "home_run"}
 
@@ -95,6 +97,11 @@ def is_ground_ball(frame: pd.DataFrame) -> pd.Series:
     return frame["bb_type"].fillna("").astype(str).str.lower().eq("ground_ball")
 
 
+def is_sweet_spot(frame: pd.DataFrame) -> pd.Series:
+    launch_angle = pd.to_numeric(frame["launch_angle"], errors="coerce")
+    return launch_angle.ge(8) & launch_angle.le(32)
+
+
 def is_batted_ball(frame: pd.DataFrame) -> pd.Series:
     return frame["bb_type"].fillna("").astype(str).str.lower().isin(IN_PLAY_TYPES)
 
@@ -110,6 +117,14 @@ def is_pulled_batted_ball(frame: pd.DataFrame) -> pd.Series:
 
 def is_swinging_strike(frame: pd.DataFrame) -> pd.Series:
     return frame["description"].fillna("").astype(str).str.lower().isin(SWINGING_STRIKE_DESCRIPTIONS)
+
+
+def is_ball(frame: pd.DataFrame) -> pd.Series:
+    return frame["description"].fillna("").astype(str).str.lower().isin(BALL_DESCRIPTIONS)
+
+
+def is_called_strike(frame: pd.DataFrame) -> pd.Series:
+    return frame["description"].fillna("").astype(str).str.lower().isin(CALLED_STRIKE_DESCRIPTIONS)
 
 
 def is_hit_event(frame: pd.DataFrame) -> pd.Series:
@@ -132,9 +147,12 @@ def add_metric_flags(frame: pd.DataFrame) -> pd.DataFrame:
     enriched["is_hard_hit"] = is_hard_hit(enriched)
     enriched["is_fly_ball"] = is_fly_ball(enriched)
     enriched["is_ground_ball"] = is_ground_ball(enriched)
+    enriched["is_sweet_spot"] = is_sweet_spot(enriched)
     enriched["is_pulled_batted_ball"] = is_pulled_batted_ball(enriched)
     enriched["is_pulled_barrel"] = enriched["is_barrel"] & enriched["is_pulled_batted_ball"]
     enriched["is_swinging_strike"] = is_swinging_strike(enriched)
+    enriched["is_ball"] = is_ball(enriched)
+    enriched["is_called_strike"] = is_called_strike(enriched)
     enriched["is_hit_event"] = is_hit_event(enriched)
     enriched["is_home_run_event"] = is_home_run_event(enriched)
     enriched["xwoba_value"] = pd.to_numeric(enriched["estimated_woba_using_speedangle"], errors="coerce")
@@ -174,13 +192,13 @@ def classify_count_buckets(frame: pd.DataFrame) -> pd.Series:
 
 def likely_starter_scores(plate_appearance_history: pd.DataFrame, recent_days: int = 14) -> pd.DataFrame:
     if plate_appearance_history.empty:
-        return pd.DataFrame(columns=["team", "batter", "likely_starter_score"])
+        return pd.DataFrame(columns=["batter", "likely_starter_score"])
     history = plate_appearance_history.copy()
     history["game_date"] = pd.to_datetime(history["game_date"])
     cutoff = history["game_date"].max() - pd.Timedelta(days=recent_days)
     recent = history.loc[history["game_date"] >= cutoff]
     grouped = (
-        recent.groupby(["team", "batter"], as_index=False)
+        recent.groupby(["batter"], as_index=False)
         .agg(
             games=("game_pk", "nunique"),
             plate_appearances=("at_bat_number", "nunique"),
@@ -193,7 +211,7 @@ def likely_starter_scores(plate_appearance_history: pd.DataFrame, recent_days: i
         + grouped["plate_appearances"] * 0.5
         - grouped["days_since"] * 0.2
     )
-    return grouped[["team", "batter", "likely_starter_score"]]
+    return grouped[["batter", "likely_starter_score"]]
 
 
 def safe_float(value: object) -> float | None:

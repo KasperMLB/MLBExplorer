@@ -61,6 +61,7 @@ export function sharedStyles() {
       --hero-top: #fffefb;
       --hero-bottom: #f8f2e4;
       --shadow: 0 16px 38px rgba(16, 37, 66, 0.08);
+      --header-shadow: inset 0 -1px 0 #30456c, 0 10px 18px rgba(11, 25, 46, 0.12);
     }
     * { box-sizing: border-box; }
     body {
@@ -72,12 +73,12 @@ export function sharedStyles() {
     .shell-card {
       background: var(--panel-2);
       border: 1px solid var(--border);
-      border-radius: 20px;
+      border-radius: 18px;
       overflow: hidden;
       box-shadow: 0 18px 42px rgba(16, 37, 66, 0.09);
     }
     .shell-hero {
-      padding: 13px 15px 11px;
+      padding: 12px 14px 10px;
       border-bottom: 1px solid rgba(230, 220, 200, 0.85);
       background: linear-gradient(180deg, var(--hero-top) 0%, var(--hero-bottom) 100%);
     }
@@ -90,7 +91,7 @@ export function sharedStyles() {
       font-weight: 700;
     }
     .shell-title {
-      font-size: 17px;
+      font-size: 16px;
       font-weight: 800;
       line-height: 1.15;
       color: #12233f;
@@ -108,6 +109,7 @@ export function sharedStyles() {
       scrollbar-width: thin;
       scrollbar-color: #c8b99d #f8f2e6;
       background: linear-gradient(180deg, rgba(255, 253, 248, 0.78) 0%, rgba(251, 247, 239, 0.58) 100%);
+      border-top: 1px solid rgba(255, 255, 255, 0.65);
     }
     .table-wrap::-webkit-scrollbar {
       width: 10px;
@@ -125,7 +127,7 @@ export function sharedStyles() {
       width: 100%;
       border-collapse: collapse;
       table-layout: fixed;
-      font-size: 12px;
+      font-size: 11.5px;
     }
     thead th {
       position: sticky;
@@ -137,15 +139,15 @@ export function sharedStyles() {
       letter-spacing: 0.06em;
       text-transform: uppercase;
       text-align: left;
-      padding: 10px 12px;
+      padding: 9px 11px;
       border-bottom: 1px solid #30456c;
       white-space: nowrap;
       user-select: none;
-      box-shadow: inset 0 -1px 0 #30456c;
+      box-shadow: var(--header-shadow);
     }
     thead th.sortable { cursor: pointer; }
     tbody td {
-      padding: 9px 12px;
+      padding: 8px 11px;
       border-bottom: 1px solid rgba(230, 220, 200, 0.85);
       white-space: nowrap;
       overflow: hidden;
@@ -173,24 +175,32 @@ export function sharedStyles() {
       display: inline-flex;
       align-items: center;
       gap: 6px;
+      width: 100%;
     }
     .header-sort {
-      font-size: 10px;
-      color: rgba(248, 247, 243, 0.78);
-      min-width: 8px;
-      text-align: center;
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 15px;
+      height: 15px;
+      border-radius: 999px;
+      font-size: 9px;
+      color: rgba(248, 247, 243, 0.88);
+      background: rgba(255, 255, 255, 0.08);
     }
     .empty {
       padding: 26px 18px;
       color: var(--muted);
       font-size: 14px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.72) 0%, rgba(248,242,228,0.8) 100%);
     }
     .metric-cell {
-      border-radius: 10px;
-      padding: 6px 8px;
+      border-radius: 9px;
+      padding: 5px 8px;
       font-weight: 700;
       color: #1f1f1f;
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22), 0 1px 0 rgba(16, 37, 66, 0.05);
     }
     .cell-plain {
       display: block;
@@ -200,10 +210,14 @@ export function sharedStyles() {
     .metric-cell.cell-plain {
       display: block;
     }
+    .table-wrap table tr:last-child td {
+      border-bottom-color: transparent;
+    }
   `;
 }
 
 export function HeaderCell({ column, sortState, onSort }) {
+  const sortGlyph = sortState?.column === column.key ? (sortState.ascending ? "↑" : "↓") : "·";
   return (
     <th
       className={`${column.className || ""} ${onSort ? "sortable" : ""} ${column.numeric ? "numeric" : ""}`}
@@ -212,7 +226,7 @@ export function HeaderCell({ column, sortState, onSort }) {
     >
       <span className="header-label">
         {column.label}
-        <span className="header-sort">{sortState?.column === column.key ? (sortState.ascending ? "^" : "v") : ""}</span>
+        <span className="header-sort">{sortGlyph}</span>
       </span>
     </th>
   );

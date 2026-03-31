@@ -11,7 +11,10 @@ from .dashboard_views import (
     ARSENAL_COLUMNS,
     BATTER_SIDE_LABELS,
     BATTER_ZONE_COLUMNS,
+    FAMILY_FIT_DETAIL_COLUMNS,
+    FAMILY_ZONE_CONTEXT_COLUMNS,
     HITTER_ROLLING_COLUMNS,
+    MOVEMENT_ARSENAL_COLUMNS,
     PITCHER_HIGHER_IS_BETTER,
     PITCHER_LOWER_IS_BETTER,
     PITCHER_ROLLING_COLUMNS,
@@ -21,13 +24,18 @@ from .dashboard_views import (
     aggregate_batter_zone_map,
     aggregate_pitcher_zone_map,
     apply_roster_names,
+    apply_projected_lineup,
     build_zone_overlay_map,
+    build_family_zone_fit_detail,
+    compute_family_fit_score,
+    filter_excluded_pitchers_from_hitter_pool,
     hitter_columns_for_preset,
     latest_built_date,
     pivot_count_usage,
     sort_arsenal_frame,
 )
 from .query_engine import QueryFilters, StatcastQueryEngine, load_remote_parquet
+from .rotowire_lineups import fetch_rotowire_lineups, resolve_rotowire_lineups
 from .ui_components import render_metric_grid, render_zone_heatmap
 
 try:
@@ -47,30 +55,36 @@ HITTER_OVERVIEW_CARDS = [
     ("Likely", "likely_starter_score"),
     ("xwOBA", "xwoba"),
     ("PulledBrl%", "pulled_barrel_pct"),
+    ("SweetSpot%", "sweet_spot_pct"),
     ("Brl/BIP%", "barrel_bip_pct"),
-    ("FB%", "fb_pct"),
     ("HH%", "hard_hit_pct"),
 ]
 PITCHER_OVERVIEW_CARDS = [
     ("Pitch Score", "pitcher_score"),
+    ("Strikeout Score", "strikeout_score"),
     ("xwOBA", "xwoba"),
+    ("CSW%", "csw_pct"),
     ("SwStr%", "swstr_pct"),
+    ("Ball%", "ball_pct"),
+    ("SIERA", "siera"),
     ("GB%", "gb_pct"),
     ("GB/FB", "gb_fb_ratio"),
     ("Brl/BIP%", "barrel_bip_pct"),
-    ("Pulled Barrel%", "pulled_barrel_pct"),
-    ("FB%", "fb_pct"),
-    ("HH%", "hard_hit_pct"),
 ]
 HITTER_OVERVIEW_COLUMNS = hitter_columns_for_preset("All stats")
 PITCHER_OVERVIEW_COLUMNS = [
     "pitcher_name",
     "p_throws",
     "pitcher_score",
+    "strikeout_score",
     "pitch_count",
     "bip",
     "xwoba",
+    "called_strike_pct",
+    "csw_pct",
     "swstr_pct",
+    "ball_pct",
+    "siera",
     "pulled_barrel_pct",
     "barrel_bip_pct",
     "gb_pct",
@@ -88,16 +102,20 @@ MATCHUP_HITTER_COLUMNS = [
     "likely_starter_score",
     "xwoba",
     "pulled_barrel_pct",
+    "sweet_spot_pct",
     "barrel_bip_pct",
-    "fb_pct",
     "hard_hit_pct",
 ]
 MATCHUP_PITCHER_COLUMNS = [
     "pitcher_name",
     "p_throws",
     "pitcher_score",
+    "strikeout_score",
     "xwoba",
+    "csw_pct",
     "swstr_pct",
+    "ball_pct",
+    "siera",
     "gb_pct",
     "gb_fb_ratio",
     "barrel_bip_pct",
@@ -129,7 +147,7 @@ def _read_local_parquet(path: Path) -> pd.DataFrame:
 @st.cache_data(show_spinner=False)
 def _load_remote_daily_bundle(base_url: str, target_date: date) -> dict[str, pd.DataFrame]:
     day = target_date.isoformat()
-    return {
+    bundle = {
         "slate": load_remote_parquet(f"{base_url}/daily/{day}", "slate.parquet"),
         "rosters": load_remote_parquet(f"{base_url}/daily/{day}", "rosters.parquet"),
         "daily_hitters": load_remote_parquet(f"{base_url}/daily/{day}", "daily_hitter_metrics.parquet"),
@@ -142,7 +160,15 @@ def _load_remote_daily_bundle(base_url: str, target_date: date) -> dict[str, pd.
         "daily_pitcher_rolling": load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_rolling.parquet"),
         "daily_batter_zone_profiles": load_remote_parquet(f"{base_url}/daily/{day}", "daily_batter_zone_profiles.parquet"),
         "daily_pitcher_zone_profiles": load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_zone_profiles.parquet"),
+        "daily_batter_family_zone_profiles": load_remote_parquet(f"{base_url}/daily/{day}", "daily_batter_family_zone_profiles.parquet"),
+        "daily_pitcher_family_zone_context": load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_family_zone_context.parquet"),
+        "daily_pitcher_movement_arsenal": load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_movement_arsenal.parquet"),
     }
+    try:
+        bundle["hitter_pitcher_exclusions"] = load_remote_parquet(f"{base_url}/daily/{day}", "hitter_pitcher_exclusions.parquet")
+    except Exception:
+        bundle["hitter_pitcher_exclusions"] = pd.DataFrame(columns=["player_id", "exclude_from_hitter_tables"])
+    return bundle
 
 
 @st.cache_data(show_spinner=False)
@@ -159,6 +185,9 @@ def _load_remote_reusable_bundle(base_url: str) -> dict[str, pd.DataFrame]:
         "pitcher_rolling": load_remote_parquet(reusable_base, "pitcher_rolling.parquet"),
         "batter_zone_profiles": load_remote_parquet(reusable_base, "batter_zone_profiles.parquet"),
         "pitcher_zone_profiles": load_remote_parquet(reusable_base, "pitcher_zone_profiles.parquet"),
+        "batter_family_zone_profiles": load_remote_parquet(reusable_base, "batter_family_zone_profiles.parquet"),
+        "pitcher_family_zone_context": load_remote_parquet(reusable_base, "pitcher_family_zone_context.parquet"),
+        "pitcher_movement_arsenal": load_remote_parquet(reusable_base, "pitcher_movement_arsenal.parquet"),
     }
 
 
@@ -178,6 +207,10 @@ def _load_local_daily_bundle(config: AppConfig, target_date: date) -> dict[str, 
         "daily_pitcher_rolling": _read_local_parquet(daily_dir / "daily_pitcher_rolling.parquet"),
         "daily_batter_zone_profiles": _read_local_parquet(daily_dir / "daily_batter_zone_profiles.parquet"),
         "daily_pitcher_zone_profiles": _read_local_parquet(daily_dir / "daily_pitcher_zone_profiles.parquet"),
+        "daily_batter_family_zone_profiles": _read_local_parquet(daily_dir / "daily_batter_family_zone_profiles.parquet"),
+        "daily_pitcher_family_zone_context": _read_local_parquet(daily_dir / "daily_pitcher_family_zone_context.parquet"),
+        "daily_pitcher_movement_arsenal": _read_local_parquet(daily_dir / "daily_pitcher_movement_arsenal.parquet"),
+        "hitter_pitcher_exclusions": _read_local_parquet(daily_dir / "hitter_pitcher_exclusions.parquet"),
     }
 
 
@@ -194,6 +227,9 @@ def _load_local_reusable_bundle(config: AppConfig) -> dict[str, pd.DataFrame]:
         "pitcher_rolling": _read_local_parquet(reusable_dir / "pitcher_rolling.parquet"),
         "batter_zone_profiles": _read_local_parquet(reusable_dir / "batter_zone_profiles.parquet"),
         "pitcher_zone_profiles": _read_local_parquet(reusable_dir / "pitcher_zone_profiles.parquet"),
+        "batter_family_zone_profiles": _read_local_parquet(reusable_dir / "batter_family_zone_profiles.parquet"),
+        "pitcher_family_zone_context": _read_local_parquet(reusable_dir / "pitcher_family_zone_context.parquet"),
+        "pitcher_movement_arsenal": _read_local_parquet(reusable_dir / "pitcher_movement_arsenal.parquet"),
     }
 
 
@@ -252,7 +288,15 @@ def _filter_pitcher_metrics(frame: pd.DataFrame, filters: QueryFilters) -> pd.Da
     ].copy()
 
 
-def _filter_team_hitters(frame: pd.DataFrame, rosters: pd.DataFrame, team: str, opposing_hand: str | None, filters: QueryFilters) -> pd.DataFrame:
+def _filter_team_hitters(
+    frame: pd.DataFrame,
+    rosters: pd.DataFrame,
+    hitter_pitcher_exclusions: pd.DataFrame,
+    rotowire_lineups: dict[str, dict[str, object]],
+    team: str,
+    opposing_hand: str | None,
+    filters: QueryFilters,
+) -> pd.DataFrame:
     if frame.empty:
         return frame
     split_key = filters.split
@@ -260,13 +304,19 @@ def _filter_team_hitters(frame: pd.DataFrame, rosters: pd.DataFrame, team: str, 
         split_key = "vs_rhp"
     elif split_key == "overall" and opposing_hand == "L":
         split_key = "vs_lhp"
+    roster_lookup = rosters.loc[rosters["team"] == team, ["player_id"]].dropna().drop_duplicates()
+    roster_player_ids = pd.to_numeric(roster_lookup["player_id"], errors="coerce").dropna().astype(int)
     filtered = frame.loc[
-        (frame["team"] == team)
-        & (frame["split_key"] == split_key)
+        (frame["split_key"] == split_key)
         & (frame["recent_window"] == filters.recent_window)
         & (frame["weighted_mode"] == filters.weighted_mode)
     ].copy()
-    return apply_roster_names(filtered, rosters, team)
+    if not roster_player_ids.empty and "batter" in filtered.columns:
+        filtered = filtered.loc[filtered["batter"].isin(roster_player_ids)]
+    filtered["team"] = team
+    filtered = apply_roster_names(filtered, rosters, team)
+    filtered = filter_excluded_pitchers_from_hitter_pool(filtered, hitter_pitcher_exclusions)
+    return apply_projected_lineup(filtered, team, rotowire_lineups)
 
 
 def _filter_pitcher_detail(frame: pd.DataFrame, pitcher_id: int | None, filters: QueryFilters) -> pd.DataFrame:
@@ -289,16 +339,23 @@ def _player_key(entity_type: str, player_id: object) -> str:
 def _build_slate_lookup(
     daily: dict[str, pd.DataFrame],
     filters: QueryFilters,
+    resolved_date: date,
 ) -> tuple[dict[str, dict[str, object]], str | None]:
     slate_lookup: dict[str, dict[str, object]] = {}
     slate = daily.get("slate", pd.DataFrame())
     rosters = daily.get("rosters", pd.DataFrame())
     daily_hitters = daily.get("daily_hitters", pd.DataFrame())
     daily_pitchers = daily.get("daily_pitchers", pd.DataFrame())
+    hitter_pitcher_exclusions = daily.get("hitter_pitcher_exclusions", pd.DataFrame())
     batter_zone_profiles = daily.get("daily_batter_zone_profiles", pd.DataFrame())
     pitcher_zone_profiles = daily.get("daily_pitcher_zone_profiles", pd.DataFrame())
     if slate.empty:
         return slate_lookup, None
+    valid_teams = tuple(sorted(set(slate["away_team"].dropna().astype(str)) | set(slate["home_team"].dropna().astype(str))))
+    try:
+        rotowire_lineups = resolve_rotowire_lineups(fetch_rotowire_lineups(resolved_date, valid_teams), rosters)
+    except Exception:
+        rotowire_lineups = {}
 
     top_key: str | None = None
     top_score: float | None = None
@@ -312,8 +369,8 @@ def _build_slate_lookup(
         away_hand = home_pitcher["p_throws"].iloc[0] if not home_pitcher.empty else None
         home_hand = away_pitcher["p_throws"].iloc[0] if not away_pitcher.empty else None
 
-        away_hitters = _filter_team_hitters(daily_hitters, rosters, str(game.get("away_team") or ""), away_hand, filters)
-        home_hitters = _filter_team_hitters(daily_hitters, rosters, str(game.get("home_team") or ""), home_hand, filters)
+        away_hitters = _filter_team_hitters(daily_hitters, rosters, hitter_pitcher_exclusions, rotowire_lineups, str(game.get("away_team") or ""), away_hand, filters)
+        home_hitters = _filter_team_hitters(daily_hitters, rosters, hitter_pitcher_exclusions, rotowire_lineups, str(game.get("home_team") or ""), home_hand, filters)
         away_hitters = add_hitter_matchup_score(
             away_hitters,
             batter_zone_profiles=batter_zone_profiles,
@@ -467,9 +524,9 @@ def _format_metric_value(value: object, column: str) -> str:
         return "--"
     if column in {"xwoba", "xwoba_con"}:
         return f"{float(value):.3f}"
-    if column in {"matchup_score", "ceiling_score", "zone_fit_score", "pitcher_score", "likely_starter_score", "gb_fb_ratio"}:
+    if column in {"matchup_score", "ceiling_score", "zone_fit_score", "pitcher_score", "strikeout_score", "likely_starter_score", "gb_fb_ratio", "siera"}:
         return f"{float(value):.1f}"
-    if column in {"pulled_barrel_pct", "barrel_bip_pct", "fb_pct", "hard_hit_pct", "swstr_pct", "gb_pct"}:
+    if column in {"pulled_barrel_pct", "barrel_bip_pct", "fb_pct", "hard_hit_pct", "swstr_pct", "called_strike_pct", "csw_pct", "ball_pct", "gb_pct"}:
         return f"{float(value) * 100:.1f}%"
     return str(value)
 
@@ -688,6 +745,45 @@ def _render_pitcher_count_usage_tab(selected_row: pd.Series, reusable: dict[str,
                 )
 
 
+def _render_pitch_shape_tab(selected_row: pd.Series, reusable: dict[str, pd.DataFrame], source: str) -> None:
+    player_id = int(selected_row["player_id"])
+    movement = reusable.get("pitcher_movement_arsenal", pd.DataFrame())
+    family_context = reusable.get("pitcher_family_zone_context", pd.DataFrame())
+    movement_detail = movement.loc[movement["pitcher_id"] == player_id].copy() if not movement.empty else pd.DataFrame()
+    family_detail = family_context.loc[family_context["pitcher_id"] == player_id].copy() if not family_context.empty else pd.DataFrame()
+
+    cols = st.columns(2)
+    with cols[0]:
+        st.markdown("##### Movement Arsenal")
+        if movement_detail.empty:
+            st.info("No movement arsenal context available.")
+        else:
+            render_metric_grid(
+                movement_detail[[column for column in MOVEMENT_ARSENAL_COLUMNS if column in movement_detail.columns]].sort_values(
+                    ["usage_rate", "weighted_sample_size"], ascending=[False, False], na_position="last"
+                ),
+                key=f"pitch-shape-arsenal-{selected_row['key']}",
+                height=260,
+                higher_is_better={"usage_rate", "avg_velocity", "avg_spin_rate", "avg_extension", "avg_pfx_x", "avg_pfx_z"},
+                use_lightweight=(source == "hosted"),
+            )
+    with cols[1]:
+        st.markdown("##### Family-Zone Tendencies")
+        if family_detail.empty:
+            st.info("No family-zone context available.")
+        else:
+            render_metric_grid(
+                family_detail[[column for column in FAMILY_ZONE_CONTEXT_COLUMNS if column in family_detail.columns]].sort_values(
+                    ["usage_rate_overall", "weighted_sample_size"], ascending=[False, False], na_position="last"
+                ),
+                key=f"pitch-shape-family-{selected_row['key']}",
+                height=260,
+                lower_is_better={"prior_weight_share", "damage_allowed_rate", "xwoba_allowed"},
+                higher_is_better={"usage_rate_overall", "whiff_rate", "called_strike_rate"},
+                use_lightweight=(source == "hosted"),
+            )
+
+
 def _render_hitter_matchup_tab(selected_row: pd.Series, slate_entry: dict[str, object], daily: dict[str, pd.DataFrame], source: str) -> None:
     current_row = pd.DataFrame([slate_entry["row"]])
     st.caption(f"{slate_entry['game']} | vs {slate_entry.get('opposing_pitcher_name') or 'opposing starter'}")
@@ -703,20 +799,48 @@ def _render_hitter_matchup_tab(selected_row: pd.Series, slate_entry: dict[str, o
     pitcher_detail = pitcher_frame.loc[pitcher_frame["pitcher_id"] == slate_entry.get("opposing_pitcher_id")].copy() if not pitcher_frame.empty else pd.DataFrame()
     if batter_detail.empty or pitcher_detail.empty:
         st.info("No matchup zone overlay data available.")
-        return
-    pitch_types = ["All pitches"] + sorted(
-        set(batter_detail.get("pitch_type", pd.Series(dtype="object")).dropna().tolist())
-        | set(pitcher_detail.get("pitch_type", pd.Series(dtype="object")).dropna().tolist())
+    else:
+        pitch_types = ["All pitches"] + sorted(
+            set(batter_detail.get("pitch_type", pd.Series(dtype="object")).dropna().tolist())
+            | set(pitcher_detail.get("pitch_type", pd.Series(dtype="object")).dropna().tolist())
+        )
+        selected_pitch = st.selectbox("Pitch type", pitch_types, key=f"h-matchup-pitch-{selected_row['key']}")
+        batter_map = aggregate_batter_zone_map(batter_detail, selected_pitch)
+        pitcher_map = aggregate_pitcher_zone_map(pitcher_detail, selected_pitch)
+        overlay_map = build_zone_overlay_map(batter_map, pitcher_map)
+        cols = st.columns(2)
+        with cols[0]:
+            render_zone_heatmap(f"{selected_row['player_name']} Damage", f"{selected_pitch} | Hitter quality", batter_map)
+        with cols[1]:
+            render_zone_heatmap(f"Overlay vs {slate_entry.get('opposing_pitcher_name') or 'Opposing Pitcher'}", f"{selected_pitch} | Damage x usage", overlay_map)
+
+    batter_family = daily.get("daily_batter_family_zone_profiles", pd.DataFrame())
+    pitcher_family = daily.get("daily_pitcher_family_zone_context", pd.DataFrame())
+    family_fit = compute_family_fit_score(
+        batter_family,
+        pitcher_family,
+        int(selected_row["player_id"]),
+        slate_entry.get("opposing_pitcher_id"),
     )
-    selected_pitch = st.selectbox("Pitch type", pitch_types, key=f"h-matchup-pitch-{selected_row['key']}")
-    batter_map = aggregate_batter_zone_map(batter_detail, selected_pitch)
-    pitcher_map = aggregate_pitcher_zone_map(pitcher_detail, selected_pitch)
-    overlay_map = build_zone_overlay_map(batter_map, pitcher_map)
-    cols = st.columns(2)
-    with cols[0]:
-        render_zone_heatmap(f"{selected_row['player_name']} Damage", f"{selected_pitch} | Hitter quality", batter_map)
-    with cols[1]:
-        render_zone_heatmap(f"Overlay vs {slate_entry.get('opposing_pitcher_name') or 'Opposing Pitcher'}", f"{selected_pitch} | Damage x usage", overlay_map)
+    detail = build_family_zone_fit_detail(
+        batter_family,
+        pitcher_family,
+        int(selected_row["player_id"]),
+        slate_entry.get("opposing_pitcher_id"),
+    )
+    st.markdown("##### Family-Zone Context")
+    st.metric("Family Fit", f"{family_fit * 100:.1f}" if family_fit is not None else "N/A")
+    if detail.empty:
+        st.info("No family-zone matchup context available.")
+    else:
+        render_metric_grid(
+            detail[[column for column in FAMILY_FIT_DETAIL_COLUMNS if column in detail.columns]],
+            key=f"h-family-fit-{selected_row['key']}",
+            height=220,
+            lower_is_better={"prior_weight_share"},
+            higher_is_better={"usage_rate_overall", "damage_rate", "xwoba", "fit_score"},
+            use_lightweight=(source == "hosted"),
+        )
 
 
 def _render_pitcher_matchup_tab(selected_row: pd.Series, slate_entry: dict[str, object], source: str) -> None:
@@ -754,7 +878,7 @@ def main() -> None:
     if resolved_date != target_date:
         st.caption(f"Using most recent available published slate: {resolved_date.isoformat()}")
 
-    slate_lookup, top_slate_key = _build_slate_lookup(daily, filters)
+    slate_lookup, top_slate_key = _build_slate_lookup(daily, filters, resolved_date)
     player_index = _build_player_index(reusable, filters, slate_lookup)
     if player_index.empty:
         st.info("No player data available for the selected filters.")
@@ -787,7 +911,7 @@ def main() -> None:
     if slate_entry is not None:
         tab_names.append("Matchup Context")
     if entity_type == "Pitcher":
-        tab_names.extend(["Arsenal", "Count Usage"])
+        tab_names.extend(["Pitch Shape", "Arsenal", "Count Usage"])
     tabs = st.tabs(tab_names)
     tab_map = dict(zip(tab_names, tabs))
 
@@ -807,6 +931,8 @@ def main() -> None:
             else:
                 _render_pitcher_matchup_tab(selected_row, slate_entry, source)
     if entity_type == "Pitcher":
+        with tab_map["Pitch Shape"]:
+            _render_pitch_shape_tab(selected_row, reusable, source)
         with tab_map["Arsenal"]:
             _render_pitcher_arsenal_tab(selected_row, reusable, filters, source)
         with tab_map["Count Usage"]:

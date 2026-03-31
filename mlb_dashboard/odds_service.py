@@ -27,6 +27,7 @@ class PropsBoardPayload:
     board: pd.DataFrame
     book_details: pd.DataFrame
     sportsbooks: tuple[str, ...]
+    raw_rows: pd.DataFrame
 
 
 MARKET_LABELS = {
@@ -73,6 +74,10 @@ def _decimal_to_implied_prob(decimal_price: float | None) -> float | None:
     if decimal_price is None or decimal_price <= 0:
         return None
     return 1.0 / decimal_price
+
+
+def american_to_implied_prob(price: float | int | None) -> float | None:
+    return _decimal_to_implied_prob(_american_to_decimal(price))
 
 
 def _best_price(prices: Iterable[float | int | None]) -> float | None:
@@ -175,6 +180,9 @@ def load_live_props_board(config: AppConfig, target_date: date, rosters: pd.Data
     odds_config = odds_config_from_app(config)
     events = fetch_event_list(odds_config)
     rows: list[dict] = []
+    fetch_ts = pd.Timestamp.now(tz="UTC")
+    fetched_at = fetch_ts.isoformat()
+    cache_key = f"live-props::{target_date.isoformat()}::{fetch_ts.value}"
     chicago = ZoneInfo("America/Chicago")
     for event in events:
         event_time = pd.to_datetime(event.get("commence_time"), errors="coerce", utc=True)
@@ -186,7 +194,9 @@ def load_live_props_board(config: AppConfig, target_date: date, rosters: pd.Data
         if not event_id:
             continue
         details = fetch_event_odds(odds_config, event_id)
-        game_label = f"{details.get('away_team', event.get('away_team', ''))} @ {details.get('home_team', event.get('home_team', ''))}".strip()
+        away_team = str(details.get("away_team", event.get("away_team", ""))).strip()
+        home_team = str(details.get("home_team", event.get("home_team", ""))).strip()
+        game_label = f"{away_team} @ {home_team}".strip()
         bookmakers = details.get("bookmakers", []) or []
         for bookmaker in bookmakers:
             book_key = str(bookmaker.get("key", "")).strip()
@@ -205,16 +215,42 @@ def load_live_props_board(config: AppConfig, target_date: date, rosters: pd.Data
                     team = _infer_team(player_name, rosters)
                     rows.append(
                         {
+                            "fetched_at": fetched_at,
+                            "cache_key": cache_key,
+                            "provider": "odds_api",
                             "event_id": event_id,
+                            "commence_time": event_time.isoformat(),
+                            "away_team": away_team,
+                            "home_team": home_team,
                             "game": game_label,
                             "team": team,
                             "player": player_name,
+                            "player_name_raw": player_name,
+                            "player_name": player_name,
+                            "market_key": market_key,
                             "prop_type": prop_type,
+                            "market": prop_type,
                             "side": side,
                             "line": line,
+                            "selection_label": side,
+                            "selection_scope": "player_prop",
+                            "selection_side": side.lower() if side else None,
+                            "market_family": market_key,
+                            "market_variant": market_key,
+                            "threshold": None if line is None else int(float(line)),
+                            "display_label": f"{prop_type} {side}" if line is None else f"{prop_type} {side} {line:g}",
+                            "is_primary_line": True,
+                            "is_modeled": False,
+                            "player_event_market_key": f"{event_id}::{market_key}::{player_name}",
+                            "row_source_type": "live_props_page",
+                            "coverage_completion_status": None,
+                            "hr_books_requested": None,
+                            "hr_books_present": None,
+                            "hr_books_missing": None,
                             "book_key": book_key,
                             "book_title": book_title,
                             "price": float(price),
+                            "odds_american": int(float(price)),
                         }
                     )
     if not rows:
@@ -239,6 +275,7 @@ def load_live_props_board(config: AppConfig, target_date: date, rosters: pd.Data
             ),
             book_details=pd.DataFrame(columns=["row_id", "sportsbook", "book_key", "price", "price_display"]),
             sportsbooks=tuple(),
+            raw_rows=pd.DataFrame(),
         )
     raw = pd.DataFrame(rows)
     grouped_rows: list[dict] = []
@@ -284,4 +321,4 @@ def load_live_props_board(config: AppConfig, target_date: date, rosters: pd.Data
     ).reset_index(drop=True)
     details = pd.DataFrame(detail_rows).sort_values(["row_id", "sort_decimal", "sportsbook"], ascending=[True, False, True], na_position="last").reset_index(drop=True)
     sportsbooks = tuple(sorted(details["sportsbook"].dropna().astype(str).unique().tolist())) if not details.empty else tuple()
-    return PropsBoardPayload(board=result, book_details=details, sportsbooks=sportsbooks)
+    return PropsBoardPayload(board=result, book_details=details, sportsbooks=sportsbooks, raw_rows=raw)

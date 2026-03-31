@@ -3,6 +3,7 @@ duckdb>=1.2
 streamlit>=1.44
 pyarrow>=19.0
 requests>=2.32
+beautifulsoup4>=4.12
 huggingface_hub>=0.30
 Pillow>=11.0
 streamlit-aggrid>=1.0.5

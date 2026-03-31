@@ -73,6 +73,30 @@ class StatcastQueryEngine:
             return pd.DataFrame()
         return pd.read_parquet(path)
 
+    def load_daily_batter_family_zone_profiles(self, target_date: date) -> pd.DataFrame:
+        path = self.config.daily_dir / target_date.isoformat() / "daily_batter_family_zone_profiles.parquet"
+        if not path.exists():
+            return pd.DataFrame()
+        return pd.read_parquet(path)
+
+    def load_daily_pitcher_family_zone_context(self, target_date: date) -> pd.DataFrame:
+        path = self.config.daily_dir / target_date.isoformat() / "daily_pitcher_family_zone_context.parquet"
+        if not path.exists():
+            return pd.DataFrame()
+        return pd.read_parquet(path)
+
+    def load_daily_pitcher_movement_arsenal(self, target_date: date) -> pd.DataFrame:
+        path = self.config.daily_dir / target_date.isoformat() / "daily_pitcher_movement_arsenal.parquet"
+        if not path.exists():
+            return pd.DataFrame()
+        return pd.read_parquet(path)
+
+    def load_daily_hitter_pitcher_exclusions(self, target_date: date) -> pd.DataFrame:
+        path = self.config.daily_dir / target_date.isoformat() / "hitter_pitcher_exclusions.parquet"
+        if not path.exists():
+            return pd.DataFrame(columns=["player_id", "exclude_from_hitter_tables"])
+        return pd.read_parquet(path)
+
     def get_pitcher_cards(self, pitcher_ids: list[int], filters: QueryFilters) -> pd.DataFrame:
         if not pitcher_ids:
             return pd.DataFrame()
@@ -178,29 +202,55 @@ class StatcastQueryEngine:
             },
         ).df()
 
-    def get_team_hitter_pool(self, team: str, opposing_pitcher_hand: str | None, filters: QueryFilters) -> pd.DataFrame:
+    def get_team_hitter_pool(
+        self,
+        team: str,
+        opposing_pitcher_hand: str | None,
+        filters: QueryFilters,
+        roster_player_ids: list[int] | None = None,
+    ) -> pd.DataFrame:
         split_key = filters.split
         if split_key == "overall" and opposing_pitcher_hand == "R":
             split_key = "vs_rhp"
         elif split_key == "overall" and opposing_pitcher_hand == "L":
             split_key = "vs_lhp"
-        data = self.conn.execute(
-            """
-            SELECT *
-            FROM hitter_metrics
-            WHERE team = $team
-              AND split_key = $split_key
-              AND recent_window = $recent_window
-              AND weighted_mode = $weighted_mode
-            ORDER BY likely_starter_score DESC NULLS LAST, xwoba DESC NULLS LAST
-            """,
-            {
-                "team": team,
-                "split_key": split_key,
-                "recent_window": filters.recent_window,
-                "weighted_mode": filters.weighted_mode,
-            },
-        ).df()
+        params = {
+            "split_key": split_key,
+            "recent_window": filters.recent_window,
+            "weighted_mode": filters.weighted_mode,
+        }
+        if roster_player_ids:
+            data = self.conn.execute(
+                """
+                SELECT *
+                FROM hitter_metrics
+                WHERE batter IN $roster_player_ids
+                  AND split_key = $split_key
+                  AND recent_window = $recent_window
+                  AND weighted_mode = $weighted_mode
+                ORDER BY likely_starter_score DESC NULLS LAST, xwoba DESC NULLS LAST
+                """,
+                {
+                    **params,
+                    "roster_player_ids": roster_player_ids,
+                },
+            ).df()
+        else:
+            data = self.conn.execute(
+                """
+                SELECT *
+                FROM hitter_metrics
+                WHERE team = $team
+                  AND split_key = $split_key
+                  AND recent_window = $recent_window
+                  AND weighted_mode = $weighted_mode
+                ORDER BY likely_starter_score DESC NULLS LAST, xwoba DESC NULLS LAST
+                """,
+                {
+                    **params,
+                    "team": team,
+                },
+            ).df()
         if filters.likely_starters_only and "likely_starter_score" in data:
             data = data.loc[data["likely_starter_score"].fillna(0) > 0]
         return data

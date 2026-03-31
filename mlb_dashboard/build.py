@@ -3,17 +3,19 @@ from __future__ import annotations
 import argparse
 import json
 import uuid
+import warnings
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
 
-from .cockroach_loader import CockroachPayload, load_cockroach_payload, write_tracking_payload
+from .cockroach_loader import CockroachPayload, load_cockroach_payload, write_props_odds_snapshot, write_tracking_payload
 from .config import AppConfig, DEFAULT_PITCH_GROUPS, DEFAULT_RECENT_WINDOWS, DEFAULT_SPLITS, ensure_directories
 from .metrics import add_metric_flags, apply_year_weights, likely_starter_scores
 from .mlb_api import fetch_schedule, fetch_team_rosters_for_schedule
 from .dashboard_views import add_hitter_matchup_score, add_pitcher_rank_score
+from .odds_service import PropsBoardPayload, load_live_props_board
 
 try:
     import duckdb
@@ -122,7 +124,13 @@ def _aggregate_hitter_metrics(frame: pd.DataFrame, weighted_mode: str, year_weig
     work = frame.copy()
     work["metric_weight"] = apply_year_weights(work, year_weights) if weighted_mode == "weighted" else 1.0
     rows: list[dict] = []
-    for (team, batter), group in work.groupby(["team", "batter"], sort=False):
+    for batter, group in work.groupby(["batter"], sort=False):
+        latest_team = None
+        if "game_date" in group.columns and "team" in group.columns:
+            latest_rows = group.sort_values(["game_date"], ascending=[False], na_position="last")
+            latest_team = latest_rows["team"].dropna().astype(str).iloc[0] if latest_rows["team"].notna().any() else None
+        elif "team" in group.columns and group["team"].notna().any():
+            latest_team = group["team"].dropna().astype(str).value_counts().idxmax()
         hitter_side = group["stand"].dropna().astype(str).value_counts().idxmax() if group["stand"].notna().any() else None
         pitch_count = len(group)
         bip = int(group["is_batted_ball"].sum())
@@ -131,9 +139,10 @@ def _aggregate_hitter_metrics(frame: pd.DataFrame, weighted_mode: str, year_weig
         tracked_bbe_weight_sum = float(group.loc[group["is_tracked_bbe"], "metric_weight"].sum())
         barrel_weight_sum = float((group["is_barrel"].astype(int) * group["metric_weight"]).sum())
         pulled_barrel_weight_sum = float((group["is_pulled_barrel"].astype(int) * group["metric_weight"]).sum())
+        sweet_spot_weight_sum = float((((group["is_sweet_spot"] & group["is_tracked_bbe"]).astype(int)) * group["metric_weight"]).sum())
         rows.append(
             {
-                "team": team,
+                "team": latest_team,
                 "batter": batter,
                 "hitter_name": str(batter),
                 "stand": hitter_side,
@@ -145,6 +154,7 @@ def _aggregate_hitter_metrics(frame: pd.DataFrame, weighted_mode: str, year_weig
                 "barrel_bbe_pct": barrel_weight_sum / max(tracked_bbe_weight_sum, 1e-9),
                 "barrel_bip_pct": barrel_weight_sum / max(bip_weight_sum, 1e-9),
                 "pulled_barrel_pct": pulled_barrel_weight_sum / max(tracked_bbe_weight_sum, 1e-9),
+                "sweet_spot_pct": sweet_spot_weight_sum / max(tracked_bbe_weight_sum, 1e-9),
                 "fb_pct": float((group["is_fly_ball"].astype(int) * group["metric_weight"]).sum()) / max(bip_weight_sum, 1e-9),
                 "hard_hit_pct": float((group["is_hard_hit"].astype(int) * group["metric_weight"]).sum()) / max(bip_weight_sum, 1e-9),
                 "avg_launch_angle": _weighted_sum(group, "launch_angle_value", group.index) / max(_weighted_denominator(group, "launch_angle_value", group.index), 1e-9),
@@ -228,6 +238,43 @@ def _aggregate_pitcher_metrics(frame: pd.DataFrame, weighted_mode: str, year_wei
         pulled_barrel_weight_sum = float((group["is_pulled_barrel"].astype(int) * group["metric_weight"]).sum())
         ground_ball_weight_sum = float((group["is_ground_ball"].astype(int) * group["metric_weight"]).sum())
         fly_ball_weight_sum = float((group["is_fly_ball"].astype(int) * group["metric_weight"]).sum())
+        ball_weight_sum = float((group["is_ball"].astype(int) * group["metric_weight"]).sum())
+        called_strike_weight_sum = float((group["is_called_strike"].astype(int) * group["metric_weight"]).sum())
+        csw_weight_sum = called_strike_weight_sum + float((group["is_swinging_strike"].astype(int) * group["metric_weight"]).sum())
+
+        pa_events = (
+            group.groupby(["game_pk", "at_bat_number"], as_index=False, sort=False)
+            .tail(1)
+            .copy()
+        )
+        pa_weight_sum = float(pa_events["metric_weight"].sum())
+        event_text = pa_events["events"].fillna("").astype(str).str.lower()
+        bb_type_text = pa_events["bb_type"].fillna("").astype(str).str.lower()
+        strikeout_weight_sum = float((event_text.isin({"strikeout", "strikeout_double_play"}).astype(int) * pa_events["metric_weight"]).sum())
+        walk_weight_sum = float((event_text.isin({"walk", "intent_walk", "intentional_walk"}).astype(int) * pa_events["metric_weight"]).sum())
+        gb_minus_air_weight_sum = float(
+            (
+                (
+                    bb_type_text.eq("ground_ball").astype(int)
+                    - bb_type_text.isin({"fly_ball", "popup"}).astype(int)
+                )
+                * pa_events["metric_weight"]
+            ).sum()
+        )
+        strikeout_rate = strikeout_weight_sum / max(pa_weight_sum, 1e-9)
+        walk_rate = walk_weight_sum / max(pa_weight_sum, 1e-9)
+        gb_minus_air_rate = gb_minus_air_weight_sum / max(pa_weight_sum, 1e-9)
+        siera = (
+            6.145
+            - 16.986 * strikeout_rate
+            + 11.434 * walk_rate
+            - 1.858 * gb_minus_air_rate
+            + 7.653 * (strikeout_rate ** 2)
+            - 6.664 * gb_minus_air_rate * abs(gb_minus_air_rate)
+            + 10.130 * strikeout_rate * gb_minus_air_rate
+            - 5.195 * walk_rate * gb_minus_air_rate
+            - 8.000 * strikeout_rate * walk_rate
+        )
         rows.append(
             {
                 "pitcher_id": pitcher_id,
@@ -237,6 +284,10 @@ def _aggregate_pitcher_metrics(frame: pd.DataFrame, weighted_mode: str, year_wei
                 "bip": bip,
                 "xwoba": _weighted_sum(group, "xwoba_value", group.index) / max(_weighted_denominator(group, "xwoba_value", group.index), 1e-9),
                 "swstr_pct": float((group["is_swinging_strike"].astype(int) * group["metric_weight"]).sum()) / max(pitch_weight_sum, 1e-9),
+                "called_strike_pct": called_strike_weight_sum / max(pitch_weight_sum, 1e-9),
+                "csw_pct": csw_weight_sum / max(pitch_weight_sum, 1e-9),
+                "ball_pct": ball_weight_sum / max(pitch_weight_sum, 1e-9),
+                "siera": siera,
                 "barrel_bbe_pct": barrel_weight_sum / max(tracked_bbe_weight_sum, 1e-9),
                 "barrel_bip_pct": barrel_weight_sum / max(bip_weight_sum, 1e-9),
                 "pulled_barrel_pct": pulled_barrel_weight_sum / max(tracked_bbe_weight_sum, 1e-9),
@@ -357,12 +408,370 @@ def _aggregate_pitcher_usage_by_count(frame: pd.DataFrame, weighted_mode: str, y
     return pd.DataFrame(rows)
 
 
+def _build_hitter_pitcher_exclusions(raw_statcast: pd.DataFrame, inning_threshold: float = 5.0) -> pd.DataFrame:
+    columns = ["player_id", "pitcher_name", "outs_recorded", "innings_pitched", "exclude_from_hitter_tables", "override_reason"]
+    if raw_statcast.empty:
+        return pd.DataFrame(columns=columns)
+
+    required = {"game_pk", "pitcher", "at_bat_number", "events"}
+    if not required.issubset(raw_statcast.columns):
+        return pd.DataFrame(columns=columns)
+
+    pa_events = (
+        raw_statcast.sort_values(["game_pk", "pitcher", "at_bat_number"])
+        .groupby(["game_pk", "pitcher", "at_bat_number"], as_index=False)
+        .tail(1)
+        .copy()
+    )
+    event_text = pa_events["events"].fillna("").astype(str).str.lower()
+    out_map = {
+        "field_out": 1,
+        "force_out": 1,
+        "sac_fly": 1,
+        "sac_bunt": 1,
+        "strikeout": 1,
+        "fielders_choice_out": 1,
+        "other_out": 1,
+        "double_play": 2,
+        "grounded_into_double_play": 2,
+        "strikeout_double_play": 2,
+        "sac_fly_double_play": 2,
+        "sac_bunt_double_play": 2,
+        "triple_play": 3,
+    }
+    pa_events["outs_recorded"] = event_text.map(out_map).fillna(0).astype(int)
+    pa_events["pitcher_name"] = pa_events["pitcher_name"].fillna(pa_events["player_name"]).astype(str)
+
+    exclusions = (
+        pa_events.groupby("pitcher", as_index=False)
+        .agg(
+            pitcher_name=("pitcher_name", lambda values: values.dropna().astype(str).value_counts().idxmax() if values.notna().any() else ""),
+            outs_recorded=("outs_recorded", "sum"),
+        )
+        .rename(columns={"pitcher": "player_id"})
+    )
+    exclusions["innings_pitched"] = exclusions["outs_recorded"] / 3.0
+    exclusions["override_reason"] = pd.NA
+
+    ohtani_mask = exclusions["pitcher_name"].fillna("").str.strip().str.lower().eq("shohei ohtani")
+    threshold_mask = exclusions["innings_pitched"].fillna(0) >= float(inning_threshold)
+    exclusions["exclude_from_hitter_tables"] = threshold_mask & ~ohtani_mask
+    exclusions.loc[ohtani_mask, "override_reason"] = "two_way_exception"
+
+    return exclusions[columns]
+
+
 def _append_split_metadata(frame: pd.DataFrame, split_key: str, recent_window: str, weighted_mode: str) -> pd.DataFrame:
     enriched = frame.copy()
     enriched["split_key"] = split_key
     enriched["recent_window"] = recent_window
     enriched["weighted_mode"] = weighted_mode
     return enriched
+
+
+def _pitch_family_from_series(pitch_name: pd.Series, pitch_type: pd.Series) -> pd.Series:
+    name_series = pitch_name.fillna("").astype(str).str.strip().str.lower()
+    type_series = pitch_type.fillna("").astype(str).str.strip().str.upper()
+    family = pd.Series(pd.NA, index=name_series.index, dtype="object")
+
+    fastball_names = {"4-seam fastball", "four-seam fastball", "sinker", "cutter"}
+    breaking_names = {"slider", "sweeper", "curveball", "knuckle curve", "slurve"}
+    offspeed_names = {"changeup", "split-finger", "splitter", "forkball", "screwball"}
+
+    family.loc[name_series.isin(fastball_names)] = "fastball"
+    family.loc[name_series.isin(breaking_names)] = "breaking"
+    family.loc[name_series.isin(offspeed_names)] = "offspeed"
+
+    family.loc[family.isna() & type_series.isin({"FF", "FA", "FT", "SI", "FC"})] = "fastball"
+    family.loc[family.isna() & type_series.isin({"SL", "ST", "CU", "KC", "SV", "CS"})] = "breaking"
+    family.loc[family.isna() & type_series.isin({"CH", "FS", "FO", "SC"})] = "offspeed"
+    return family
+
+
+def _zone_bucket_from_location(frame: pd.DataFrame) -> pd.Series:
+    plate_x = pd.to_numeric(frame.get("plate_x"), errors="coerce")
+    plate_z = pd.to_numeric(frame.get("plate_z"), errors="coerce")
+    heart = plate_x.abs().le(0.55) & plate_z.between(1.90, 3.10, inclusive="both")
+    shadow = plate_x.abs().le(1.10) & plate_z.between(1.45, 3.55, inclusive="both") & ~heart
+    bucket = pd.Series(pd.NA, index=frame.index, dtype="object")
+    bucket.loc[heart] = "heart"
+    bucket.loc[shadow] = "shadow"
+    return bucket
+
+
+def _weighted_mean_from_columns(frame: pd.DataFrame, value_column: str, weight_column: str = "context_weight") -> pd.Series:
+    values = pd.to_numeric(frame.get(value_column), errors="coerce")
+    weights = pd.to_numeric(frame.get(weight_column), errors="coerce").fillna(0.0)
+    valid = values.notna() & weights.gt(0)
+    value_weight = pd.Series(0.0, index=frame.index, dtype="float64")
+    value_denom = pd.Series(0.0, index=frame.index, dtype="float64")
+    value_weight.loc[valid] = values.loc[valid] * weights.loc[valid]
+    value_denom.loc[valid] = weights.loc[valid]
+    return value_weight, value_denom
+
+
+def _prepare_weighted_pitch_context_source(live_payload: CockroachPayload, config: AppConfig) -> pd.DataFrame:
+    live = live_payload.live_pitch_mix.copy()
+    baseline = live_payload.pitcher_baseline_event_rows.copy()
+
+    if not baseline.empty:
+        baseline = baseline.loc[pd.to_numeric(baseline.get("game_year"), errors="coerce").fillna(0).astype(int) < 2026].copy()
+    frames = [frame for frame in [live, baseline] if not frame.empty]
+    if not frames:
+        return pd.DataFrame()
+
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+    combined["game_year"] = pd.to_numeric(combined.get("game_year", combined.get("source_season")), errors="coerce")
+    combined = combined.loc[combined["game_year"].notna()].copy()
+    combined["game_year"] = combined["game_year"].astype(int)
+    combined = combined.loc[combined["game_year"].isin(config.movement_year_weights.keys())].copy()
+    if combined.empty:
+        return combined
+
+    combined["pitch_family"] = _pitch_family_from_series(combined.get("pitch_name", pd.Series(index=combined.index, dtype="object")), combined.get("pitch_type", pd.Series(index=combined.index, dtype="object")))
+    combined["zone_bucket"] = _zone_bucket_from_location(combined)
+    combined["context_weight"] = apply_year_weights(combined, config.movement_year_weights)
+    combined["sample_2026"] = combined["game_year"].eq(2026).astype(int)
+    combined["sample_prior"] = combined["game_year"].lt(2026).astype(int)
+    combined["weight_2026"] = combined["context_weight"].where(combined["game_year"].eq(2026), 0.0)
+    combined["weight_prior"] = combined["context_weight"].where(combined["game_year"].lt(2026), 0.0)
+    combined["pitcher_id"] = pd.to_numeric(combined.get("pitcher"), errors="coerce")
+    combined["pitcher_name"] = combined.get("pitcher_name", combined.get("player_name", pd.Series(index=combined.index, dtype="object")))
+    combined["p_throws"] = combined.get("p_throws", combined.get("pitcher_hand", pd.Series(index=combined.index, dtype="object")))
+    return combined
+
+
+def _aggregate_weighted_pitcher_family_zone_profiles(frame: pd.DataFrame) -> pd.DataFrame:
+    work = frame.loc[frame["pitcher_id"].notna() & frame["pitch_family"].notna() & frame["zone_bucket"].notna()].copy()
+    if work.empty:
+        return pd.DataFrame(
+            columns=[
+                "pitcher_id",
+                "pitcher_name",
+                "p_throws",
+                "pitch_family",
+                "zone_bucket",
+                "sample_size",
+                "weighted_sample_size",
+                "sample_2026",
+                "sample_prior",
+                "weight_2026",
+                "weight_prior",
+                "prior_weight_share",
+                "usage_rate_within_family",
+                "usage_rate_overall",
+                "whiff_rate",
+                "called_strike_rate",
+                "ball_in_play_rate",
+                "hit_allowed_rate",
+                "hr_allowed_rate",
+                "damage_allowed_rate",
+                "avg_launch_speed_allowed",
+                "avg_launch_angle_allowed",
+                "xwoba_allowed",
+            ]
+        )
+
+    weights = pd.to_numeric(work["context_weight"], errors="coerce").fillna(0.0)
+    work["weighted_sample_size"] = weights
+    work["whiff_weight"] = work["is_swinging_strike"].astype(int) * weights
+    work["called_strike_weight"] = work["is_called_strike"].astype(int) * weights
+    work["ball_in_play_weight"] = work["is_batted_ball"].astype(int) * weights
+    work["hit_allowed_weight"] = work["is_hit_event"].astype(int) * weights
+    work["hr_allowed_weight"] = work["is_home_run_event"].astype(int) * weights
+    work["damage_allowed_weight"] = ((work["is_hit_event"].astype(int) * 0.6) + (work["is_home_run_event"].astype(int) * 0.4)) * weights
+    work["launch_speed_weight"], work["launch_speed_denom"] = _weighted_mean_from_columns(work, "launch_speed")
+    work["launch_angle_weight"], work["launch_angle_denom"] = _weighted_mean_from_columns(work, "launch_angle")
+    work["xwoba_weight"], work["xwoba_denom"] = _weighted_mean_from_columns(work, "estimated_woba_using_speedangle")
+
+    grouped = (
+        work.groupby(["pitcher_id", "pitcher_name", "p_throws", "pitch_family", "zone_bucket"], as_index=False)
+        .agg(
+            sample_size=("pitcher_id", "size"),
+            weighted_sample_size=("weighted_sample_size", "sum"),
+            sample_2026=("sample_2026", "sum"),
+            sample_prior=("sample_prior", "sum"),
+            weight_2026=("weight_2026", "sum"),
+            weight_prior=("weight_prior", "sum"),
+            whiff_weight=("whiff_weight", "sum"),
+            called_strike_weight=("called_strike_weight", "sum"),
+            ball_in_play_weight=("ball_in_play_weight", "sum"),
+            hit_allowed_weight=("hit_allowed_weight", "sum"),
+            hr_allowed_weight=("hr_allowed_weight", "sum"),
+            damage_allowed_weight=("damage_allowed_weight", "sum"),
+            launch_speed_weight=("launch_speed_weight", "sum"),
+            launch_speed_denom=("launch_speed_denom", "sum"),
+            launch_angle_weight=("launch_angle_weight", "sum"),
+            launch_angle_denom=("launch_angle_denom", "sum"),
+            xwoba_weight=("xwoba_weight", "sum"),
+            xwoba_denom=("xwoba_denom", "sum"),
+        )
+    )
+
+    overall_totals = grouped.groupby("pitcher_id")["weighted_sample_size"].transform("sum")
+    family_totals = grouped.groupby(["pitcher_id", "pitch_family"])["weighted_sample_size"].transform("sum")
+    grouped["prior_weight_share"] = grouped["weight_prior"] / grouped["weighted_sample_size"].where(grouped["weighted_sample_size"] != 0)
+    grouped["usage_rate_overall"] = grouped["weighted_sample_size"] / overall_totals.where(overall_totals != 0)
+    grouped["usage_rate_within_family"] = grouped["weighted_sample_size"] / family_totals.where(family_totals != 0)
+    grouped["whiff_rate"] = grouped["whiff_weight"] / grouped["weighted_sample_size"].where(grouped["weighted_sample_size"] != 0)
+    grouped["called_strike_rate"] = grouped["called_strike_weight"] / grouped["weighted_sample_size"].where(grouped["weighted_sample_size"] != 0)
+    grouped["ball_in_play_rate"] = grouped["ball_in_play_weight"] / grouped["weighted_sample_size"].where(grouped["weighted_sample_size"] != 0)
+    grouped["hit_allowed_rate"] = grouped["hit_allowed_weight"] / grouped["weighted_sample_size"].where(grouped["weighted_sample_size"] != 0)
+    grouped["hr_allowed_rate"] = grouped["hr_allowed_weight"] / grouped["weighted_sample_size"].where(grouped["weighted_sample_size"] != 0)
+    grouped["damage_allowed_rate"] = grouped["damage_allowed_weight"] / grouped["weighted_sample_size"].where(grouped["weighted_sample_size"] != 0)
+    grouped["avg_launch_speed_allowed"] = grouped["launch_speed_weight"] / grouped["launch_speed_denom"].where(grouped["launch_speed_denom"] != 0)
+    grouped["avg_launch_angle_allowed"] = grouped["launch_angle_weight"] / grouped["launch_angle_denom"].where(grouped["launch_angle_denom"] != 0)
+    grouped["xwoba_allowed"] = grouped["xwoba_weight"] / grouped["xwoba_denom"].where(grouped["xwoba_denom"] != 0)
+    return grouped[
+        [
+            "pitcher_id",
+            "pitcher_name",
+            "p_throws",
+            "pitch_family",
+            "zone_bucket",
+            "sample_size",
+            "weighted_sample_size",
+            "sample_2026",
+            "sample_prior",
+            "weight_2026",
+            "weight_prior",
+            "prior_weight_share",
+            "usage_rate_within_family",
+            "usage_rate_overall",
+            "whiff_rate",
+            "called_strike_rate",
+            "ball_in_play_rate",
+            "hit_allowed_rate",
+            "hr_allowed_rate",
+            "damage_allowed_rate",
+            "avg_launch_speed_allowed",
+            "avg_launch_angle_allowed",
+            "xwoba_allowed",
+        ]
+    ]
+
+
+def _aggregate_weighted_pitcher_movement_arsenal(frame: pd.DataFrame) -> pd.DataFrame:
+    work = frame.loc[frame["pitcher_id"].notna() & frame["pitch_name"].notna() & frame["pitch_family"].notna()].copy()
+    if work.empty:
+        return pd.DataFrame(
+            columns=[
+                "pitcher_id",
+                "pitcher_name",
+                "p_throws",
+                "pitch_name",
+                "pitch_type",
+                "pitch_family",
+                "sample_size",
+                "weighted_sample_size",
+                "sample_2026",
+                "sample_prior",
+                "weight_2026",
+                "weight_prior",
+                "prior_weight_share",
+                "usage_rate",
+                "avg_velocity",
+                "avg_spin_rate",
+                "avg_extension",
+                "avg_pfx_x",
+                "avg_pfx_z",
+                "avg_release_pos_x",
+                "avg_release_pos_z",
+                "avg_spin_axis",
+            ]
+        )
+
+    weights = pd.to_numeric(work["context_weight"], errors="coerce").fillna(0.0)
+    work["weighted_sample_size"] = weights
+    for column in [
+        "release_speed",
+        "release_spin_rate",
+        "release_extension",
+        "pfx_x",
+        "pfx_z",
+        "release_pos_x",
+        "release_pos_z",
+        "spin_axis",
+    ]:
+        value_weight, value_denom = _weighted_mean_from_columns(work, column)
+        work[f"{column}_weight"] = value_weight
+        work[f"{column}_denom"] = value_denom
+
+    grouped = (
+        work.groupby(["pitcher_id", "pitcher_name", "p_throws", "pitch_name", "pitch_type", "pitch_family"], as_index=False)
+        .agg(
+            sample_size=("pitcher_id", "size"),
+            weighted_sample_size=("weighted_sample_size", "sum"),
+            sample_2026=("sample_2026", "sum"),
+            sample_prior=("sample_prior", "sum"),
+            weight_2026=("weight_2026", "sum"),
+            weight_prior=("weight_prior", "sum"),
+            release_speed_weight=("release_speed_weight", "sum"),
+            release_speed_denom=("release_speed_denom", "sum"),
+            release_spin_rate_weight=("release_spin_rate_weight", "sum"),
+            release_spin_rate_denom=("release_spin_rate_denom", "sum"),
+            release_extension_weight=("release_extension_weight", "sum"),
+            release_extension_denom=("release_extension_denom", "sum"),
+            pfx_x_weight=("pfx_x_weight", "sum"),
+            pfx_x_denom=("pfx_x_denom", "sum"),
+            pfx_z_weight=("pfx_z_weight", "sum"),
+            pfx_z_denom=("pfx_z_denom", "sum"),
+            release_pos_x_weight=("release_pos_x_weight", "sum"),
+            release_pos_x_denom=("release_pos_x_denom", "sum"),
+            release_pos_z_weight=("release_pos_z_weight", "sum"),
+            release_pos_z_denom=("release_pos_z_denom", "sum"),
+            spin_axis_weight=("spin_axis_weight", "sum"),
+            spin_axis_denom=("spin_axis_denom", "sum"),
+        )
+    )
+    totals = grouped.groupby("pitcher_id")["weighted_sample_size"].transform("sum")
+    grouped["prior_weight_share"] = grouped["weight_prior"] / grouped["weighted_sample_size"].where(grouped["weighted_sample_size"] != 0)
+    grouped["usage_rate"] = grouped["weighted_sample_size"] / totals.where(totals != 0)
+    grouped["avg_velocity"] = grouped["release_speed_weight"] / grouped["release_speed_denom"].where(grouped["release_speed_denom"] != 0)
+    grouped["avg_spin_rate"] = grouped["release_spin_rate_weight"] / grouped["release_spin_rate_denom"].where(grouped["release_spin_rate_denom"] != 0)
+    grouped["avg_extension"] = grouped["release_extension_weight"] / grouped["release_extension_denom"].where(grouped["release_extension_denom"] != 0)
+    grouped["avg_pfx_x"] = grouped["pfx_x_weight"] / grouped["pfx_x_denom"].where(grouped["pfx_x_denom"] != 0)
+    grouped["avg_pfx_z"] = grouped["pfx_z_weight"] / grouped["pfx_z_denom"].where(grouped["pfx_z_denom"] != 0)
+    grouped["avg_release_pos_x"] = grouped["release_pos_x_weight"] / grouped["release_pos_x_denom"].where(grouped["release_pos_x_denom"] != 0)
+    grouped["avg_release_pos_z"] = grouped["release_pos_z_weight"] / grouped["release_pos_z_denom"].where(grouped["release_pos_z_denom"] != 0)
+    grouped["avg_spin_axis"] = grouped["spin_axis_weight"] / grouped["spin_axis_denom"].where(grouped["spin_axis_denom"] != 0)
+    return grouped[
+        [
+            "pitcher_id",
+            "pitcher_name",
+            "p_throws",
+            "pitch_name",
+            "pitch_type",
+            "pitch_family",
+            "sample_size",
+            "weighted_sample_size",
+            "sample_2026",
+            "sample_prior",
+            "weight_2026",
+            "weight_prior",
+            "prior_weight_share",
+            "usage_rate",
+            "avg_velocity",
+            "avg_spin_rate",
+            "avg_extension",
+            "avg_pfx_x",
+            "avg_pfx_z",
+            "avg_release_pos_x",
+            "avg_release_pos_z",
+            "avg_spin_axis",
+        ]
+    ]
+
+
+def build_movement_context_tables(
+    live_payload: CockroachPayload,
+    config: AppConfig,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    source = _prepare_weighted_pitch_context_source(live_payload, config)
+    pitcher_family_zone_context = _aggregate_weighted_pitcher_family_zone_profiles(source)
+    pitcher_movement_arsenal = _aggregate_weighted_pitcher_movement_arsenal(source)
+    batter_family_zone_profiles = live_payload.batter_family_zone_profiles.copy()
+    return pitcher_family_zone_context, pitcher_movement_arsenal, batter_family_zone_profiles
 
 
 def build_metric_tables(raw_statcast: pd.DataFrame, config: AppConfig) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -382,7 +791,7 @@ def build_metric_tables(raw_statcast: pd.DataFrame, config: AppConfig) -> tuple[
             for weighted_mode in ("weighted", "unweighted"):
                 hitters_frame = _aggregate_hitter_metrics(split_frame, weighted_mode, config.year_weights)
                 if not hitters_frame.empty:
-                    hitters_frame = hitters_frame.merge(starter_scores, on=["team", "batter"], how="left")
+                    hitters_frame = hitters_frame.merge(starter_scores, on=["batter"], how="left")
                 hitters.append(_append_split_metadata(hitters_frame, split_key, recent_window, weighted_mode))
                 pitchers.append(_append_split_metadata(_aggregate_pitcher_metrics(split_frame, weighted_mode, config.year_weights), split_key, recent_window, weighted_mode))
                 pitcher_summaries_by_hand.append(
@@ -434,6 +843,10 @@ def _save_daily_files(
     pitcher_rolling: pd.DataFrame,
     batter_zone_profiles: pd.DataFrame,
     pitcher_zone_profiles: pd.DataFrame,
+    batter_family_zone_profiles: pd.DataFrame,
+    pitcher_family_zone_context: pd.DataFrame,
+    pitcher_movement_arsenal: pd.DataFrame,
+    hitter_pitcher_exclusions: pd.DataFrame,
 ) -> None:
     target_dir = context.config.daily_dir / context.target_date.isoformat()
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -459,7 +872,17 @@ def _save_daily_files(
     pitcher_rolling.to_parquet(target_dir / "daily_pitcher_rolling.parquet", index=False)
     batter_zone_profiles.to_parquet(target_dir / "daily_batter_zone_profiles.parquet", index=False)
     pitcher_zone_profiles.to_parquet(target_dir / "daily_pitcher_zone_profiles.parquet", index=False)
+    batter_family_zone_profiles.to_parquet(target_dir / "daily_batter_family_zone_profiles.parquet", index=False)
+    pitcher_family_zone_context.loc[pitcher_family_zone_context["pitcher_id"].isin(probable_pitchers)].to_parquet(
+        target_dir / "daily_pitcher_family_zone_context.parquet",
+        index=False,
+    )
+    pitcher_movement_arsenal.loc[pitcher_movement_arsenal["pitcher_id"].isin(probable_pitchers)].to_parquet(
+        target_dir / "daily_pitcher_movement_arsenal.parquet",
+        index=False,
+    )
     hitter_metrics.to_parquet(target_dir / "daily_hitter_metrics.parquet", index=False)
+    hitter_pitcher_exclusions.to_parquet(target_dir / "hitter_pitcher_exclusions.parquet", index=False)
     metadata = {
         "build_timestamp_utc": datetime.utcnow().isoformat(),
         "target_date": context.target_date.isoformat(),
@@ -467,6 +890,7 @@ def _save_daily_files(
         "split_keys": list(DEFAULT_SPLITS),
         "recent_windows": list(DEFAULT_RECENT_WINDOWS),
         "pitch_groups": DEFAULT_PITCH_GROUPS,
+        "movement_year_weights": context.config.movement_year_weights,
     }
     (target_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
@@ -483,6 +907,10 @@ def _write_duckdb(
     pitcher_rolling: pd.DataFrame,
     batter_zone_profiles: pd.DataFrame,
     pitcher_zone_profiles: pd.DataFrame,
+    batter_family_zone_profiles: pd.DataFrame,
+    pitcher_family_zone_context: pd.DataFrame,
+    pitcher_movement_arsenal: pd.DataFrame,
+    hitter_pitcher_exclusions: pd.DataFrame,
 ) -> None:
     if duckdb is None:
         raise RuntimeError("duckdb is required to build the local explorer database.")
@@ -497,6 +925,10 @@ def _write_duckdb(
     conn.register("pitcher_rolling_df", pitcher_rolling)
     conn.register("batter_zone_profiles_df", batter_zone_profiles)
     conn.register("pitcher_zone_profiles_df", pitcher_zone_profiles)
+    conn.register("batter_family_zone_profiles_df", batter_family_zone_profiles)
+    conn.register("pitcher_family_zone_context_df", pitcher_family_zone_context)
+    conn.register("pitcher_movement_arsenal_df", pitcher_movement_arsenal)
+    conn.register("hitter_pitcher_exclusions_df", hitter_pitcher_exclusions)
     conn.execute("CREATE OR REPLACE TABLE hitter_metrics AS SELECT * FROM hitter_metrics_df")
     conn.execute("CREATE OR REPLACE TABLE pitcher_metrics AS SELECT * FROM pitcher_metrics_df")
     conn.execute("CREATE OR REPLACE TABLE pitcher_summary_by_hand AS SELECT * FROM pitcher_summary_by_hand_df")
@@ -507,6 +939,10 @@ def _write_duckdb(
     conn.execute("CREATE OR REPLACE TABLE pitcher_rolling AS SELECT * FROM pitcher_rolling_df")
     conn.execute("CREATE OR REPLACE TABLE batter_zone_profiles AS SELECT * FROM batter_zone_profiles_df")
     conn.execute("CREATE OR REPLACE TABLE pitcher_zone_profiles AS SELECT * FROM pitcher_zone_profiles_df")
+    conn.execute("CREATE OR REPLACE TABLE batter_family_zone_profiles AS SELECT * FROM batter_family_zone_profiles_df")
+    conn.execute("CREATE OR REPLACE TABLE pitcher_family_zone_context AS SELECT * FROM pitcher_family_zone_context_df")
+    conn.execute("CREATE OR REPLACE TABLE pitcher_movement_arsenal AS SELECT * FROM pitcher_movement_arsenal_df")
+    conn.execute("CREATE OR REPLACE TABLE hitter_pitcher_exclusions AS SELECT * FROM hitter_pitcher_exclusions_df")
     conn.close()
 
 
@@ -522,6 +958,10 @@ def _write_reusable_artifacts(
     pitcher_rolling: pd.DataFrame,
     batter_zone_profiles: pd.DataFrame,
     pitcher_zone_profiles: pd.DataFrame,
+    batter_family_zone_profiles: pd.DataFrame,
+    pitcher_family_zone_context: pd.DataFrame,
+    pitcher_movement_arsenal: pd.DataFrame,
+    hitter_pitcher_exclusions: pd.DataFrame,
 ) -> None:
     hitter_metrics.to_parquet(config.reusable_dir / "hitter_metrics.parquet", index=False)
     pitcher_metrics.to_parquet(config.reusable_dir / "pitcher_metrics.parquet", index=False)
@@ -533,6 +973,10 @@ def _write_reusable_artifacts(
     pitcher_rolling.to_parquet(config.reusable_dir / "pitcher_rolling.parquet", index=False)
     batter_zone_profiles.to_parquet(config.reusable_dir / "batter_zone_profiles.parquet", index=False)
     pitcher_zone_profiles.to_parquet(config.reusable_dir / "pitcher_zone_profiles.parquet", index=False)
+    batter_family_zone_profiles.to_parquet(config.reusable_dir / "batter_family_zone_profiles.parquet", index=False)
+    pitcher_family_zone_context.to_parquet(config.reusable_dir / "pitcher_family_zone_context.parquet", index=False)
+    pitcher_movement_arsenal.to_parquet(config.reusable_dir / "pitcher_movement_arsenal.parquet", index=False)
+    hitter_pitcher_exclusions.to_parquet(config.reusable_dir / "hitter_pitcher_exclusions.parquet", index=False)
 
 
 def _pitcher_lookup(pitcher_metrics: pd.DataFrame) -> dict[int, dict[str, object]]:
@@ -559,18 +1003,19 @@ def _base_hitter_pool(
     recent_window: str,
     weighted_mode: str,
 ) -> pd.DataFrame:
+    lookup = rosters_frame.loc[rosters_frame["team"] == team, ["player_id", "player_name"]].drop_duplicates("player_id") if not rosters_frame.empty else pd.DataFrame()
+    if lookup.empty:
+        return pd.DataFrame()
     frame = hitter_metrics.loc[
-        (hitter_metrics["team"] == team)
+        hitter_metrics["batter"].isin(lookup["player_id"])
         & (hitter_metrics["split_key"] == split_key)
         & (hitter_metrics["recent_window"] == recent_window)
         & (hitter_metrics["weighted_mode"] == weighted_mode)
     ].copy()
     if frame.empty:
         return frame
-    lookup = rosters_frame.loc[rosters_frame["team"] == team, ["player_id", "player_name"]].drop_duplicates("player_id") if not rosters_frame.empty else pd.DataFrame()
-    if lookup.empty:
-        return frame
-    enriched = frame.merge(lookup, left_on="batter", right_on="player_id", how="left")
+    enriched = frame.merge(lookup, left_on="batter", right_on="player_id", how="inner")
+    enriched["team"] = team
     enriched["hitter_name"] = enriched["player_name"].fillna(enriched["hitter_name"])
     return enriched.drop(columns=["player_id", "player_name"], errors="ignore")
 
@@ -678,6 +1123,7 @@ def _build_hitter_tracking_snapshots(
                                     "pulled_barrel_pct",
                                     "barrel_bbe_pct",
                                     "barrel_bip_pct",
+                                    "sweet_spot_pct",
                                     "fb_pct",
                                     "hard_hit_pct",
                                     "avg_launch_angle",
@@ -942,8 +1388,13 @@ def _build_pitcher_tracking_snapshots(
                     "recent_window",
                     "weighted_mode",
                     "pitcher_score",
+                    "strikeout_score",
                     "xwoba",
+                    "called_strike_pct",
+                    "csw_pct",
                     "swstr_pct",
+                    "ball_pct",
+                    "siera",
                     "barrel_bbe_pct",
                     "barrel_bip_pct",
                     "pulled_barrel_pct",
@@ -1184,8 +1635,10 @@ def run_build(context: BuildContext) -> None:
     historical_statcast = _load_raw_statcast(csv_paths)
     live_payload = load_cockroach_payload(context.config)
     raw_statcast = _merge_historical_and_live(historical_statcast, live_payload)
+    hitter_pitcher_exclusions = _build_hitter_pitcher_exclusions(raw_statcast)
     batter_zone_profiles, pitcher_zone_profiles = _aggregate_zone_profiles(raw_statcast, context.config.zone_year_weights)
     hitter_metrics, pitcher_metrics, pitcher_summary_by_hand, pitcher_arsenal, pitcher_arsenal_by_hand, pitcher_usage_by_count = build_metric_tables(raw_statcast, context.config)
+    pitcher_family_zone_context, pitcher_movement_arsenal, batter_family_zone_profiles = build_movement_context_tables(live_payload, context.config)
     _write_duckdb(
         context.config,
         hitter_metrics,
@@ -1198,6 +1651,10 @@ def run_build(context: BuildContext) -> None:
         live_payload.pitcher_rolling,
         batter_zone_profiles,
         pitcher_zone_profiles,
+        batter_family_zone_profiles,
+        pitcher_family_zone_context,
+        pitcher_movement_arsenal,
+        hitter_pitcher_exclusions,
     )
     _write_reusable_artifacts(
         context.config,
@@ -1211,10 +1668,21 @@ def run_build(context: BuildContext) -> None:
         live_payload.pitcher_rolling,
         batter_zone_profiles,
         pitcher_zone_profiles,
+        batter_family_zone_profiles,
+        pitcher_family_zone_context,
+        pitcher_movement_arsenal,
+        hitter_pitcher_exclusions,
     )
     schedule = fetch_schedule(context.target_date)
     rosters = fetch_team_rosters_for_schedule(schedule, context.target_date)
     rosters_frame = pd.DataFrame(rosters) if rosters else pd.DataFrame(columns=["team", "player_id", "player_name"])
+    if context.config.odds_api_key:
+        try:
+            props_payload = load_live_props_board(context.config, context.target_date, rosters_frame)
+            if isinstance(props_payload, PropsBoardPayload) and not props_payload.raw_rows.empty:
+                write_props_odds_snapshot(context.config, props_payload.raw_rows)
+        except Exception as exc:  # pragma: no cover
+            warnings.warn(f"Unable to capture live odds during build for {context.target_date.isoformat()}: {exc}")
     snapshots = _build_hitter_tracking_snapshots(
         context.target_date,
         schedule,
@@ -1257,6 +1725,10 @@ def run_build(context: BuildContext) -> None:
         live_payload.pitcher_rolling,
         batter_zone_profiles,
         pitcher_zone_profiles,
+        batter_family_zone_profiles,
+        pitcher_family_zone_context,
+        pitcher_movement_arsenal,
+        hitter_pitcher_exclusions,
     )
 
 

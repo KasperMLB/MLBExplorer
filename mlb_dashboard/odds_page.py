@@ -7,6 +7,7 @@ import streamlit as st
 
 from .components import render_props_board
 from .config import AppConfig
+from .cockroach_loader import write_props_odds_snapshot
 from .dashboard_views import latest_built_date
 from .odds_service import PropsBoardPayload, load_live_props_board
 from .query_engine import StatcastQueryEngine
@@ -202,7 +203,13 @@ def main() -> None:
     state_key = f"props_board::{loaded_date.isoformat()}::{refresh_token}"
     if state_key not in st.session_state:
         try:
-            st.session_state[state_key] = load_live_props_board(config, loaded_date, rosters)
+            payload = load_live_props_board(config, loaded_date, rosters)
+            if isinstance(payload, PropsBoardPayload) and not payload.raw_rows.empty:
+                try:
+                    write_props_odds_snapshot(config, payload.raw_rows)
+                except Exception:
+                    pass
+            st.session_state[state_key] = payload
         except Exception as exc:
             st.error(f"Unable to load live props: {exc}")
             return

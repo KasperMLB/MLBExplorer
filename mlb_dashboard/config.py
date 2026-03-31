@@ -23,6 +23,15 @@ DEFAULT_ZONE_YEAR_WEIGHTS = {
     2026: 1.75,
 }
 
+DEFAULT_MOVEMENT_YEAR_WEIGHTS = {
+    2021: 0.01,
+    2022: 0.03,
+    2023: 0.08,
+    2024: 0.20,
+    2025: 0.52,
+    2026: 1.00,
+}
+
 DEFAULT_RECENT_WINDOWS = ("season", "last_45_days", "last_14_days")
 DEFAULT_SPLITS = ("overall", "vs_rhp", "vs_lhp", "home", "away")
 DEFAULT_PITCH_GROUPS = {
@@ -43,10 +52,12 @@ class AppConfig:
     hf_token: str = field(default_factory=lambda: os.getenv("HF_TOKEN", ""))
     database_url: str = field(default_factory=lambda: os.getenv("DATABASE_URL", ""))
     cockroach_live_pitch_mix_table: str = field(default_factory=lambda: os.getenv("COCKROACH_LIVE_PITCH_MIX_TABLE", "public.live_pitch_mix_2026"))
+    cockroach_pitcher_baseline_event_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_BASELINE_EVENT_TABLE", "public.shared_pitcher_baseline_event_rows"))
     cockroach_hitter_rolling_table: str = field(default_factory=lambda: os.getenv("COCKROACH_HITTER_ROLLING_TABLE", "public.shared_hitter_rolling_summary"))
     cockroach_pitcher_rolling_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_ROLLING_TABLE", "public.shared_pitcher_rolling_summary"))
     cockroach_batter_zone_table: str = field(default_factory=lambda: os.getenv("COCKROACH_BATTER_ZONE_TABLE", "public.batter_zone_damage_profiles"))
     cockroach_pitcher_zone_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_ZONE_TABLE", "public.pitcher_zone_profiles"))
+    cockroach_batter_family_zone_table: str = field(default_factory=lambda: os.getenv("COCKROACH_BATTER_FAMILY_ZONE_TABLE", "public.batter_family_zone_profiles"))
     cockroach_hitter_snapshot_table: str = field(default_factory=lambda: os.getenv("COCKROACH_HITTER_SNAPSHOT_TABLE", "public.hitter_model_snapshots"))
     cockroach_hitter_outcome_table: str = field(default_factory=lambda: os.getenv("COCKROACH_HITTER_OUTCOME_TABLE", "public.hitter_game_outcomes"))
     cockroach_hitter_board_table: str = field(default_factory=lambda: os.getenv("COCKROACH_HITTER_BOARD_TABLE", "public.hitter_board_winners"))
@@ -55,6 +66,7 @@ class AppConfig:
     cockroach_pitcher_board_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_BOARD_TABLE", "public.pitcher_board_winners"))
     cockroach_pitcher_arsenal_snapshot_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_ARSENAL_SNAPSHOT_TABLE", "public.pitcher_arsenal_snapshots"))
     cockroach_pitcher_count_snapshot_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_COUNT_SNAPSHOT_TABLE", "public.pitcher_count_usage_snapshots"))
+    cockroach_props_odds_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PROPS_ODDS_TABLE", "public.cached_upcoming_props_rows"))
     odds_api_key: str = field(default_factory=lambda: os.getenv("ODDS_API_KEY", ""))
     odds_api_base_url: str = field(default_factory=lambda: os.getenv("ODDS_API_BASE_URL", "https://api.the-odds-api.com/v4"))
     odds_api_sport: str = field(default_factory=lambda: os.getenv("ODDS_API_SPORT", "baseball_mlb"))
@@ -65,6 +77,7 @@ class AppConfig:
     metrics_version: str = field(default_factory=lambda: os.getenv("MLB_METRICS_VERSION", "v1"))
     year_weights: dict[int, float] = field(default_factory=lambda: DEFAULT_YEAR_WEIGHTS.copy())
     zone_year_weights: dict[int, float] = field(default_factory=lambda: DEFAULT_ZONE_YEAR_WEIGHTS.copy())
+    movement_year_weights: dict[int, float] = field(default_factory=lambda: DEFAULT_MOVEMENT_YEAR_WEIGHTS.copy())
 
     @property
     def reusable_dir(self) -> Path:

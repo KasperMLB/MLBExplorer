@@ -32,6 +32,7 @@ HITTER_PRESETS = {
         "xwoba_con",
         "pulled_barrel_pct",
         "barrel_bip_pct",
+        "sweet_spot_pct",
         "hard_hit_pct",
         "avg_launch_angle",
     ],
@@ -54,7 +55,7 @@ HITTER_PRESETS = {
         "ceiling_score",
         "pulled_barrel_pct",
         "barrel_bip_pct",
-        "fb_pct",
+        "sweet_spot_pct",
         "hard_hit_pct",
         "avg_launch_angle",
         "xwoba",
@@ -72,6 +73,7 @@ HITTER_PRESETS = {
         "swstr_pct",
         "pulled_barrel_pct",
         "barrel_bip_pct",
+        "sweet_spot_pct",
         "fb_pct",
         "hard_hit_pct",
         "avg_launch_angle",
@@ -86,8 +88,8 @@ BEST_MATCHUP_COLUMNS = [
     "xwoba",
     "swstr_pct",
     "pulled_barrel_pct",
+    "sweet_spot_pct",
     "hard_hit_pct",
-    "fb_pct",
     "avg_launch_angle",
 ]
 
@@ -98,8 +100,12 @@ TOP_PITCHER_COLUMNS = [
     "pitcher_name",
     "p_throws",
     "pitcher_score",
+    "strikeout_score",
     "xwoba",
+    "csw_pct",
     "swstr_pct",
+    "ball_pct",
+    "siera",
     "pulled_barrel_pct",
     "barrel_bip_pct",
     "fb_pct",
@@ -111,8 +117,13 @@ PITCHER_SUMMARY_COLUMNS = [
     "p_throws",
     "pitch_count",
     "bip",
+    "strikeout_score",
     "xwoba",
+    "called_strike_pct",
+    "csw_pct",
     "swstr_pct",
+    "ball_pct",
+    "siera",
     "pulled_barrel_pct",
     "barrel_bip_pct",
     "fb_pct",
@@ -128,6 +139,44 @@ ARSENAL_COLUMNS = [
     "avg_release_speed",
     "avg_spin_rate",
     "xwoba_con",
+]
+
+MOVEMENT_ARSENAL_COLUMNS = [
+    "pitch_name",
+    "pitch_family",
+    "usage_rate",
+    "weighted_sample_size",
+    "prior_weight_share",
+    "avg_velocity",
+    "avg_spin_rate",
+    "avg_extension",
+    "avg_pfx_x",
+    "avg_pfx_z",
+]
+
+FAMILY_ZONE_CONTEXT_COLUMNS = [
+    "pitch_family",
+    "zone_bucket",
+    "weighted_sample_size",
+    "prior_weight_share",
+    "usage_rate_overall",
+    "whiff_rate",
+    "called_strike_rate",
+    "damage_allowed_rate",
+    "xwoba_allowed",
+]
+
+FAMILY_FIT_DETAIL_COLUMNS = [
+    "pitch_family",
+    "zone_bucket",
+    "weighted_sample_size",
+    "prior_weight_share",
+    "usage_rate_overall",
+    "damage_rate",
+    "xwoba",
+    "damage_allowed_rate",
+    "xwoba_allowed",
+    "fit_score",
 ]
 
 COUNT_USAGE_COLUMNS = [
@@ -183,6 +232,8 @@ PITCHER_ZONE_COLUMNS = [
 
 PITCHER_LOWER_IS_BETTER = {
     "xwoba",
+    "ball_pct",
+    "siera",
     "pulled_barrel_pct",
     "barrel_bbe_pct",
     "barrel_bip_pct",
@@ -193,12 +244,16 @@ PITCHER_LOWER_IS_BETTER = {
 
 PITCHER_HIGHER_IS_BETTER = {
     "swstr_pct",
+    "called_strike_pct",
+    "csw_pct",
     "gb_pct",
     "gb_fb_ratio",
     "avg_release_speed",
     "avg_spin_rate",
     "usage_pct",
+    "usage_rate",
     "pitcher_score",
+    "strikeout_score",
 }
 
 ZONE_DISPLAY_ORDER = [11, 1, 2, 3, 13, 4, 5, 6, 14, 7, 8, 9, 12]
@@ -237,6 +292,21 @@ def launch_angle_score(series: pd.Series, low: float = 20.0, ideal: float = 27.5
     return numeric.apply(score)
 
 
+def shape_score(
+    launch_angle_series: pd.Series,
+    sweet_spot_series: pd.Series | None,
+    barrel_series: pd.Series | None,
+) -> pd.Series:
+    la_band_score = launch_angle_score(launch_angle_series, low=12.0, ideal=22.0, high=32.0)
+    sweet_spot_score = normalize_series(sweet_spot_series if sweet_spot_series is not None else pd.Series(0.5, index=la_band_score.index))
+    barrel_support = normalize_series(barrel_series if barrel_series is not None else pd.Series(0.5, index=la_band_score.index))
+    return (
+        (la_band_score * 0.55)
+        + (sweet_spot_score * 0.35)
+        + (barrel_support * 0.10)
+    ).clip(lower=0.0, upper=1.0)
+
+
 def _weighted_average(series: pd.Series, weights: pd.Series) -> float | None:
     numeric = pd.to_numeric(series, errors="coerce")
     numeric_weights = pd.to_numeric(weights, errors="coerce").fillna(0)
@@ -247,6 +317,70 @@ def _weighted_average(series: pd.Series, weights: pd.Series) -> float | None:
     if total_weight <= 0:
         return None
     return float((numeric.loc[valid] * numeric_weights.loc[valid]).sum() / total_weight)
+
+
+def build_family_zone_fit_detail(
+    batter_family_zone_profiles: pd.DataFrame,
+    pitcher_family_zone_context: pd.DataFrame,
+    batter_id: int | None,
+    pitcher_id: int | None,
+) -> pd.DataFrame:
+    if batter_id is None or pitcher_id is None or batter_family_zone_profiles.empty or pitcher_family_zone_context.empty:
+        return pd.DataFrame(columns=FAMILY_FIT_DETAIL_COLUMNS)
+    batter_detail = batter_family_zone_profiles.loc[batter_family_zone_profiles["batter_id"] == batter_id].copy()
+    pitcher_detail = pitcher_family_zone_context.loc[pitcher_family_zone_context["pitcher_id"] == pitcher_id].copy()
+    if batter_detail.empty or pitcher_detail.empty:
+        return pd.DataFrame(columns=FAMILY_FIT_DETAIL_COLUMNS)
+
+    batter_detail["pitch_family"] = batter_detail["pitch_family"].fillna("").astype(str).str.lower()
+    batter_detail["zone_bucket"] = batter_detail["zone_bucket"].fillna("").astype(str).str.lower()
+    pitcher_detail["pitch_family"] = pitcher_detail["pitch_family"].fillna("").astype(str).str.lower()
+    pitcher_detail["zone_bucket"] = pitcher_detail["zone_bucket"].fillna("").astype(str).str.lower()
+
+    merged = batter_detail.merge(
+        pitcher_detail,
+        on=["pitch_family", "zone_bucket"],
+        how="inner",
+        suffixes=("_batter", "_pitcher"),
+    )
+    if merged.empty:
+        return pd.DataFrame(columns=FAMILY_FIT_DETAIL_COLUMNS)
+
+    hitter_shape = normalize_series(pd.to_numeric(merged.get("damage_rate"), errors="coerce").fillna(pd.to_numeric(merged.get("xwoba"), errors="coerce")))
+    pitcher_exposure = normalize_series(pd.to_numeric(merged.get("damage_allowed_rate"), errors="coerce").fillna(pd.to_numeric(merged.get("xwoba_allowed"), errors="coerce")))
+    usage_scale = normalize_series(pd.to_numeric(merged.get("usage_rate_overall"), errors="coerce"))
+    merged["fit_score"] = ((hitter_shape * 0.45) + (pitcher_exposure * 0.35) + (usage_scale * 0.20)).clip(lower=0.0, upper=1.0)
+    merged["weighted_sample_size"] = pd.to_numeric(merged["weighted_sample_size"], errors="coerce").fillna(0.0)
+    return (
+        merged[
+            [
+                "pitch_family",
+                "zone_bucket",
+                "weighted_sample_size",
+                "prior_weight_share",
+                "usage_rate_overall",
+                "damage_rate",
+                "xwoba",
+                "damage_allowed_rate",
+                "xwoba_allowed",
+                "fit_score",
+            ]
+        ]
+        .sort_values(["fit_score", "weighted_sample_size"], ascending=[False, False], na_position="last")
+        .reset_index(drop=True)
+    )
+
+
+def compute_family_fit_score(
+    batter_family_zone_profiles: pd.DataFrame,
+    pitcher_family_zone_context: pd.DataFrame,
+    batter_id: int | None,
+    pitcher_id: int | None,
+) -> float | None:
+    detail = build_family_zone_fit_detail(batter_family_zone_profiles, pitcher_family_zone_context, batter_id, pitcher_id)
+    if detail.empty:
+        return None
+    return _weighted_average(detail["fit_score"], detail["weighted_sample_size"])
 
 
 def _select_batter_zone_frame(frame: pd.DataFrame, batter_id: object, opposing_pitcher_hand: str | None) -> pd.DataFrame:
@@ -320,6 +454,8 @@ def add_hitter_matchup_score(
     if frame.empty:
         return frame
     enriched = frame.copy()
+    if "sweet_spot_pct" not in enriched.columns:
+        enriched["sweet_spot_pct"] = pd.NA
     if batter_zone_profiles is not None and pitcher_zone_profiles is not None and opposing_pitcher_id is not None:
         enriched["zone_fit_score"] = enriched.apply(
             lambda row: _zone_fit_for_hitter(row, batter_zone_profiles, pitcher_zone_profiles, opposing_pitcher_id, opposing_pitcher_hand),
@@ -329,20 +465,23 @@ def add_hitter_matchup_score(
         enriched["zone_fit_score"] = 0.5
     swstr_score = normalize_series(enriched["swstr_pct"], inverse=True)
     barrel_score = normalize_series(enriched["barrel_bbe_pct"])
-    la_score = launch_angle_score(enriched["avg_launch_angle"])
-    base_score = ((swstr_score * 0.35) + (barrel_score * 0.30) + (la_score * 0.20) + (enriched["zone_fit_score"] * 0.15)) * 100.0
+    enriched["shape_score"] = shape_score(
+        enriched["avg_launch_angle"],
+        enriched["sweet_spot_pct"] if "sweet_spot_pct" in enriched.columns else None,
+        enriched["barrel_bbe_pct"] if "barrel_bbe_pct" in enriched.columns else None,
+    )
+    base_score = ((swstr_score * 0.35) + (barrel_score * 0.30) + (enriched["shape_score"] * 0.20) + (enriched["zone_fit_score"] * 0.15)) * 100.0
     pulled_barrel_scale = normalize_series(enriched["pulled_barrel_pct"])
     pulled_barrel_bonus = ((pulled_barrel_scale - 0.5).clip(lower=0.0) / 0.5) * 0.08
     enriched["matchup_score"] = (base_score * (1.0 + pulled_barrel_bonus)).clip(lower=0.0, upper=100.0)
     matchup_norm = normalize_series(enriched["matchup_score"])
     barrel_bip_norm = normalize_series(enriched["barrel_bip_pct"])
-    fb_norm = normalize_series(enriched["fb_pct"])
     hh_norm = normalize_series(enriched["hard_hit_pct"])
     ceiling_base = (
         (matchup_norm * 0.35)
         + (pulled_barrel_scale * 0.30)
         + (barrel_bip_norm * 0.20)
-        + (fb_norm * 0.10)
+        + (enriched["shape_score"] * 0.10)
         + (hh_norm * 0.05)
     )
     enriched["ceiling_score"] = (ceiling_base * 100.0).clip(lower=0.0, upper=100.0)
@@ -358,14 +497,24 @@ def add_pitcher_rank_score(frame: pd.DataFrame) -> pd.DataFrame:
     barrel_bip_score = normalize_series(enriched["barrel_bip_pct"], inverse=True)
     hh_score = normalize_series(enriched["hard_hit_pct"], inverse=True)
     swstr_score = normalize_series(enriched["swstr_pct"])
+    ball_score = normalize_series(enriched["ball_pct"], inverse=True) if "ball_pct" in enriched.columns else pd.Series(0.5, index=enriched.index)
+    command_score = (swstr_score * 0.60) + (ball_score * 0.40)
     gbfb_score = normalize_series(enriched["gb_fb_ratio"])
+    csw_score = normalize_series(enriched["csw_pct"]) if "csw_pct" in enriched.columns else pd.Series(0.5, index=enriched.index)
+    siera_score = normalize_series(enriched["siera"], inverse=True) if "siera" in enriched.columns else pd.Series(0.5, index=enriched.index)
     enriched["pitcher_score"] = (
         (xwoba_score * 0.25)
         + (barrel_bbe_score * 0.18)
         + (barrel_bip_score * 0.12)
         + (hh_score * 0.15)
-        + (swstr_score * 0.18)
+        + (command_score * 0.18)
         + (gbfb_score * 0.12)
+    ) * 100.0
+    enriched["strikeout_score"] = (
+        (csw_score * 0.40)
+        + (swstr_score * 0.30)
+        + (ball_score * 0.20)
+        + (siera_score * 0.10)
     ) * 100.0
     return enriched.sort_values(["pitcher_score", "xwoba"], ascending=[False, True], na_position="last")
 
@@ -475,6 +624,63 @@ def apply_roster_names(frame: pd.DataFrame, rosters: pd.DataFrame, team: str) ->
     enriched = frame.merge(lookup, left_on="batter", right_on="player_id", how="inner")
     enriched["hitter_name"] = enriched["player_name"]
     return enriched.drop(columns=["player_id", "player_name"], errors="ignore")
+
+
+def filter_excluded_pitchers_from_hitter_pool(frame: pd.DataFrame, exclusions: pd.DataFrame | None) -> pd.DataFrame:
+    if frame.empty or exclusions is None or exclusions.empty or "batter" not in frame.columns:
+        return frame
+    if "player_id" not in exclusions.columns or "exclude_from_hitter_tables" not in exclusions.columns:
+        return frame
+    excluded_ids = pd.to_numeric(
+        exclusions.loc[exclusions["exclude_from_hitter_tables"].fillna(False), "player_id"],
+        errors="coerce",
+    ).dropna()
+    if excluded_ids.empty:
+        return frame
+    batter_ids = pd.to_numeric(frame["batter"], errors="coerce")
+    return frame.loc[~batter_ids.isin(excluded_ids.astype("int64"))].copy()
+
+
+def apply_projected_lineup(
+    frame: pd.DataFrame,
+    team: str,
+    rotowire_lineups: dict[str, dict[str, object]] | None,
+    minimum_resolved_players: int = 7,
+) -> pd.DataFrame:
+    if frame.empty or not rotowire_lineups:
+        return frame
+    payload = rotowire_lineups.get(team)
+    if not payload:
+        return frame
+    status = str(payload.get("status") or "unknown").lower()
+    if status not in {"confirmed", "expected"}:
+        return frame
+
+    players = payload.get("players", [])
+    if not players:
+        return frame
+
+    order_map: dict[int, tuple[int, str | None]] = {}
+    for player in players:
+        player_id = player.get("player_id")
+        if pd.isna(player_id):
+            continue
+        order_map[int(player_id)] = (int(player.get("slot") or len(order_map) + 1), player.get("position"))
+
+    if len(order_map) < minimum_resolved_players or "batter" not in frame.columns:
+        return frame
+
+    work = frame.copy()
+    batter_ids = pd.to_numeric(work["batter"], errors="coerce")
+    work["_lineup_player_id"] = batter_ids
+    work = work.loc[work["_lineup_player_id"].isin(order_map.keys())].copy()
+    if work.empty:
+        return frame
+    work["projected_lineup_slot"] = work["_lineup_player_id"].map(lambda value: order_map[int(value)][0] if pd.notna(value) and int(value) in order_map else None)
+    work["projected_lineup_position"] = work["_lineup_player_id"].map(lambda value: order_map[int(value)][1] if pd.notna(value) and int(value) in order_map else None)
+    work["projected_lineup_status"] = status
+    work = work.sort_values("projected_lineup_slot", ascending=True, na_position="last")
+    return work.drop(columns=["_lineup_player_id"], errors="ignore")
 
 
 def pivot_count_usage(count_usage: pd.DataFrame, arsenal_frame: pd.DataFrame) -> pd.DataFrame:

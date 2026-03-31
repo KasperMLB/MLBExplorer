@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Streamlit } from "streamlit-component-lib";
+import { HeaderCell, normalizeSortValue, sharedStyles, sortRows, useAutoHeight } from "./shared_ui.jsx";
 
 const columns = [
   { key: "Game", label: "Game", className: "col-game" },
@@ -7,14 +7,14 @@ const columns = [
   { key: "Player", label: "Player", className: "col-player" },
   { key: "Prop Type", label: "Prop Type", className: "col-prop" },
   { key: "Side", label: "Side", className: "col-side" },
-  { key: "Line", label: "Line", className: "col-line numeric" },
+  { key: "Line", label: "Line", className: "col-line numeric", numeric: true },
   { key: "Best Books", label: "Best Books", className: "col-books" },
-  { key: "Best Price", label: "Best Price", className: "col-price numeric strong" },
-  { key: "Market Width", label: "Market Width", className: "col-width numeric" },
-  { key: "Largest Discrepancy", label: "Largest Discrepancy", className: "col-disc numeric" },
-  { key: "Model Odds", label: "Model Odds", className: "col-model numeric muted" },
-  { key: "Edge%", label: "Edge%", className: "col-edge numeric muted" },
-  { key: "EV%", label: "EV%", className: "col-ev numeric muted" },
+  { key: "Best Price", label: "Best Price", className: "col-price numeric strong", numeric: true },
+  { key: "Market Width", label: "Market Width", className: "col-width numeric", numeric: true },
+  { key: "Largest Discrepancy", label: "Largest Discrepancy", className: "col-disc numeric", numeric: true },
+  { key: "Model Odds", label: "Model Odds", className: "col-model numeric muted", numeric: true },
+  { key: "Edge%", label: "Edge%", className: "col-edge numeric muted", numeric: true },
+  { key: "EV%", label: "EV%", className: "col-ev numeric muted", numeric: true },
 ];
 
 function formatDetails(details) {
@@ -26,100 +26,15 @@ function formatDetails(details) {
   });
 }
 
-function normalizeSortValue(value) {
-  if (value === null || value === undefined || value === "") return null;
-  if (typeof value === "number") return value;
-  if (typeof value === "string") {
-    const cleaned = value.replace(/[%+,]/g, "").trim();
-    const numeric = Number(cleaned);
-    if (!Number.isNaN(numeric) && cleaned !== "") return numeric;
-    return value.toLowerCase();
-  }
-  return String(value).toLowerCase();
-}
-
 function styleText() {
   return `
-    :root {
-      color-scheme: light;
-      --bg: #fffdf8;
-      --panel: #fbf7ef;
-      --panel-2: #fffdfa;
-      --border: #e6dcc8;
-      --header: #1c2b45;
-      --text: #1f1f1f;
-      --muted: #667085;
-      --accent: #102542;
-      --accent-soft: #e8eef7;
-      --row-hover: #f2efe7;
-      --modal-bg: rgba(16, 23, 38, 0.42);
-      --price: #183f76;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: transparent;
-      color: var(--text);
-      font-family: "Segoe UI", system-ui, sans-serif;
-    }
+    ${sharedStyles()}
     .board-shell {
       background: var(--panel-2);
       border: 1px solid var(--border);
       border-radius: 16px;
       overflow: hidden;
       box-shadow: 0 10px 30px rgba(16, 37, 66, 0.05);
-    }
-    .table-wrap {
-      max-height: 760px;
-      overflow: auto;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      table-layout: fixed;
-      font-size: 12px;
-    }
-    thead th {
-      position: sticky;
-      top: 0;
-      z-index: 2;
-      background: var(--header);
-      color: #f8f7f3;
-      font-size: 11px;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      text-align: left;
-      padding: 10px 12px;
-      border-bottom: 1px solid #30456c;
-      white-space: nowrap;
-      cursor: pointer;
-      user-select: none;
-    }
-    tbody td {
-      padding: 9px 12px;
-      border-bottom: 1px solid rgba(230, 220, 200, 0.85);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      vertical-align: middle;
-    }
-    tbody tr {
-      cursor: pointer;
-      background: transparent;
-      transition: background 120ms ease;
-    }
-    tbody tr:hover {
-      background: var(--row-hover);
-    }
-    tbody tr:nth-child(even) {
-      background: rgba(251, 247, 239, 0.7);
-    }
-    tbody tr:nth-child(even):hover {
-      background: var(--row-hover);
-    }
-    .numeric {
-      text-align: right;
-      font-variant-numeric: tabular-nums;
     }
     .strong {
       color: var(--price);
@@ -139,22 +54,6 @@ function styleText() {
     .col-width { width: 102px; }
     .col-disc { width: 140px; }
     .col-model, .col-edge, .col-ev { width: 84px; }
-    .empty {
-      padding: 26px 18px;
-      color: var(--muted);
-      font-size: 14px;
-    }
-    .header-label {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .header-sort {
-      font-size: 10px;
-      color: rgba(248, 247, 243, 0.78);
-      min-width: 8px;
-      text-align: center;
-    }
     .modal-layer {
       position: fixed;
       inset: 0;
@@ -243,10 +142,6 @@ function styleText() {
       color: var(--price);
       font-weight: 700;
     }
-    @media (max-width: 1100px) {
-      table { font-size: 11px; }
-      thead th, tbody td { padding-left: 10px; padding-right: 10px; }
-    }
   `;
 }
 
@@ -270,25 +165,10 @@ export function PropsBoard({ args }) {
     setSortState(initialSort);
   }, [initialSort?.column, initialSort?.ascending]);
 
-  const sortedRows = useMemo(() => {
-    const rows = [...boardRows];
-    const column = sortState?.column;
-    if (!column) return rows;
-    rows.sort((left, right) => {
-      const a = normalizeSortValue(left[column]);
-      const b = normalizeSortValue(right[column]);
-      if (a === null && b === null) return 0;
-      if (a === null) return 1;
-      if (b === null) return -1;
-      if (typeof a === "number" && typeof b === "number") {
-        return sortState.ascending ? a - b : b - a;
-      }
-      if (a < b) return sortState.ascending ? -1 : 1;
-      if (a > b) return sortState.ascending ? 1 : -1;
-      return 0;
-    });
-    return rows;
-  }, [boardRows, sortState]);
+  const sortedRows = useMemo(
+    () => sortRows(boardRows, sortState, (row, columnKey) => normalizeSortValue(row[columnKey])),
+    [boardRows, sortState],
+  );
 
   const selectedRow = useMemo(
     () => sortedRows.find((row) => row.row_id === selectedRowId) || null,
@@ -299,12 +179,7 @@ export function PropsBoard({ args }) {
     return formatDetails(detailLookup.get(selectedRowId) || []);
   }, [detailLookup, selectedRowId]);
 
-  useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      Streamlit.setFrameHeight(document.documentElement.scrollHeight);
-    }, 0);
-    return () => window.clearTimeout(timeout);
-  }, [boardRows.length, selectedRowId]);
+  useAutoHeight(boardRows.length, selectedRowId, sortState?.column, sortState?.ascending);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -338,14 +213,7 @@ export function PropsBoard({ args }) {
               <thead>
                 <tr>
                   {columns.map((column) => (
-                    <th key={column.key} className={column.className} onClick={() => toggleSort(column.key)}>
-                      <span className="header-label">
-                        {column.label}
-                        <span className="header-sort">
-                          {sortState?.column === column.key ? (sortState.ascending ? "▲" : "▼") : ""}
-                        </span>
-                      </span>
-                    </th>
+                    <HeaderCell key={column.key} column={column} sortState={sortState} onSort={() => toggleSort(column.key)} />
                   ))}
                 </tr>
               </thead>
@@ -408,3 +276,4 @@ export function PropsBoard({ args }) {
     </>
   );
 }
+

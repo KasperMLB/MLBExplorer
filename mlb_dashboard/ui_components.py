@@ -24,12 +24,20 @@ except ImportError:  # pragma: no cover
 
 PERCENT_COLUMNS = {
     "swstr_pct",
+    "called_strike_pct",
+    "csw_pct",
     "pulled_barrel_pct",
     "barrel_bbe_pct",
     "barrel_bip_pct",
+    "sweet_spot_pct",
     "fb_pct",
+    "ball_pct",
     "hard_hit_pct",
     "usage_pct",
+    "usage_rate",
+    "usage_rate_within_family",
+    "usage_rate_overall",
+    "prior_weight_share",
     "gb_pct",
     "All counts",
     "Early count",
@@ -40,13 +48,38 @@ PERCENT_COLUMNS = {
     "Pre two-strike",
     "Full count",
 }
-RATE_COLUMNS = {"xwoba", "xwoba_con", "avg_launch_angle", "avg_release_speed", "avg_spin_rate", "gb_fb_ratio", "matchup_score", "ceiling_score", "pitcher_score", "zone_fit_score"}
-LOWER_IS_BETTER = {"swstr_pct"}
+RATE_COLUMNS = {
+    "xwoba",
+    "xwoba_con",
+    "avg_launch_angle",
+    "avg_release_speed",
+    "avg_spin_rate",
+    "avg_velocity",
+    "avg_extension",
+    "avg_pfx_x",
+    "avg_pfx_z",
+    "avg_release_pos_x",
+    "avg_release_pos_z",
+    "avg_spin_axis",
+    "gb_fb_ratio",
+    "matchup_score",
+    "ceiling_score",
+    "pitcher_score",
+    "strikeout_score",
+    "zone_fit_score",
+    "siera",
+    "fit_score",
+}
+LOWER_IS_BETTER = {"swstr_pct", "siera"}
 HIGHER_IS_BETTER = {
+    "called_strike_pct",
+    "csw_pct",
     "pulled_barrel_pct",
     "barrel_bbe_pct",
     "barrel_bip_pct",
+    "sweet_spot_pct",
     "fb_pct",
+    "ball_pct",
     "hard_hit_pct",
     "usage_pct",
     "xwoba",
@@ -56,6 +89,7 @@ HIGHER_IS_BETTER = {
     "matchup_score",
     "ceiling_score",
     "zone_fit_score",
+    "strikeout_score",
     "gb_pct",
     "gb_fb_ratio",
 }
@@ -71,17 +105,35 @@ DISPLAY_LABELS = {
     "xwoba": "xwOBA",
     "xwoba_con": "xwOBAcon",
     "swstr_pct": "SwStr%",
+    "called_strike_pct": "CalledStrike%",
+    "csw_pct": "CSW%",
     "pulled_barrel_pct": "PulledBrl%",
     "barrel_bbe_pct": "Brl/BBE%",
     "barrel_bip_pct": "Brl/BIP%",
+    "sweet_spot_pct": "SweetSpot%",
     "fb_pct": "FB%",
+    "ball_pct": "Ball%",
+    "siera": "SIERA",
     "gb_pct": "GB%",
     "gb_fb_ratio": "GB/FB",
     "hard_hit_pct": "HH%",
     "avg_launch_angle": "LA",
     "avg_release_speed": "Velo",
     "avg_spin_rate": "Spin",
+    "avg_velocity": "Velo",
+    "avg_extension": "Ext",
+    "avg_pfx_x": "HB",
+    "avg_pfx_z": "IVB",
+    "avg_release_pos_x": "Rel X",
+    "avg_release_pos_z": "Rel Z",
+    "avg_spin_axis": "Axis",
     "usage_pct": "Usage%",
+    "weighted_sample_size": "Weighted Sample",
+    "sample_2026": "2026 Sample",
+    "sample_prior": "Prior Sample",
+    "weight_2026": "2026 Weight",
+    "weight_prior": "Prior Weight",
+    "prior_weight_share": "Prior Weight%",
     "pitch_name": "Pitch",
     "p_throws": "Throws",
     "likely_starter_score": "Likely",
@@ -89,6 +141,7 @@ DISPLAY_LABELS = {
     "ceiling_score": "Ceiling",
     "zone_fit_score": "Zone Fit",
     "pitcher_score": "Pitch Score",
+    "strikeout_score": "Strikeout Score",
     "player_name": "Player",
     "rolling_window": "Window",
     "games_in_window": "Games",
@@ -107,11 +160,12 @@ DISPLAY_LABELS = {
     "hr_allowed_rate": "HR Allowed%",
     "damage_allowed_rate": "Damage Allowed%",
     "xwoba_allowed": "xwOBA Allowed",
+    "fit_score": "Fit",
     "batter_id": "Batter",
     "pitcher_id": "Pitcher ID",
     "usage_rate": "Usage%",
 }
-INTEGER_COLUMNS = {"pitch_count", "bip", "likely_starter_score"}
+INTEGER_COLUMNS = {"pitch_count", "bip", "likely_starter_score", "sample_size", "sample_2026", "sample_prior"}
 
 SHORT_COLUMNS = {"team", "p_throws", "bip", "pitch_count", "likely_starter_score"}
 MEDIUM_COLUMNS = {
@@ -119,19 +173,32 @@ MEDIUM_COLUMNS = {
     "xwoba",
     "xwoba_con",
     "swstr_pct",
+    "called_strike_pct",
+    "csw_pct",
     "pulled_barrel_pct",
     "barrel_bbe_pct",
     "barrel_bip_pct",
+    "sweet_spot_pct",
     "fb_pct",
+    "ball_pct",
     "gb_pct",
     "hard_hit_pct",
     "avg_launch_angle",
     "avg_release_speed",
     "avg_spin_rate",
+    "avg_velocity",
+    "avg_extension",
+    "avg_pfx_x",
+    "avg_pfx_z",
     "usage_pct",
+    "usage_rate",
+    "usage_rate_within_family",
     "matchup_score",
     "ceiling_score",
     "pitcher_score",
+    "strikeout_score",
+    "weighted_sample_size",
+    "prior_weight_share",
     "whiff_rate",
     "ball_in_play_rate",
     "hit_rate",
@@ -150,14 +217,19 @@ PITCHER_SUMMARY_TABLE_COLUMNS = [
     "pitch_count",
     "bip",
     "xwoba",
+    "strikeout_score",
+    "called_strike_pct",
+    "csw_pct",
     "swstr_pct",
     "pulled_barrel_pct",
     "barrel_bip_pct",
+    "ball_pct",
+    "siera",
     "fb_pct",
     "hard_hit_pct",
     "avg_launch_angle",
 ]
-LONG_COLUMNS = {"hitter_name", "pitcher_name", "game", "pitch_name"}
+LONG_COLUMNS = {"hitter_name", "pitcher_name", "game", "pitch_name", "pitch_family"}
 
 ZONE_RECTANGLES = {
     11: (1, 0, 3, 1),
@@ -363,6 +435,57 @@ def _column_width(column: str, series: pd.Series) -> tuple[int, int, int]:
     return width, min_width, max_width
 
 
+def _react_column_payload(column: str, series: pd.Series) -> dict[str, object]:
+    header_name = DISPLAY_LABELS.get(column, column)
+    width, _, _ = _column_width(column, series)
+    kind = "text"
+    if column in LONG_COLUMNS:
+        kind = "long"
+    elif column in SHORT_COLUMNS:
+        kind = "short"
+    if column in PERCENT_COLUMNS or column in RATE_COLUMNS or column in INTEGER_COLUMNS:
+        kind = "numeric"
+    return {
+        "key": column,
+        "label": header_name,
+        "numeric": column in PERCENT_COLUMNS or column in RATE_COLUMNS or column in INTEGER_COLUMNS,
+        "heat": column in PERCENT_COLUMNS or column in RATE_COLUMNS,
+        "width": width,
+        "kind": kind,
+    }
+
+
+def _build_react_table_payload(
+    frame: pd.DataFrame,
+    lower_is_better: set[str] | None = None,
+    higher_is_better: set[str] | None = None,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    lower_set = lower_is_better or LOWER_IS_BETTER
+    higher_set = higher_is_better or HIGHER_IS_BETTER
+    columns = [_react_column_payload(column, frame[column]) for column in frame.columns]
+    rows: list[dict[str, object]] = []
+    for idx, (_, row) in enumerate(frame.iterrows()):
+        cells: dict[str, dict[str, object]] = {}
+        for column in frame.columns:
+            value = row[column]
+            background = None
+            if column in PERCENT_COLUMNS or column in RATE_COLUMNS:
+                background = _background_hex(
+                    column,
+                    value,
+                    frame[column],
+                    lower_is_better=lower_set,
+                    higher_is_better=higher_set,
+                )
+            cells[column] = {
+                "display": _format_value(column, value),
+                "sort": None if pd.isna(value) else value,
+                "background": background,
+            }
+        rows.append({"row_id": str(idx), "cells": cells})
+    return columns, rows
+
+
 def render_metric_grid(
     frame: pd.DataFrame,
     key: str,
@@ -370,6 +493,9 @@ def render_metric_grid(
     lower_is_better: set[str] | None = None,
     higher_is_better: set[str] | None = None,
     use_lightweight: bool = False,
+    use_react: bool = False,
+    title: str | None = None,
+    subtitle: str | None = None,
 ) -> pd.DataFrame:
     if frame.empty:
         st.info("No data available for this selection.")
@@ -547,29 +673,42 @@ def _draw_home_plate(draw: ImageDraw.ImageDraw, center_x: int, top_y: int, fill:
 def _build_zone_heatmap_image(title: str, subtitle: str, zone_map: pd.DataFrame, value_mode: str = "percent") -> bytes:
     if not HAS_PILLOW:
         raise RuntimeError("Pillow is required for heatmap rendering.")
-    font = ImageFont.load_default()
-    width = 620
-    height = 700
-    image = Image.new("RGB", (width, height), "#1f2d31")
+    width = 680
+    height = 760
+    image = Image.new("RGB", (width, height), "#15212a")
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((10, 10, width - 10, height - 10), radius=22, fill="#2c3f45", outline="#41565d", width=2)
-    draw.text((34, 28), title, fill="#f4f6f7", font=font)
-    draw.text((34, 50), subtitle, fill="#b8c4c8", font=font)
+    title_font = _load_font(28, bold=True)
+    subtitle_font = _load_font(16, bold=False)
+    legend_font = _load_font(14, bold=True)
+    zone_value_font = _load_font(28, bold=True)
+    zone_sample_font = _load_font(13, bold=True)
+    label_font = _load_font(13, bold=True)
 
-    legend_x = width - 112
-    legend_top = 118
-    legend_labels = [("Best", "#ef8d32"), ("", "#c39656"), ("", "#a8b0ad"), ("", "#79a7ca"), ("Worst", "#58a7e4")]
-    draw.text((legend_x, legend_top - 24), "Zone Score", fill="#d5dcde", font=font)
+    for y in range(height):
+        ratio = y / max(height - 1, 1)
+        row_color = _blend_color("#12202b", "#223746", ratio)
+        draw.line((0, y, width, y), fill=row_color, width=1)
+
+    draw.rounded_rectangle((12, 12, width - 12, height - 12), radius=28, fill="#223744", outline="#415765", width=2)
+    draw.rounded_rectangle((28, 24, width - 28, 106), radius=22, fill="#f6f1e5", outline="#ddcfb6", width=1)
+    _text(draw, (48, 38), title, font=title_font, fill="#15324d")
+    _text(draw, (48, 72), subtitle, font=subtitle_font, fill="#546574")
+
+    legend_left = width - 180
+    legend_top = 132
+    legend_right = width - 40
+    draw.rounded_rectangle((legend_left, legend_top, legend_right, legend_top + 168), radius=18, fill="#20323d", outline="#47606d", width=1)
+    _text(draw, (legend_left + 18, legend_top + 14), "Zone Score", font=legend_font, fill="#edf2f5")
+    legend_labels = [("Best", "#ef8d32"), ("Above Avg", "#c39656"), ("Neutral", "#a8b0ad"), ("Below Avg", "#79a7ca"), ("Worst", "#58a7e4")]
     for idx, (label, color) in enumerate(legend_labels):
-        y = legend_top + idx * 52
-        draw.rounded_rectangle((legend_x, y, legend_x + 36, y + 36), radius=7, fill=color)
-        if label:
-            draw.text((legend_x + 50, y + 8), label, fill="#f4f6f7", font=font)
+        y = legend_top + 44 + idx * 24
+        draw.rounded_rectangle((legend_left + 18, y, legend_left + 42, y + 16), radius=5, fill=color, outline="#dce4e8", width=1)
+        _text(draw, (legend_left + 54, y - 1), label, font=label_font, fill="#eef4f7")
 
-    grid_origin_x = 64
-    grid_origin_y = 110
-    unit = 86
-    gap = 6
+    grid_origin_x = 54
+    grid_origin_y = 136
+    unit = 90
+    gap = 8
     lookup = _zone_map_lookup(zone_map)
     zone_values = [value["zone_value"] for value in lookup.values() if value.get("zone_value") is not None and not pd.isna(value.get("zone_value"))]
     min_val = min(zone_values) if zone_values else 0.0
@@ -582,6 +721,18 @@ def _build_zone_heatmap_image(title: str, subtitle: str, zone_map: pd.DataFrame,
             return 0.5
         return (float(value) - min_val) / (max_val - min_val)
 
+    zone_panel_left = grid_origin_x - 16
+    zone_panel_top = grid_origin_y - 16
+    zone_panel_right = grid_origin_x + 5 * unit + 4 * gap + 16
+    zone_panel_bottom = grid_origin_y + 5 * unit + 4 * gap + 58
+    draw.rounded_rectangle(
+        (zone_panel_left, zone_panel_top, zone_panel_right, zone_panel_bottom),
+        radius=26,
+        fill="#1a2c37",
+        outline="#4b6672",
+        width=2,
+    )
+
     for zone, (grid_x, grid_y, span_x, span_y) in ZONE_RECTANGLES.items():
         x0 = grid_origin_x + grid_x * (unit + gap)
         y0 = grid_origin_y + grid_y * (unit + gap)
@@ -589,7 +740,8 @@ def _build_zone_heatmap_image(title: str, subtitle: str, zone_map: pd.DataFrame,
         y1 = y0 + span_y * unit + (span_y - 1) * gap
         zone_info = lookup.get(zone, {})
         color = _zone_heatmap_hex(zone_ratio(zone_info.get("zone_value")))
-        draw.rounded_rectangle((x0, y0, x1, y1), radius=10, fill=color, outline="#d5d8d9", width=2)
+        draw.rounded_rectangle((x0 + 2, y0 + 4, x1 + 2, y1 + 4), radius=12, fill="#0f1920")
+        draw.rounded_rectangle((x0, y0, x1, y1), radius=12, fill=color, outline="#f1f5f6", width=2)
         sample_size = zone_info.get("sample_size")
         display_value = zone_info.get("display_value")
         label = "-"
@@ -598,23 +750,24 @@ def _build_zone_heatmap_image(title: str, subtitle: str, zone_map: pd.DataFrame,
                 label = f"{float(display_value) * 100:.0f}"
             else:
                 label = f"{float(display_value) * 100:.0f}"
-        label_bbox = draw.textbbox((0, 0), label, font=font)
+        label_bbox = draw.textbbox((0, 0), label, font=zone_value_font)
         label_x = x0 + ((x1 - x0) - (label_bbox[2] - label_bbox[0])) / 2
-        label_y = y0 + ((y1 - y0) - (label_bbox[3] - label_bbox[1])) / 2 - 6
-        draw.text((label_x, label_y), label, fill="#111618", font=font)
+        label_y = y0 + ((y1 - y0) - (label_bbox[3] - label_bbox[1])) / 2 - 12
+        _text(draw, (int(label_x), int(label_y)), label, font=zone_value_font, fill="#0f171b")
         if sample_size is not None and not pd.isna(sample_size):
-            sample_text = f"{int(float(sample_size))}"
-            sample_bbox = draw.textbbox((0, 0), sample_text, font=font)
+            sample_text = f"{int(float(sample_size))} pitches"
+            sample_bbox = draw.textbbox((0, 0), sample_text, font=zone_sample_font)
             sample_x = x0 + ((x1 - x0) - (sample_bbox[2] - sample_bbox[0])) / 2
-            sample_y = label_y + 18
-            draw.text((sample_x, sample_y), sample_text, fill="#263338", font=font)
+            sample_y = label_y + 34
+            _text(draw, (int(sample_x), int(sample_y)), sample_text, font=zone_sample_font, fill="#22343b")
 
     strike_left = grid_origin_x + (unit + gap)
     strike_top = grid_origin_y + (unit + gap)
     strike_right = strike_left + 3 * unit + 2 * gap
     strike_bottom = strike_top + 3 * unit + 2 * gap
-    draw.rectangle((strike_left - 3, strike_top - 3, strike_right + 3, strike_bottom + 3), outline="#f3f7f8", width=3)
-    _draw_home_plate(draw, (strike_left + strike_right) // 2, strike_bottom + 32, fill="#d9dedf", outline="#f3f7f8")
+    draw.rounded_rectangle((strike_left - 6, strike_top - 6, strike_right + 6, strike_bottom + 6), radius=14, outline="#f4f7f8", width=4)
+    draw.rounded_rectangle((strike_left - 2, strike_top - 2, strike_right + 2, strike_bottom + 2), radius=10, outline="#8aa6b4", width=1)
+    _draw_home_plate(draw, (strike_left + strike_right) // 2, strike_bottom + 34, fill="#f2f5f6", outline="#d7e1e6")
 
     buffer = BytesIO()
     image.save(buffer, format="PNG")
@@ -989,7 +1142,7 @@ def _draw_matchup_board(
     board_height = 258
     _panel(draw, (left, top, left + width, top + board_height), fill=REPORT_PANEL_ALT)
     _text(draw, (left + 18, top + 16), "Best Matchups", title_font, REPORT_TEXT)
-    work = _filter_section_columns(frame.head(3), ["hitter_name", "team", "matchup_score", "xwoba", "swstr_pct", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle"])
+    work = _filter_section_columns(frame.head(3), ["hitter_name", "team", "matchup_score", "xwoba", "swstr_pct", "pulled_barrel_pct", "sweet_spot_pct", "hard_hit_pct", "avg_launch_angle"])
     card_top = top + 56
     card_height = 58
     for idx, (_, row) in enumerate(work.iterrows(), start=1):
@@ -1002,8 +1155,8 @@ def _draw_matchup_board(
             ("xwoba", "xwOBA"),
             ("swstr_pct", "SwStr%"),
             ("pulled_barrel_pct", "PulledBrl%"),
+            ("sweet_spot_pct", "SweetSpot%"),
             ("hard_hit_pct", "HH%"),
-            ("fb_pct", "FB%"),
             ("avg_launch_angle", "LA"),
         ]
         start_x = left + 250
