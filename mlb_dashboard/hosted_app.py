@@ -269,7 +269,7 @@ def _filter_hitters(
     roster_lookup = rosters.loc[rosters["team"] == team, ["player_id"]].dropna().drop_duplicates()
     roster_player_ids = pd.to_numeric(roster_lookup["player_id"], errors="coerce").dropna().astype(int)
     frame = hitters.loc[
-        hitters["split_key"] == split_key
+        (hitters["split_key"] == split_key)
         & (hitters["recent_window"] == recent_window)
         & (hitters["weighted_mode"] == weighted_mode)
     ].copy()
