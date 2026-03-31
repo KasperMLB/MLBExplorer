@@ -87,6 +87,10 @@ def _render_hosted_grid(
     )
 
 
+def _present_columns(frame: pd.DataFrame, columns: list[str]) -> list[str]:
+    return [column for column in columns if column in frame.columns]
+
+
 def _build_family_fit_board(
     hitters: pd.DataFrame,
     batter_family_zone_profiles: pd.DataFrame,
@@ -570,14 +574,18 @@ def main() -> None:
         st.info("No pitcher data available for this slate.")
     else:
         ranked_pitchers = add_pitcher_rank_score(all_pitchers)
-        _render_hosted_grid(
-            ranked_pitchers[TOP_PITCHER_COLUMNS].head(10),
-            key="top-slate-pitchers-hosted",
-            mobile_safe=mobile_safe,
-            height=320,
-            lower_is_better=PITCHER_LOWER_IS_BETTER,
-            higher_is_better=PITCHER_HIGHER_IS_BETTER,
-        )
+        pitcher_columns = _present_columns(ranked_pitchers, TOP_PITCHER_COLUMNS)
+        if pitcher_columns:
+            _render_hosted_grid(
+                ranked_pitchers[pitcher_columns].head(10),
+                key="top-slate-pitchers-hosted",
+                mobile_safe=mobile_safe,
+                height=320,
+                lower_is_better=PITCHER_LOWER_IS_BETTER,
+                higher_is_better=PITCHER_HIGHER_IS_BETTER,
+            )
+        else:
+            st.info("No pitcher table columns available for this slate.")
 
     st.divider()
     hitter_columns = hitter_columns_for_preset(hitter_preset)
@@ -612,7 +620,16 @@ def main() -> None:
             )
             if active_section == "Matchup":
                 st.markdown("#### Best Matchups")
-                best_matchups = _render_hosted_grid(best_matchups[BEST_MATCHUP_COLUMNS], key=f"best-hosted-{game['game_pk']}", mobile_safe=mobile_safe, height=170)
+                matchup_columns = _present_columns(best_matchups, BEST_MATCHUP_COLUMNS)
+                if matchup_columns:
+                    best_matchups = _render_hosted_grid(
+                        best_matchups[matchup_columns],
+                        key=f"best-hosted-{game['game_pk']}",
+                        mobile_safe=mobile_safe,
+                        height=170,
+                    )
+                else:
+                    st.info("No matchup rows available for this game.")
 
                 st.markdown("#### Pitchers")
                 pitcher_cols = st.columns(2)
