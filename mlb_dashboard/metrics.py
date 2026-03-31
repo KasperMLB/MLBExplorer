@@ -194,6 +194,9 @@ def likely_starter_scores(plate_appearance_history: pd.DataFrame, recent_days: i
     if plate_appearance_history.empty:
         return pd.DataFrame(columns=["batter", "likely_starter_score"])
     history = plate_appearance_history.copy()
+    history["batter"] = pd.to_numeric(history["batter"], errors="coerce")
+    history = history.loc[history["batter"].notna()].copy()
+    history["batter"] = history["batter"].astype(int)
     history["game_date"] = pd.to_datetime(history["game_date"])
     cutoff = history["game_date"].max() - pd.Timedelta(days=recent_days)
     recent = history.loc[history["game_date"] >= cutoff]

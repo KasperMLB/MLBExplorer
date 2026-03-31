@@ -122,6 +122,9 @@ def _weighted_denominator(work: pd.DataFrame, source_column: str, value_index: p
 
 def _aggregate_hitter_metrics(frame: pd.DataFrame, weighted_mode: str, year_weights: dict[int, float]) -> pd.DataFrame:
     work = frame.copy()
+    work["batter"] = pd.to_numeric(work["batter"], errors="coerce")
+    work = work.loc[work["batter"].notna()].copy()
+    work["batter"] = work["batter"].astype(int)
     work["metric_weight"] = apply_year_weights(work, year_weights) if weighted_mode == "weighted" else 1.0
     rows: list[dict] = []
     for batter, group in work.groupby(["batter"], sort=False):
