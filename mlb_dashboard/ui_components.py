@@ -620,6 +620,12 @@ def build_pitcher_summary_table(pitcher_summary_by_hand: pd.DataFrame) -> pd.Dat
         ("vs_rhh", "vs RHH"),
         ("vs_lhh", "vs LHH"),
     ]
+    if pitcher_summary_by_hand.empty or "batter_side_key" not in pitcher_summary_by_hand.columns:
+        for _, label in split_map:
+            row = {column: None for column in PITCHER_SUMMARY_TABLE_COLUMNS if column != "split_label"}
+            row["split_label"] = label
+            rows.append(row)
+        return pd.DataFrame(rows, columns=PITCHER_SUMMARY_TABLE_COLUMNS)
     for side_key, label in split_map:
         side_frame = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["batter_side_key"] == side_key].copy()
         if side_frame.empty:

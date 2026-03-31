@@ -326,18 +326,19 @@ def _render_pitcher_tab(
             lower_is_better=PITCHER_LOWER_IS_BETTER,
             higher_is_better=PITCHER_HIGHER_IS_BETTER,
         )
-        for side_key in BATTER_SIDE_LABELS:
-            summary_frame = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["batter_side_key"] == side_key]
-            if not summary_frame.empty:
-                summary_columns = _present_columns(summary_frame, PITCHER_SUMMARY_COLUMNS)
-                export_sections.append(
-                    {
-                        "title": f"{team_label} Summary {BATTER_SIDE_LABELS[side_key]}",
-                        "frame": summary_frame[summary_columns],
-                        "lower_is_better": PITCHER_LOWER_IS_BETTER,
-                        "higher_is_better": PITCHER_HIGHER_IS_BETTER,
-                    }
-                )
+        if "batter_side_key" in pitcher_summary_by_hand.columns:
+            for side_key in BATTER_SIDE_LABELS:
+                summary_frame = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["batter_side_key"] == side_key]
+                if not summary_frame.empty:
+                    summary_columns = _present_columns(summary_frame, PITCHER_SUMMARY_COLUMNS)
+                    export_sections.append(
+                        {
+                            "title": f"{team_label} Summary {BATTER_SIDE_LABELS[side_key]}",
+                            "frame": summary_frame[summary_columns],
+                            "lower_is_better": PITCHER_LOWER_IS_BETTER,
+                            "higher_is_better": PITCHER_HIGHER_IS_BETTER,
+                        }
+                    )
 
     with tab_arsenal:
         arsenal_tabs = st.tabs([BATTER_SIDE_LABELS[key] for key in BATTER_SIDE_LABELS])
@@ -406,17 +407,18 @@ def _build_pitcher_export_sections(
 ) -> list[dict]:
     export_sections: list[dict] = []
     for side_key, side_label in BATTER_SIDE_LABELS.items():
-        summary_frame = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["batter_side_key"] == side_key]
-        if not summary_frame.empty:
-            summary_columns = _present_columns(summary_frame, PITCHER_SUMMARY_COLUMNS)
-            export_sections.append(
-                {
-                    "title": f"{team_label} Summary {side_label}",
-                    "frame": summary_frame[summary_columns],
-                    "lower_is_better": PITCHER_LOWER_IS_BETTER,
-                    "higher_is_better": PITCHER_HIGHER_IS_BETTER,
-                }
-            )
+        if "batter_side_key" in pitcher_summary_by_hand.columns:
+            summary_frame = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["batter_side_key"] == side_key]
+            if not summary_frame.empty:
+                summary_columns = _present_columns(summary_frame, PITCHER_SUMMARY_COLUMNS)
+                export_sections.append(
+                    {
+                        "title": f"{team_label} Summary {side_label}",
+                        "frame": summary_frame[summary_columns],
+                        "lower_is_better": PITCHER_LOWER_IS_BETTER,
+                        "higher_is_better": PITCHER_HIGHER_IS_BETTER,
+                    }
+                )
 
         side_arsenal = sort_arsenal_frame(pitcher_arsenal) if side_key == "all" else sort_arsenal_frame(pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key])
         if not side_arsenal.empty:
