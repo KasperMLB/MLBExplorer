@@ -786,6 +786,10 @@ def build_metric_tables(raw_statcast: pd.DataFrame, config: AppConfig) -> tuple[
     usages_by_count: list[pd.DataFrame] = []
     max_date = raw_statcast["game_date"].max()
     starter_scores = likely_starter_scores(raw_statcast[["team", "batter", "game_pk", "at_bat_number", "game_date"]])
+    if "batter" in starter_scores.columns:
+        starter_scores["batter"] = pd.to_numeric(starter_scores["batter"], errors="coerce")
+        starter_scores = starter_scores.loc[starter_scores["batter"].notna()].copy()
+        starter_scores["batter"] = starter_scores["batter"].astype(int)
     for recent_window in DEFAULT_RECENT_WINDOWS:
         recent_cutoff = _window_cutoff(max_date, recent_window)
         window_frame = raw_statcast.loc[raw_statcast["game_date"] >= recent_cutoff]
@@ -794,6 +798,9 @@ def build_metric_tables(raw_statcast: pd.DataFrame, config: AppConfig) -> tuple[
             for weighted_mode in ("weighted", "unweighted"):
                 hitters_frame = _aggregate_hitter_metrics(split_frame, weighted_mode, config.year_weights)
                 if not hitters_frame.empty:
+                    hitters_frame["batter"] = pd.to_numeric(hitters_frame["batter"], errors="coerce")
+                    hitters_frame = hitters_frame.loc[hitters_frame["batter"].notna()].copy()
+                    hitters_frame["batter"] = hitters_frame["batter"].astype(int)
                     hitters_frame = hitters_frame.merge(starter_scores, on=["batter"], how="left")
                 hitters.append(_append_split_metadata(hitters_frame, split_key, recent_window, weighted_mode))
                 pitchers.append(_append_split_metadata(_aggregate_pitcher_metrics(split_frame, weighted_mode, config.year_weights), split_key, recent_window, weighted_mode))
