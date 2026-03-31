@@ -127,7 +127,7 @@ def _aggregate_hitter_metrics(frame: pd.DataFrame, weighted_mode: str, year_weig
     work["batter"] = work["batter"].astype(int)
     work["metric_weight"] = apply_year_weights(work, year_weights) if weighted_mode == "weighted" else 1.0
     rows: list[dict] = []
-    for batter, group in work.groupby(["batter"], sort=False):
+    for batter, group in work.groupby("batter", sort=False):
         latest_team = None
         if "game_date" in group.columns and "team" in group.columns:
             latest_rows = group.sort_values(["game_date"], ascending=[False], na_position="last")
@@ -829,8 +829,11 @@ def build_metric_tables(raw_statcast: pd.DataFrame, config: AppConfig) -> tuple[
                         weighted_mode,
                     )
                 )
+    hitter_metrics = pd.concat(hitters, ignore_index=True)
+    if raw_statcast["batter"].notna().any() and hitter_metrics.empty:
+        raise RuntimeError("Hitter metrics build produced zero rows despite non-empty batter data. Aborting build to avoid publishing empty hitter artifacts.")
     return (
-        pd.concat(hitters, ignore_index=True),
+        hitter_metrics,
         pd.concat(pitchers, ignore_index=True),
         pd.concat(pitcher_summaries_by_hand, ignore_index=True),
         pd.concat(arsenals, ignore_index=True),
