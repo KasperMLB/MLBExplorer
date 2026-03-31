@@ -407,21 +407,56 @@ def _create_tracking_tables(conn, config: AppConfig) -> None:
         "usage_pct": "FLOAT8",
     }
     conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_hitter_snapshot_table} ({', '.join(f'{name} {definition}' for name, definition in snapshot_columns.items())})")
+    _ensure_table_columns(conn, config.cockroach_hitter_snapshot_table, snapshot_columns)
     conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS hitter_model_snapshots_unique_idx ON {config.cockroach_hitter_snapshot_table} (slate_date, game_pk, batter_id, split_key, recent_window, weighted_mode)")
     conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_hitter_outcome_table} ({', '.join(f'{name} {definition}' for name, definition in outcome_columns.items())})")
+    _ensure_table_columns(conn, config.cockroach_hitter_outcome_table, outcome_columns)
     conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS hitter_game_outcomes_unique_idx ON {config.cockroach_hitter_outcome_table} (slate_date, game_pk, batter_id)")
     conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_hitter_board_table} ({', '.join(f'{name} {definition}' for name, definition in board_columns.items())})")
+    _ensure_table_columns(conn, config.cockroach_hitter_board_table, board_columns)
     conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS hitter_board_winners_unique_idx ON {config.cockroach_hitter_board_table} (slate_date, board_name, board_rank)")
     conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_pitcher_snapshot_table} ({', '.join(f'{name} {definition}' for name, definition in pitcher_snapshot_columns.items())})")
+    _ensure_table_columns(conn, config.cockroach_pitcher_snapshot_table, pitcher_snapshot_columns)
     conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS pitcher_model_snapshots_unique_idx ON {config.cockroach_pitcher_snapshot_table} (slate_date, game_pk, pitcher_id, split_key, recent_window, weighted_mode)")
     conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_pitcher_outcome_table} ({', '.join(f'{name} {definition}' for name, definition in pitcher_outcome_columns.items())})")
+    _ensure_table_columns(conn, config.cockroach_pitcher_outcome_table, pitcher_outcome_columns)
     conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS pitcher_game_outcomes_unique_idx ON {config.cockroach_pitcher_outcome_table} (slate_date, game_pk, pitcher_id)")
     conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_pitcher_board_table} ({', '.join(f'{name} {definition}' for name, definition in pitcher_board_columns.items())})")
+    _ensure_table_columns(conn, config.cockroach_pitcher_board_table, pitcher_board_columns)
     conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS pitcher_board_winners_unique_idx ON {config.cockroach_pitcher_board_table} (slate_date, board_name, board_rank)")
     conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_pitcher_arsenal_snapshot_table} ({', '.join(f'{name} {definition}' for name, definition in pitcher_arsenal_columns.items())})")
+    _ensure_table_columns(conn, config.cockroach_pitcher_arsenal_snapshot_table, pitcher_arsenal_columns)
     conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS pitcher_arsenal_snapshots_unique_idx ON {config.cockroach_pitcher_arsenal_snapshot_table} (slate_date, game_pk, pitcher_id, split_key, recent_window, weighted_mode, batter_side_key, pitch_name)")
     conn.execute(f"CREATE TABLE IF NOT EXISTS {config.cockroach_pitcher_count_snapshot_table} ({', '.join(f'{name} {definition}' for name, definition in pitcher_count_columns.items())})")
+    _ensure_table_columns(conn, config.cockroach_pitcher_count_snapshot_table, pitcher_count_columns)
     conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS pitcher_count_usage_snapshots_unique_idx ON {config.cockroach_pitcher_count_snapshot_table} (slate_date, game_pk, pitcher_id, split_key, recent_window, weighted_mode, batter_side_key, pitch_name, count_bucket)")
+
+
+def _table_parts(table_name: str) -> tuple[str, str]:
+    if "." in table_name:
+        schema_name, bare_name = table_name.split(".", 1)
+        return schema_name, bare_name
+    return "public", table_name
+
+
+def _ensure_table_columns(conn, table_name: str, column_definitions: dict[str, str]) -> None:
+    schema_name, bare_name = _table_parts(table_name)
+    existing = {
+        row[0]
+        for row in conn.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s
+            """,
+            (schema_name, bare_name),
+        ).fetchall()
+    }
+    for column_name, definition in column_definitions.items():
+        if column_name in existing:
+            continue
+        clean_definition = definition.replace("PRIMARY KEY", "").replace("NOT NULL", "").strip()
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} {clean_definition}")
 
 
 def _create_props_odds_table(conn, config: AppConfig) -> None:
