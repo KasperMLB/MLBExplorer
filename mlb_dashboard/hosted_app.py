@@ -329,10 +329,11 @@ def _render_pitcher_tab(
         for side_key in BATTER_SIDE_LABELS:
             summary_frame = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["batter_side_key"] == side_key]
             if not summary_frame.empty:
+                summary_columns = _present_columns(summary_frame, PITCHER_SUMMARY_COLUMNS)
                 export_sections.append(
                     {
                         "title": f"{team_label} Summary {BATTER_SIDE_LABELS[side_key]}",
-                        "frame": summary_frame[PITCHER_SUMMARY_COLUMNS],
+                        "frame": summary_frame[summary_columns],
                         "lower_is_better": PITCHER_LOWER_IS_BETTER,
                         "higher_is_better": PITCHER_HIGHER_IS_BETTER,
                     }
@@ -346,8 +347,9 @@ def _render_pitcher_tab(
                 if side_frame.empty:
                     st.info("No arsenal data available.")
                 else:
+                    arsenal_columns = _present_columns(side_frame, ARSENAL_COLUMNS)
                     arsenal_grid = _render_hosted_grid(
-                        side_frame[ARSENAL_COLUMNS],
+                        side_frame[arsenal_columns],
                         key=f"arsenal-{game_pk}-{team_label}-{side_key}",
                         mobile_safe=mobile_safe,
                         height=250,
@@ -357,7 +359,7 @@ def _render_pitcher_tab(
                     export_sections.append(
                         {
                             "title": f"{team_label} Arsenal {BATTER_SIDE_LABELS[side_key]}",
-                            "frame": arsenal_grid[ARSENAL_COLUMNS],
+                            "frame": arsenal_grid[_present_columns(arsenal_grid, ARSENAL_COLUMNS)],
                             "lower_is_better": {"hard_hit_pct", "xwoba_con"},
                             "higher_is_better": {"usage_pct", "swstr_pct", "avg_release_speed", "avg_spin_rate"},
                         }
@@ -376,8 +378,9 @@ def _render_pitcher_tab(
                 if count_frame.empty:
                     st.info("No count-state usage data available.")
                 else:
+                    count_columns = _present_columns(count_frame, COUNT_USAGE_COLUMNS)
                     count_grid = _render_hosted_grid(
-                        count_frame[COUNT_USAGE_COLUMNS],
+                        count_frame[count_columns],
                         key=f"count-{game_pk}-{team_label}-{side_key}",
                         mobile_safe=mobile_safe,
                         height=250,
@@ -386,7 +389,7 @@ def _render_pitcher_tab(
                     export_sections.append(
                         {
                             "title": f"{team_label} Count Usage {BATTER_SIDE_LABELS[side_key]}",
-                            "frame": count_grid[COUNT_USAGE_COLUMNS],
+                            "frame": count_grid[_present_columns(count_grid, COUNT_USAGE_COLUMNS)],
                             "higher_is_better": set(COUNT_BUCKET_ORDER),
                         }
                     )
@@ -405,10 +408,11 @@ def _build_pitcher_export_sections(
     for side_key, side_label in BATTER_SIDE_LABELS.items():
         summary_frame = pitcher_summary_by_hand.loc[pitcher_summary_by_hand["batter_side_key"] == side_key]
         if not summary_frame.empty:
+            summary_columns = _present_columns(summary_frame, PITCHER_SUMMARY_COLUMNS)
             export_sections.append(
                 {
                     "title": f"{team_label} Summary {side_label}",
-                    "frame": summary_frame[PITCHER_SUMMARY_COLUMNS],
+                    "frame": summary_frame[summary_columns],
                     "lower_is_better": PITCHER_LOWER_IS_BETTER,
                     "higher_is_better": PITCHER_HIGHER_IS_BETTER,
                 }
@@ -416,10 +420,11 @@ def _build_pitcher_export_sections(
 
         side_arsenal = sort_arsenal_frame(pitcher_arsenal) if side_key == "all" else sort_arsenal_frame(pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key])
         if not side_arsenal.empty:
+            arsenal_columns = _present_columns(side_arsenal, ARSENAL_COLUMNS)
             export_sections.append(
                 {
                     "title": f"{team_label} Arsenal {side_label}",
-                    "frame": side_arsenal[ARSENAL_COLUMNS],
+                    "frame": side_arsenal[arsenal_columns],
                     "lower_is_better": {"hard_hit_pct", "xwoba_con"},
                     "higher_is_better": {"usage_pct", "swstr_pct", "avg_release_speed", "avg_spin_rate"},
                 }
@@ -432,10 +437,11 @@ def _build_pitcher_export_sections(
             side_usage = pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key, ["pitch_name", "usage_pct"]]
         count_frame = pivot_count_usage(side_count, side_usage)
         if not count_frame.empty:
+            count_columns = _present_columns(count_frame, COUNT_USAGE_COLUMNS)
             export_sections.append(
                 {
                     "title": f"{team_label} Count Usage {side_label}",
-                    "frame": count_frame[COUNT_USAGE_COLUMNS],
+                    "frame": count_frame[count_columns],
                     "higher_is_better": set(COUNT_BUCKET_ORDER),
                 }
             )
