@@ -14,8 +14,8 @@ _component_func = components.declare_component("props_board_component", path=str
 def _records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     if frame.empty:
         return []
-    prepared = frame.where(pd.notna(frame), None).copy()
-    return prepared.to_dict("records")
+    prepared = frame.astype(object).where(pd.notna(frame), None).copy()
+    return _normalize_component_value(prepared.to_dict("records"))
 
 
 def _normalize_component_value(value: Any) -> Any:
@@ -83,7 +83,7 @@ def render_props_board(
     _component_func(
         boardRows=_records(board_rows),
         bookDetails=_records(book_details),
-        initialSort={"column": initial_sort_column, "ascending": initial_sort_ascending},
+        initialSort=_normalize_component_value({"column": initial_sort_column, "ascending": initial_sort_ascending}),
         default=0,
         height=height,
     )
