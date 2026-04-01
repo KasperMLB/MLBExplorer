@@ -9,6 +9,11 @@ from .config import AppConfig
 from .metrics import add_metric_flags
 
 try:
+    import certifi
+except ImportError:  # pragma: no cover
+    certifi = None
+
+try:
     import psycopg
 except ImportError:  # pragma: no cover
     psycopg = None
@@ -39,7 +44,7 @@ def _normalize_database_url(database_url: str) -> str:
     query = dict(query_pairs)
     sslmode = str(query.get("sslmode", "")).strip().lower()
     if sslmode in {"verify-ca", "verify-full", "require", "prefer"} and "sslrootcert" not in query:
-        query["sslrootcert"] = "system"
+        query["sslrootcert"] = certifi.where() if certifi is not None else "system"
     return urlunsplit((scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
 
 

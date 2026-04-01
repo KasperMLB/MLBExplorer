@@ -8,3 +8,4 @@ huggingface_hub>=0.30
 Pillow>=11.0
 streamlit-aggrid>=1.0.5
 psycopg[binary]>=3.2
+certifi>=2024.0.0
