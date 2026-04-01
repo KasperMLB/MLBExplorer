@@ -1853,6 +1853,23 @@ def _zip_export_slides(slides: list[bytes], base_filename: str, extension: str) 
     return buffer.getvalue()
 
 
+def _zip_full_slate_posters(bundles: list[dict], layout_mode: str) -> bytes:
+    buffer = BytesIO()
+    with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
+        for bundle in bundles:
+            png_slides = _build_export_bundle(
+                title=bundle["title"],
+                subtitle=bundle["subtitle"],
+                sections=bundle["sections"],
+                layout_mode=layout_mode,
+            )
+            base_name = str(bundle.get("safe_name") or bundle["title"]).replace(" ", "_").replace("/", "_")
+            for idx, slide_bytes in enumerate(png_slides, start=1):
+                suffix = f"-{idx}" if len(png_slides) > 1 else ""
+                archive.writestr(f"{base_name}{suffix}.png", slide_bytes)
+    return buffer.getvalue()
+
+
 def render_export_hub(key: str, title: str, export_options: dict[str, list[dict]]) -> None:
     if not export_options:
         return
@@ -1963,29 +1980,29 @@ def render_slate_export_controls(
     key: str,
     title: str,
     sections: list[dict],
-    full_slate_frame: pd.DataFrame | None = None,
+    full_slate_bundles: list[dict] | None = None,
     heading: str = "Export Top Matchups",
 ) -> None:
     has_sections = bool(sections)
-    has_full_slate = full_slate_frame is not None and not full_slate_frame.empty
+    has_full_slate = bool(full_slate_bundles)
     if not has_sections and not has_full_slate:
         return
 
     st.markdown(f"#### {heading}")
-    csv_bytes = None
-    safe_name = f"{key}-full_slate_full_game_compact.csv"
+    zip_bytes = None
+    safe_name = f"{key}-full_slate_compact_posters.zip"
     if has_full_slate:
-        csv_bytes = full_slate_frame.to_csv(index=False).encode("utf-8-sig")
+        zip_bytes = _zip_full_slate_posters(full_slate_bundles, "Compact single poster")
 
     if not HAS_PILLOW:
         if has_full_slate:
             st.download_button(
                 label="Export Full Slate",
-                data=csv_bytes,
+                data=zip_bytes,
                 file_name=safe_name,
-                mime="text/csv",
+                mime="application/zip",
                 use_container_width=True,
-                key=f"{key}-csv",
+                key=f"{key}-zip",
             )
         st.caption("Install `Pillow` to enable PNG/JPG export.")
         return
@@ -1994,11 +2011,11 @@ def render_slate_export_controls(
     if not has_sections:
         st.download_button(
             label="Export Full Slate",
-            data=csv_bytes,
+            data=zip_bytes,
             file_name=safe_name,
-            mime="text/csv",
+            mime="application/zip",
             use_container_width=True,
-            key=f"{key}-csv",
+            key=f"{key}-zip",
         )
         return
 
@@ -2015,11 +2032,11 @@ def render_slate_export_controls(
             with col2:
                 st.download_button(
                     label="Export Full Slate",
-                    data=csv_bytes,
+                    data=zip_bytes,
                     file_name=safe_name,
-                    mime="text/csv",
+                    mime="application/zip",
                     use_container_width=True,
-                    key=f"{key}-csv",
+                    key=f"{key}-zip",
                 )
         else:
             st.button(
@@ -2058,9 +2075,9 @@ def render_slate_export_controls(
         with columns[2]:
             st.download_button(
                 label="Export Full Slate",
-                data=csv_bytes,
+                data=zip_bytes,
                 file_name=safe_name,
-                mime="text/csv",
+                mime="application/zip",
                 use_container_width=True,
-                key=f"{key}-csv",
+                key=f"{key}-zip",
             )

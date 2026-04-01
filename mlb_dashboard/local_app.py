@@ -34,7 +34,7 @@ from .dashboard_views import (
     apply_roster_names,
     build_zone_overlay_map,
     build_best_matchups,
-    build_full_slate_export_frame,
+    build_full_slate_export_bundles,
     compute_family_fit_score,
     build_game_export_options,
     build_top_matchups_export_sections,
@@ -1136,7 +1136,7 @@ def _render_top_sections(
     pitchers_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]],
     hitter_preset: str,
     best_matchups_by_game: dict[int, pd.DataFrame] | None = None,
-    full_slate_export_frame: pd.DataFrame | None = None,
+    full_slate_export_bundles: list[dict] | None = None,
 ) -> None:
     hitter_rows: list[pd.DataFrame] = []
     pitcher_rows: list[pd.DataFrame] = []
@@ -1166,7 +1166,7 @@ def _render_top_sections(
             "top-matchups-export",
             "Top Matchups Export",
             export_sections,
-            full_slate_export_frame,
+            full_slate_export_bundles,
         )
         render_metric_grid(
             ranked_hitters[["game"] + [column for column in preset_columns if column in all_hitters.columns]].head(10),
@@ -1461,7 +1461,7 @@ def main() -> None:
             away_hitters=away_hitters,
             home_hitters=home_hitters,
         )
-    full_slate_export_frame = build_full_slate_export_frame(selected_games, export_options_by_game)
+    full_slate_export_bundles = build_full_slate_export_bundles(selected_games, export_options_by_game)
 
     _render_top_sections(
         selected_games,
@@ -1469,7 +1469,7 @@ def main() -> None:
         pitchers_by_game,
         hitter_preset,
         best_matchups_by_game,
-        full_slate_export_frame,
+        full_slate_export_bundles,
     )
     _render_perf(perf_events)
     st.divider()

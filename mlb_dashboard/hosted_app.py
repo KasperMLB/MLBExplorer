@@ -31,7 +31,7 @@ from .dashboard_views import (
     apply_roster_names,
     build_zone_overlay_map,
     build_best_matchups,
-    build_full_slate_export_frame,
+    build_full_slate_export_bundles,
     compute_family_fit_score,
     build_game_export_options,
     build_top_matchups_export_sections,
@@ -692,7 +692,7 @@ def main() -> None:
             away_hitters=away_hitters,
             home_hitters=home_hitters,
         )
-    full_slate_export_frame = build_full_slate_export_frame(selected_games, export_options_by_game)
+    full_slate_export_bundles = build_full_slate_export_bundles(selected_games, export_options_by_game)
 
     st.header("Top Slate Hitters")
     top_hitters_start = perf_counter()
@@ -707,7 +707,7 @@ def main() -> None:
             "top-matchups-export-hosted",
             "Top Matchups Export",
             export_sections,
-            full_slate_export_frame,
+            full_slate_export_bundles,
         )
         _render_hosted_grid(
             ranked_hitters[["game"] + [column for column in preset_columns if column in all_hitters.columns]].head(10),
