@@ -1133,6 +1133,22 @@ def _draw_graffiti_header(
     return header_box[3]
 
 
+def _draw_kasper_export_header(
+    draw: ImageDraw.ImageDraw,
+    width: int,
+    title: str,
+    subtitle: str,
+) -> int:
+    header_box = (20, 20, width - 20, 190)
+    _panel(draw, header_box, fill="#f5f7fa", radius=30)
+    draw.rounded_rectangle((40, 38, 252, 76), radius=16, fill=REPORT_ACCENT)
+    _text(draw, (58, 46), "KASPER", _load_font(22, bold=True), "#ffffff")
+    _text(draw, (48, 86), "KASPER SCOUTING REPORT", _load_font(44, bold=True), REPORT_TEXT)
+    _text(draw, (48, 134), title, _load_font(30, bold=True), REPORT_TEXT)
+    _text(draw, (48, 160), subtitle, _load_font(21, bold=True), REPORT_MUTED)
+    return header_box[3]
+
+
 def _text(
     draw: ImageDraw.ImageDraw,
     position: tuple[int, int],
@@ -1550,9 +1566,9 @@ def _build_top_matchups_report_image(title: str, subtitle: str, sections: list[d
     for section in sections:
         total_height += _export_section_height_estimate(section["title"], section["frame"], str(section.get("subtitle", "")))
 
-    image = Image.new("RGB", (width, total_height), GRAFFITI_BG)
+    image = Image.new("RGB", (width, total_height), REPORT_BG)
     draw = ImageDraw.Draw(image)
-    _draw_graffiti_header(draw, width, title, subtitle)
+    _draw_kasper_export_header(draw, width, title, subtitle)
 
     y = header_height + 8
     for section in sections:
@@ -1590,10 +1606,10 @@ def _draw_slate_summary_group(
         return top
 
     panel_height = _slate_group_height({**section, "sections": inner_sections})
-    _graffiti_panel(draw, (left, top, left + width, top + panel_height), fill=GRAFFITI_PANEL, radius=30)
+    _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL_ALT, radius=30)
     chip_width = min(480, width - 56)
-    draw.rounded_rectangle((left + 24, top + 16, left + 24 + chip_width, top + 62), radius=18, fill=GRAFFITI_TAG)
-    draw.rounded_rectangle((left + 34, top + 58, left + 210, top + 72), radius=7, fill=GRAFFITI_YELLOW)
+    draw.rounded_rectangle((left + 24, top + 16, left + 24 + chip_width, top + 62), radius=18, fill=REPORT_ACCENT)
+    draw.rounded_rectangle((left + 34, top + 58, left + 210, top + 72), radius=7, fill="#dbe6f3")
     _text(draw, (left + 42, top + 25), section["title"], _load_font(28, bold=True), "#ffffff")
     if section.get("subtitle"):
         _text(draw, (left + 28, top + 74), str(section["subtitle"]), _load_font(20, bold=True), REPORT_TEXT)
@@ -1626,12 +1642,12 @@ def _draw_top_slate_table_section(
     padding_y = 10
     title_block_height = 74 if subtitle else 54
     panel_height = title_block_height + header_height + row_height * max(len(frame), 1) + 24
-    _graffiti_panel(draw, (left, top, left + width, top + panel_height), fill=GRAFFITI_PANEL_ALT, radius=24)
+    _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL, radius=24)
     chip_width = min(360, width - 52)
-    draw.rounded_rectangle((left + 22, top + 14, left + 22 + chip_width, top + 52), radius=14, fill=GRAFFITI_TAG)
+    draw.rounded_rectangle((left + 22, top + 14, left + 22 + chip_width, top + 52), radius=14, fill=REPORT_ACCENT)
     _text(draw, (left + 36, top + 21), title, title_font, "#ffffff")
     if subtitle:
-        _text(draw, (left + 28, top + 54), subtitle, subtitle_font, REPORT_TEXT)
+        _text(draw, (left + 28, top + 54), subtitle, subtitle_font, REPORT_MUTED)
 
     if frame.empty:
         _text(draw, (left + 28, top + title_block_height), "No data available", subtitle_font, REPORT_MUTED)
@@ -1667,7 +1683,7 @@ def _draw_top_slate_table_section(
         for col_idx, value in enumerate(row):
             display_label = headers[col_idx]
             source_column = source_by_label.get(display_label, display_label)
-            fill = "#fffdf8" if row_idx % 2 else "#f8f3ea"
+            fill = "#ffffff" if row_idx % 2 else "#f7f9fc"
             if source_column in frame.columns and (source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS):
                 fill = _background_hex(
                     source_column,
@@ -1696,9 +1712,9 @@ def _build_slate_summary_report_image(title: str, subtitle: str, sections: list[
         else:
             total_height += _export_section_height_estimate(section["title"], section["frame"], str(section.get("subtitle", ""))) + 8
 
-    image = Image.new("RGB", (width, total_height), GRAFFITI_BG)
+    image = Image.new("RGB", (width, total_height), REPORT_BG)
     draw = ImageDraw.Draw(image)
-    _draw_graffiti_header(draw, width, title, subtitle)
+    _draw_kasper_export_header(draw, width, title, subtitle)
 
     y = header_height + 8
     for section in sections:
