@@ -209,33 +209,104 @@ def _prepare_pitcher_frame(snapshots: pd.DataFrame, outcomes: pd.DataFrame) -> p
     return frame
 
 
-def _graded_mask(frame: pd.DataFrame) -> pd.Series:
-    if frame.empty or "outcome_status" not in frame.columns:
-        return pd.Series(True, index=frame.index)
-    work = frame[["slate_date", "outcome_status", "outcome_complete"]].copy()
+def _legacy_stale_dates(frame: pd.DataFrame) -> set[pd.Timestamp]:
+    if frame.empty or "slate_date" not in frame.columns:
+        return set()
+    work = frame.copy()
     work["slate_date"] = pd.to_datetime(work["slate_date"], errors="coerce")
-    dates_with_explicit_status = set(work.loc[work["outcome_status"].notna(), "slate_date"].dropna().unique().tolist())
-    if not dates_with_explicit_status:
-        return pd.Series(True, index=frame.index)
-    mask = pd.Series(True, index=frame.index)
-    explicit_rows = frame["slate_date"].isin(dates_with_explicit_status)
-    mask.loc[explicit_rows] = frame.loc[explicit_rows, "outcome_complete"].fillna(False).astype(bool)
+    work = work.loc[work["slate_date"].notna()].copy()
+    if work.empty:
+        return set()
+    if "home_runs" in work.columns:
+        realized = pd.to_numeric(work.get("home_runs"), errors="coerce").fillna(0)
+    elif "strikeouts" in work.columns:
+        realized = pd.to_numeric(work.get("strikeouts"), errors="coerce").fillna(0)
+    else:
+        return set()
+    work["realized_total_value"] = realized
+    status_series = work.get("outcome_status", pd.Series(pd.NA, index=work.index, dtype="object"))
+    complete_series = work.get("outcome_complete", pd.Series(pd.NA, index=work.index, dtype="object"))
+    source_date = pd.to_datetime(work.get("source_max_event_date"), errors="coerce")
+    summary = (
+        pd.DataFrame(
+            {
+                "slate_date": work["slate_date"],
+                "status_null": status_series.isna(),
+                "complete_null": complete_series.isna(),
+                "source_null": source_date.isna(),
+                "realized_total_value": work["realized_total_value"],
+            }
+        )
+        .groupby("slate_date", as_index=False)
+        .agg(
+            all_status_null=("status_null", "all"),
+            all_complete_null=("complete_null", "all"),
+            all_source_null=("source_null", "all"),
+            realized_total=("realized_total_value", "sum"),
+        )
+    )
+    if summary.empty:
+        return set()
+    recent_cutoff = summary["slate_date"].max() - timedelta(days=14)
+    stale_dates = summary.loc[
+        summary["slate_date"].ge(recent_cutoff)
+        & summary["all_status_null"]
+        & summary["all_complete_null"]
+        & summary["all_source_null"]
+        & summary["realized_total"].eq(0),
+        "slate_date",
+    ]
+    return set(stale_dates.tolist())
+
+
+def _graded_mask(frame: pd.DataFrame) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index, dtype="bool")
+    work = frame.copy()
+    work["slate_date"] = pd.to_datetime(work["slate_date"], errors="coerce")
+    status_series = work.get("outcome_status", pd.Series(pd.NA, index=work.index, dtype="object"))
+    complete_series = work.get("outcome_complete", pd.Series(pd.NA, index=work.index, dtype="object"))
+    explicit_dates = set(work.loc[status_series.notna() | complete_series.notna(), "slate_date"].dropna().unique().tolist())
+    stale_dates = _legacy_stale_dates(work)
+    mask = pd.Series(True, index=frame.index, dtype="bool")
+    if stale_dates:
+        mask.loc[work["slate_date"].isin(stale_dates)] = False
+    if explicit_dates:
+        explicit_rows = work["slate_date"].isin(explicit_dates)
+        mask.loc[explicit_rows] = complete_series.loc[explicit_rows].fillna(False).astype(bool)
     return mask
 
 
 def _render_outcome_status(frame: pd.DataFrame, entity: str) -> pd.Series:
     graded_mask = _graded_mask(frame)
-    if frame.empty or "outcome_status" not in frame.columns:
+    if frame.empty:
         return graded_mask
-    explicit = frame.loc[frame["outcome_status"].notna(), ["slate_date", "outcome_status", "source_max_event_date"]].copy()
+    stale_dates = sorted(day.date() for day in _legacy_stale_dates(frame))
+    explicit = frame.loc[
+        frame.get("outcome_status", pd.Series(pd.NA, index=frame.index, dtype="object")).notna()
+        | frame.get("outcome_complete", pd.Series(pd.NA, index=frame.index, dtype="object")).notna(),
+        ["slate_date", "outcome_status", "source_max_event_date"],
+    ].copy()
+    label = "hitter" if entity == "Hitters" else "pitcher"
+    if stale_dates:
+        shown = ", ".join(day.isoformat() for day in stale_dates[:5])
+        if len(stale_dates) > 5:
+            shown += ", ..."
+        st.warning(
+            f"Some {label} outcome rows look stale from earlier builds and are excluded from summaries. "
+            f"Excluded legacy-stale dates: {shown}."
+        )
     if explicit.empty:
+        if not stale_dates:
+            graded_dates = frame.loc[graded_mask, "slate_date"].dropna().dt.date.nunique()
+            if graded_dates:
+                st.caption(f"Using graded results for {graded_dates} date(s) in this view.")
         return graded_mask
     explicit["slate_date"] = pd.to_datetime(explicit["slate_date"], errors="coerce")
     incomplete_dates = explicit.loc[explicit["outcome_status"].ne("complete"), "slate_date"].dropna().dt.date.drop_duplicates().tolist()
     if incomplete_dates:
         latest_source = pd.to_datetime(explicit["source_max_event_date"], errors="coerce").dropna()
         latest_text = latest_source.max().date().isoformat() if not latest_source.empty else "unknown"
-        label = "hitter" if entity == "Hitters" else "pitcher"
         shown = ", ".join(day.isoformat() for day in incomplete_dates[:5])
         if len(incomplete_dates) > 5:
             shown += ", ..."
@@ -243,7 +314,7 @@ def _render_outcome_status(frame: pd.DataFrame, entity: str) -> pd.Series:
             f"Some {label} outcomes are incomplete and excluded from summaries. "
             f"Incomplete dates: {shown}. Latest available live event date: {latest_text}."
         )
-    else:
+    elif not stale_dates:
         graded_dates = frame.loc[graded_mask, "slate_date"].dropna().dt.date.nunique()
         if graded_dates:
             st.caption(f"Using graded results for {graded_dates} date(s) in this view.")
