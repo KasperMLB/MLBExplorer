@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import pandas as pd
 
@@ -34,9 +34,13 @@ def _normalize_database_url(database_url: str) -> str:
     if not database_url:
         return database_url
     parsed = urlsplit(database_url)
-    if parsed.scheme == "cockroachdb":
-        return urlunsplit(("postgresql", parsed.netloc, parsed.path, parsed.query, parsed.fragment))
-    return database_url
+    scheme = "postgresql" if parsed.scheme == "cockroachdb" else parsed.scheme
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    query = dict(query_pairs)
+    sslmode = str(query.get("sslmode", "")).strip().lower()
+    if sslmode in {"verify-ca", "verify-full", "require", "prefer"} and "sslrootcert" not in query:
+        query["sslrootcert"] = "system"
+    return urlunsplit((scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
 
 
 def _normalize_live_pitch_mix(frame: pd.DataFrame) -> pd.DataFrame:
