@@ -1523,6 +1523,81 @@ def _build_top_matchups_report_image(title: str, subtitle: str, sections: list[d
     return buffer.getvalue()
 
 
+def _slate_group_height(section: dict) -> int:
+    inner_sections = section.get("sections", [])
+    if not inner_sections:
+        return 0
+    total = 112
+    for inner in inner_sections:
+        total += _export_section_height_estimate(inner["title"], inner["frame"], str(inner.get("subtitle", ""))) + 8
+    return total + 18
+
+
+def _draw_slate_summary_group(
+    draw: ImageDraw.ImageDraw,
+    top: int,
+    left: int,
+    width: int,
+    section: dict,
+    title_font: ImageFont.ImageFont,
+    body_font: ImageFont.ImageFont,
+) -> int:
+    inner_sections = [inner for inner in section.get("sections", []) if not inner.get("frame", pd.DataFrame()).empty]
+    if not inner_sections:
+        return top
+
+    panel_height = _slate_group_height({**section, "sections": inner_sections})
+    _panel(draw, (left, top, left + width, top + panel_height), fill="#f3f7fb", radius=28)
+    chip_width = min(420, width - 48)
+    draw.rounded_rectangle((left + 24, top + 18, left + 24 + chip_width, top + 66), radius=18, fill=REPORT_ACCENT)
+    _text(draw, (left + 42, top + 29), section["title"], _load_font(26, bold=True), "#ffffff")
+    if section.get("subtitle"):
+        _text(draw, (left + 28, top + 76), str(section["subtitle"]), _load_font(20, bold=True), REPORT_TEXT)
+
+    y = top + 108
+    for inner in inner_sections:
+        y = _draw_export_section(draw, y, left + 18, width - 36, inner, title_font, body_font) + 8
+    return top + panel_height
+
+
+def _build_slate_summary_report_image(title: str, subtitle: str, sections: list[dict]) -> bytes:
+    if not HAS_PILLOW:
+        raise RuntimeError("Pillow is required for PNG/JPG export.")
+    title_font = _load_font(38, bold=True)
+    subtitle_font = _load_font(22, bold=True)
+    section_title_font = _load_font(34, bold=True)
+    section_body_font = _load_font(24, bold=True)
+    width = 1320
+    header_height = 98
+    total_height = header_height + 24
+    for section in sections:
+        if section.get("section_type") == "slate_summary_group":
+            total_height += _slate_group_height(section) + 12
+        else:
+            total_height += _export_section_height_estimate(section["title"], section["frame"], str(section.get("subtitle", ""))) + 8
+
+    image = Image.new("RGB", (width, total_height), REPORT_BG)
+    draw = ImageDraw.Draw(image)
+    _panel(draw, (18, 18, width - 18, header_height), fill="#f5f7fa", radius=22)
+    _text(draw, (36, 26), "KASPER SCOUTING REPORT", _load_font(20, bold=True), REPORT_ACCENT)
+    _text(draw, (36, 46), title, title_font, REPORT_TEXT)
+    _text(draw, (36, 72), subtitle, subtitle_font, REPORT_TEXT)
+
+    y = header_height + 12
+    for section in sections:
+        if section.get("section_type") == "slate_summary_group":
+            y = _draw_slate_summary_group(draw, y, 12, width - 24, section, section_title_font, section_body_font) + 10
+            continue
+        if section["frame"].empty:
+            continue
+        y = _draw_export_section(draw, y, 12, width - 24, section, section_title_font, section_body_font) + 8
+
+    cropped = image.crop((0, 0, width, min(max(y + 18, 420), image.height)))
+    buffer = BytesIO()
+    cropped.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def _draw_export_section(
     draw: ImageDraw.ImageDraw,
     top: int,
@@ -1979,16 +2054,19 @@ def render_slate_export_hub(key: str, title: str, sections: list[dict], heading:
 def render_slate_export_controls(
     key: str,
     title: str,
-    sections: list[dict],
+    export_options: dict[str, list[dict]],
     full_slate_bundles: list[dict] | None = None,
     heading: str = "Export Top Matchups",
 ) -> None:
-    has_sections = bool(sections)
+    has_sections = any(bool(option_sections) for option_sections in export_options.values())
     has_full_slate = bool(full_slate_bundles)
     if not has_sections and not has_full_slate:
         return
 
     st.markdown(f"#### {heading}")
+    option_labels = [label for label, option_sections in export_options.items() if option_sections]
+    selected_option = st.selectbox("Slate export scope", option_labels, key=f"{key}-scope", label_visibility="collapsed") if option_labels else None
+    sections = export_options.get(selected_option, []) if selected_option else []
     zip_bytes = None
     safe_name = f"{key}-full_slate_compact_posters.zip"
     if has_full_slate:
@@ -2048,10 +2126,13 @@ def render_slate_export_controls(
         st.caption("Exports are generated on demand to keep the hosted app fast and stable.")
         return
 
-    subtitle = "Top matchup hitters by game | Generated from the Kasper matchup dashboard"
-    png_bytes = _build_top_matchups_report_image(title=title, subtitle=subtitle, sections=sections)
+    subtitle = f"{selected_option or 'Top Slate Hitters'} | Generated from the Kasper matchup dashboard"
+    if selected_option == "Both":
+        png_bytes = _build_slate_summary_report_image(title=title, subtitle=subtitle, sections=sections)
+    else:
+        png_bytes = _build_top_matchups_report_image(title=title, subtitle=subtitle, sections=sections)
     jpg_bytes = png_to_jpg_bytes(png_bytes)
-    image_safe_name = f"{key}-top_matchups"
+    image_safe_name = f"{key}-{(selected_option or 'top_slate_hitters').lower().replace(' ', '_')}"
     columns = st.columns(3 if has_full_slate else 2)
     with columns[0]:
         st.download_button(

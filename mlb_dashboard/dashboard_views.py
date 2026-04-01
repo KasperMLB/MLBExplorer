@@ -666,6 +666,60 @@ def build_top_matchups_export_sections(
     return sections
 
 
+def build_top_pitchers_export_sections(ranked_pitchers: pd.DataFrame) -> list[dict]:
+    if ranked_pitchers.empty:
+        return []
+    columns = [column for column in TOP_PITCHER_COLUMNS if column in ranked_pitchers.columns]
+    if not columns:
+        return []
+    return [
+        {
+            "title": "Top Slate Pitchers",
+            "subtitle": "Top projected arms across the slate",
+            "section_type": "top_slate_pitchers",
+            "frame": ranked_pitchers[columns].head(10).copy(),
+            "lower_is_better": PITCHER_LOWER_IS_BETTER,
+            "higher_is_better": PITCHER_HIGHER_IS_BETTER,
+        }
+    ]
+
+
+def build_slate_export_options(
+    selected_games: list[dict],
+    hitters_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]],
+    hitter_columns: list[str],
+    ranked_pitchers: pd.DataFrame,
+    best_matchups_by_game: dict[int, pd.DataFrame] | None = None,
+) -> dict[str, list[dict]]:
+    hitter_sections = build_top_matchups_export_sections(
+        selected_games,
+        hitters_by_game,
+        hitter_columns,
+        best_matchups_by_game,
+    )
+    pitcher_sections = build_top_pitchers_export_sections(ranked_pitchers)
+    return {
+        "Top Slate Hitters": hitter_sections,
+        "Top Slate Pitchers": pitcher_sections,
+        "Both": [
+            {
+                "title": "Top Slate Hitters",
+                "subtitle": "Best matchup bats across the slate",
+                "section_type": "slate_summary_group",
+                "sections": hitter_sections,
+            },
+            {
+                "title": "Top Slate Pitchers",
+                "subtitle": "Top projected arms across the slate",
+                "section_type": "slate_summary_group",
+                "sections": pitcher_sections,
+                "lower_is_better": PITCHER_LOWER_IS_BETTER,
+                "higher_is_better": PITCHER_HIGHER_IS_BETTER,
+            },
+        ],
+    }
+
+
 def sort_arsenal_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame

@@ -32,9 +32,9 @@ from .dashboard_views import (
     build_zone_overlay_map,
     build_best_matchups,
     build_full_slate_export_bundles,
+    build_slate_export_options,
     compute_family_fit_score,
     build_game_export_options,
-    build_top_matchups_export_sections,
     filter_excluded_pitchers_from_hitter_pool,
     apply_projected_lineup,
     hitter_columns_for_preset,
@@ -697,16 +697,24 @@ def main() -> None:
     st.header("Top Slate Hitters")
     top_hitters_start = perf_counter()
     all_hitters = pd.concat(hitter_rows, ignore_index=True, sort=False) if hitter_rows else pd.DataFrame()
+    all_pitchers = pd.concat(pitcher_rows, ignore_index=True, sort=False) if pitcher_rows else pd.DataFrame()
+    ranked_pitchers = add_pitcher_rank_score(all_pitchers) if not all_pitchers.empty else pd.DataFrame()
     if all_hitters.empty:
         st.info("No hitter data available for this slate.")
     else:
         preset_columns = hitter_columns_for_preset(hitter_preset)
         ranked_hitters = all_hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
-        export_sections = build_top_matchups_export_sections(selected_games, hitters_by_game, preset_columns, best_matchups_by_game)
+        export_options = build_slate_export_options(
+            selected_games,
+            hitters_by_game,
+            preset_columns,
+            ranked_pitchers,
+            best_matchups_by_game,
+        )
         render_slate_export_controls(
             "top-matchups-export-hosted",
             "Top Matchups Export",
-            export_sections,
+            export_options,
             full_slate_export_bundles,
         )
         _render_hosted_grid(
@@ -719,11 +727,9 @@ def main() -> None:
 
     st.header("Top Slate Pitchers")
     top_pitchers_start = perf_counter()
-    all_pitchers = pd.concat(pitcher_rows, ignore_index=True, sort=False) if pitcher_rows else pd.DataFrame()
     if all_pitchers.empty:
         st.info("No pitcher data available for this slate.")
     else:
-        ranked_pitchers = add_pitcher_rank_score(all_pitchers)
         pitcher_columns = _present_columns(ranked_pitchers, TOP_PITCHER_COLUMNS)
         if pitcher_columns:
             _render_hosted_grid(
