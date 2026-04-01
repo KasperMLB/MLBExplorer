@@ -1164,15 +1164,13 @@ def _render_top_sections(
         preset_columns = hitter_columns_for_preset(hitter_preset)
         ranked_hitters = all_hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
         export_options = build_slate_export_options(
-            selected_games,
-            hitters_by_game,
+            ranked_hitters,
             preset_columns,
             ranked_pitchers,
-            best_matchups_by_game,
         )
         render_slate_export_controls(
             "top-matchups-export",
-            "Top Matchups Export",
+            "Top Slate Export",
             export_options,
             full_slate_export_bundles,
         )

@@ -666,6 +666,22 @@ def build_top_matchups_export_sections(
     return sections
 
 
+def build_top_slate_hitters_export_sections(ranked_hitters: pd.DataFrame, hitter_columns: list[str]) -> list[dict]:
+    if ranked_hitters.empty:
+        return []
+    columns = ["game"] + [column for column in hitter_columns if column in ranked_hitters.columns]
+    if not columns:
+        return []
+    return [
+        {
+            "title": "Top Slate Hitters",
+            "subtitle": "Best bats across the full slate",
+            "section_type": "top_slate_hitters",
+            "frame": ranked_hitters[columns].head(10).copy(),
+        }
+    ]
+
+
 def build_top_pitchers_export_sections(ranked_pitchers: pd.DataFrame) -> list[dict]:
     if ranked_pitchers.empty:
         return []
@@ -685,18 +701,11 @@ def build_top_pitchers_export_sections(ranked_pitchers: pd.DataFrame) -> list[di
 
 
 def build_slate_export_options(
-    selected_games: list[dict],
-    hitters_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]],
+    ranked_hitters: pd.DataFrame,
     hitter_columns: list[str],
     ranked_pitchers: pd.DataFrame,
-    best_matchups_by_game: dict[int, pd.DataFrame] | None = None,
 ) -> dict[str, list[dict]]:
-    hitter_sections = build_top_matchups_export_sections(
-        selected_games,
-        hitters_by_game,
-        hitter_columns,
-        best_matchups_by_game,
-    )
+    hitter_sections = build_top_slate_hitters_export_sections(ranked_hitters, hitter_columns)
     pitcher_sections = build_top_pitchers_export_sections(ranked_pitchers)
     return {
         "Top Slate Hitters": hitter_sections,
@@ -704,7 +713,7 @@ def build_slate_export_options(
         "Both": [
             {
                 "title": "Top Slate Hitters",
-                "subtitle": "Best matchup bats across the slate",
+                "subtitle": "Best bats across the full slate",
                 "section_type": "slate_summary_group",
                 "sections": hitter_sections,
             },
