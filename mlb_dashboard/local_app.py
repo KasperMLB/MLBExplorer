@@ -1018,6 +1018,12 @@ def _render_pitcher_tab(
     pitcher_arsenal: pd.DataFrame,
     pitcher_by_hand: pd.DataFrame,
     pitcher_count_usage: pd.DataFrame,
+    pitcher_row: pd.DataFrame,
+    movement_arsenal: pd.DataFrame,
+    family_context: pd.DataFrame,
+    opposing_hitters: pd.DataFrame,
+    batter_family_zone_profiles: pd.DataFrame,
+    pitcher_family_zone_context: pd.DataFrame,
 ) -> tuple[list[dict], pd.DataFrame, pd.DataFrame, dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
     export_sections: list[dict] = []
     summary_all = pitcher_summary_by_hand.loc[
@@ -1072,7 +1078,7 @@ def _render_pitcher_tab(
 
     active_table = st.radio(
         "Pitcher Table",
-        ["Summary", "Arsenal", "Count Usage"],
+        ["Summary", "Arsenal", "Count Usage", "Pitch Shape"],
         horizontal=True,
         key=f"pitcher-table-{game_pk}-{team_label}",
         label_visibility="collapsed",
@@ -1114,7 +1120,7 @@ def _render_pitcher_tab(
                     use_lightweight=True,
                 )
                 hand_grids[active_side_key] = arsenal_grid
-        else:
+        elif active_table == "Count Usage":
             active_grid = count_grids[active_side_key]
             if active_grid.empty:
                 st.info("No count-state usage data available.")
@@ -1126,6 +1132,17 @@ def _render_pitcher_tab(
                     higher_is_better=set(COUNT_BUCKET_ORDER),
                     use_lightweight=True,
                 )
+    if active_table == "Pitch Shape":
+        _render_pitch_shape_context(
+            game_pk,
+            team_label,
+            pitcher_row,
+            movement_arsenal,
+            family_context,
+            opposing_hitters,
+            batter_family_zone_profiles,
+            pitcher_family_zone_context,
+        )
 
     return export_sections, summary_all, arsenal_grid, hand_grids, count_grids
 
@@ -1520,6 +1537,12 @@ def main() -> None:
                         away_arsenal,
                         away_by_hand,
                         away_count,
+                        away_pitcher,
+                        pitcher_movement_arsenal,
+                        pitcher_family_zone_context,
+                        home_hitters,
+                        batter_family_zone_profiles,
+                        pitcher_family_zone_context,
                     )
                 with pitcher_cols[1]:
                     st.markdown(f"##### {game['home_team']} starter")
@@ -1530,25 +1553,6 @@ def main() -> None:
                         home_arsenal,
                         home_by_hand,
                         home_count,
-                    )
-
-                st.markdown("#### Pitch Shape Context")
-                shape_cols = st.columns(2)
-                with shape_cols[0]:
-                    _render_pitch_shape_context(
-                        game["game_pk"],
-                        game["away_team"],
-                        away_pitcher,
-                        pitcher_movement_arsenal,
-                        pitcher_family_zone_context,
-                        home_hitters,
-                        batter_family_zone_profiles,
-                        pitcher_family_zone_context,
-                    )
-                with shape_cols[1]:
-                    _render_pitch_shape_context(
-                        game["game_pk"],
-                        game["home_team"],
                         home_pitcher,
                         pitcher_movement_arsenal,
                         pitcher_family_zone_context,

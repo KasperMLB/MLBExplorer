@@ -344,10 +344,16 @@ def _render_pitcher_tab(
     pitcher_arsenal: pd.DataFrame,
     pitcher_by_hand: pd.DataFrame,
     pitcher_count_usage: pd.DataFrame,
+    pitcher_row: pd.DataFrame,
+    movement_arsenal: pd.DataFrame,
+    family_context: pd.DataFrame,
+    opposing_hitters: pd.DataFrame,
+    batter_family_zone_profiles: pd.DataFrame,
+    pitcher_family_zone_context: pd.DataFrame,
     mobile_safe: bool,
 ) -> list[dict]:
     export_sections: list[dict] = []
-    tab_summary, tab_arsenal, tab_count = st.tabs(["Summary", "Arsenal", "Count Usage"])
+    tab_summary, tab_arsenal, tab_count, tab_shape = st.tabs(["Summary", "Arsenal", "Count Usage", "Pitch Shape"])
 
     with tab_summary:
         summary_table = build_pitcher_summary_table(pitcher_summary_by_hand)
@@ -437,6 +443,19 @@ def _render_pitcher_tab(
                             "higher_is_better": set(COUNT_BUCKET_ORDER),
                         }
                     )
+
+    with tab_shape:
+        _render_pitch_shape_context(
+            game_pk,
+            team_label,
+            pitcher_row,
+            movement_arsenal,
+            family_context,
+            opposing_hitters,
+            batter_family_zone_profiles,
+            pitcher_family_zone_context,
+            mobile_safe,
+        )
 
     return export_sections
 
@@ -798,6 +817,12 @@ def main() -> None:
                         away_arsenal,
                         away_by_hand,
                         away_count,
+                        away_pitcher,
+                        away_movement,
+                        away_family_context,
+                        home_hitters,
+                        batter_family_zone_profiles,
+                        filtered_family_context,
                         mobile_safe,
                     )
                 with pitcher_cols[1]:
@@ -809,27 +834,6 @@ def main() -> None:
                         home_arsenal,
                         home_by_hand,
                         home_count,
-                        mobile_safe,
-                    )
-
-                st.markdown("#### Pitch Shape Context")
-                shape_cols = st.columns(2)
-                with shape_cols[0]:
-                    _render_pitch_shape_context(
-                        game["game_pk"],
-                        game["away_team"],
-                        away_pitcher,
-                        away_movement,
-                        away_family_context,
-                        home_hitters,
-                        batter_family_zone_profiles,
-                        filtered_family_context,
-                        mobile_safe,
-                    )
-                with shape_cols[1]:
-                    _render_pitch_shape_context(
-                        game["game_pk"],
-                        game["home_team"],
                         home_pitcher,
                         home_movement,
                         home_family_context,
