@@ -5,7 +5,7 @@ import json
 import uuid
 import warnings
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -62,6 +62,12 @@ class BuildContext:
     csv_dir: Path
 
 
+OUTCOME_STATUS_COMPLETE = "complete"
+OUTCOME_STATUS_SOURCE_LAG = "source_lag"
+OUTCOME_STATUS_SOURCE_EMPTY = "source_empty"
+OUTCOME_STATUS_SOURCE_MISSING_ROWS = "source_missing_rows"
+
+
 def _csv_glob(csv_dir: Path) -> list[str]:
     return [str(path) for path in sorted(csv_dir.glob("statcast_*.csv")) if path.is_file()]
 
@@ -87,6 +93,105 @@ def _merge_historical_and_live(history: pd.DataFrame, live_payload: CockroachPay
     historical = history.loc[pd.to_numeric(history["game_year"], errors="coerce").fillna(0) != 2026].copy()
     combined = pd.concat([historical, live_payload.live_pitch_mix], ignore_index=True, sort=False)
     return combined
+
+
+def _live_source_max_event_date(live_payload: CockroachPayload) -> date | None:
+    if live_payload.live_pitch_mix.empty or "game_date" not in live_payload.live_pitch_mix.columns:
+        return None
+    max_date = pd.to_datetime(live_payload.live_pitch_mix["game_date"], errors="coerce").max()
+    return None if pd.isna(max_date) else max_date.date()
+
+
+def _build_live_tracking_health(
+    target_date: date,
+    schedule: list[dict],
+    live_payload: CockroachPayload,
+    source_table: str,
+) -> pd.DataFrame:
+    columns = [
+        "audit_date",
+        "live_rows",
+        "live_games",
+        "expected_games",
+        "has_live_data",
+        "is_target_date",
+        "source_table",
+        "source_max_event_date",
+        "lag_days",
+    ]
+    grouped = pd.DataFrame(columns=["audit_date", "live_rows", "live_games"])
+    if not live_payload.live_pitch_mix.empty and "game_date" in live_payload.live_pitch_mix.columns:
+        grouped = (
+            live_payload.live_pitch_mix.assign(
+                audit_date=pd.to_datetime(live_payload.live_pitch_mix["game_date"], errors="coerce").dt.date
+            )
+            .dropna(subset=["audit_date"])
+            .groupby("audit_date", as_index=False)
+            .agg(
+                live_rows=("game_pk", "size"),
+                live_games=("game_pk", "nunique"),
+            )
+        )
+    source_max_event_date = _live_source_max_event_date(live_payload)
+    lag_days = None if source_max_event_date is None else (target_date - source_max_event_date).days
+    start_date = target_date - pd.Timedelta(days=6)
+    rows: list[dict] = []
+    grouped_map = grouped.set_index("audit_date").to_dict("index") if not grouped.empty else {}
+    for day in pd.date_range(start=start_date, end=target_date, freq="D"):
+        audit_date = day.date()
+        observed = grouped_map.get(audit_date, {})
+        rows.append(
+            {
+                "audit_date": audit_date,
+                "live_rows": int(observed.get("live_rows", 0)),
+                "live_games": int(observed.get("live_games", 0)),
+                "expected_games": int(len(schedule)) if audit_date == target_date else pd.NA,
+                "has_live_data": bool(observed.get("live_rows", 0) > 0),
+                "is_target_date": audit_date == target_date,
+                "source_table": source_table,
+                "source_max_event_date": source_max_event_date,
+                "lag_days": lag_days,
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _empty_hitter_outcome_frame(snapshot_players: pd.DataFrame, target_date: date, status: str, source_max_event_date: date | None) -> pd.DataFrame:
+    empty = snapshot_players.copy()
+    empty["had_plate_appearance"] = pd.NA
+    empty["started"] = pd.NA
+    empty["plate_appearances"] = pd.NA
+    empty["hits"] = pd.NA
+    empty["home_runs"] = pd.NA
+    empty["total_bases"] = pd.NA
+    empty["runs"] = pd.NA
+    empty["rbi"] = pd.NA
+    empty["walks"] = pd.NA
+    empty["strikeouts"] = pd.NA
+    empty["outcome_complete"] = False
+    empty["outcome_status"] = status
+    empty["source_max_event_date"] = source_max_event_date
+    empty["last_updated_at"] = datetime.now(UTC)
+    return empty
+
+
+def _empty_pitcher_outcome_frame(snapshot_pitchers: pd.DataFrame, target_date: date, status: str, source_max_event_date: date | None) -> pd.DataFrame:
+    empty = snapshot_pitchers.copy()
+    empty["had_pitch"] = pd.NA
+    empty["started"] = pd.NA
+    empty["outs_recorded"] = pd.NA
+    empty["batters_faced"] = pd.NA
+    empty["hits_allowed"] = pd.NA
+    empty["home_runs_allowed"] = pd.NA
+    empty["runs_allowed"] = pd.NA
+    empty["earned_runs"] = pd.NA
+    empty["walks"] = pd.NA
+    empty["strikeouts"] = pd.NA
+    empty["outcome_complete"] = False
+    empty["outcome_status"] = status
+    empty["source_max_event_date"] = source_max_event_date
+    empty["last_updated_at"] = datetime.now(UTC)
+    return empty
 
 
 def _window_cutoff(max_date: pd.Timestamp, window: str) -> pd.Timestamp:
@@ -250,10 +355,26 @@ def _aggregate_pitcher_metrics(frame: pd.DataFrame, weighted_mode: str, year_wei
             .tail(1)
             .copy()
         )
+        two_strike_finish_chance = (
+            group.assign(two_strike_flag=pd.to_numeric(group["strikes"], errors="coerce").fillna(0).ge(2).astype(int))
+            .groupby(["game_pk", "at_bat_number"], as_index=False, sort=False)["two_strike_flag"]
+            .max()
+            .rename(columns={"two_strike_flag": "had_two_strike_finish_chance"})
+        )
+        pa_events = pa_events.merge(two_strike_finish_chance, on=["game_pk", "at_bat_number"], how="left")
+        pa_events["had_two_strike_finish_chance"] = pd.to_numeric(pa_events["had_two_strike_finish_chance"], errors="coerce").fillna(0).astype(int)
         pa_weight_sum = float(pa_events["metric_weight"].sum())
         event_text = pa_events["events"].fillna("").astype(str).str.lower()
         bb_type_text = pa_events["bb_type"].fillna("").astype(str).str.lower()
         strikeout_weight_sum = float((event_text.isin({"strikeout", "strikeout_double_play"}).astype(int) * pa_events["metric_weight"]).sum())
+        putaway_chance_weight_sum = float((pa_events["had_two_strike_finish_chance"].astype(int) * pa_events["metric_weight"]).sum())
+        putaway_strikeout_weight_sum = float(
+            (
+                event_text.isin({"strikeout", "strikeout_double_play"}).astype(int)
+                * pa_events["had_two_strike_finish_chance"].astype(int)
+                * pa_events["metric_weight"]
+            ).sum()
+        )
         walk_weight_sum = float((event_text.isin({"walk", "intent_walk", "intentional_walk"}).astype(int) * pa_events["metric_weight"]).sum())
         gb_minus_air_weight_sum = float(
             (
@@ -290,6 +411,7 @@ def _aggregate_pitcher_metrics(frame: pd.DataFrame, weighted_mode: str, year_wei
                 "called_strike_pct": called_strike_weight_sum / max(pitch_weight_sum, 1e-9),
                 "csw_pct": csw_weight_sum / max(pitch_weight_sum, 1e-9),
                 "ball_pct": ball_weight_sum / max(pitch_weight_sum, 1e-9),
+                "putaway_pct": putaway_strikeout_weight_sum / max(putaway_chance_weight_sum, 1e-9),
                 "siera": siera,
                 "barrel_bbe_pct": barrel_weight_sum / max(tracked_bbe_weight_sum, 1e-9),
                 "barrel_bip_pct": barrel_weight_sum / max(bip_weight_sum, 1e-9),
@@ -686,6 +808,7 @@ def _aggregate_weighted_pitcher_movement_arsenal(frame: pd.DataFrame) -> pd.Data
 
     weights = pd.to_numeric(work["context_weight"], errors="coerce").fillna(0.0)
     work["weighted_sample_size"] = weights
+    work["pitch_type_group"] = work.get("pitch_type", pd.Series(index=work.index, dtype="object")).fillna(work["pitch_name"])
     for column in [
         "release_speed",
         "release_spin_rate",
@@ -701,7 +824,7 @@ def _aggregate_weighted_pitcher_movement_arsenal(frame: pd.DataFrame) -> pd.Data
         work[f"{column}_denom"] = value_denom
 
     grouped = (
-        work.groupby(["pitcher_id", "pitcher_name", "p_throws", "pitch_name", "pitch_type", "pitch_family"], as_index=False)
+        work.groupby(["pitcher_id", "pitcher_name", "p_throws", "pitch_name", "pitch_type_group", "pitch_family"], as_index=False)
         .agg(
             sample_size=("pitcher_id", "size"),
             weighted_sample_size=("weighted_sample_size", "sum"),
@@ -727,6 +850,7 @@ def _aggregate_weighted_pitcher_movement_arsenal(frame: pd.DataFrame) -> pd.Data
             spin_axis_denom=("spin_axis_denom", "sum"),
         )
     )
+    grouped = grouped.rename(columns={"pitch_type_group": "pitch_type"})
     totals = grouped.groupby("pitcher_id")["weighted_sample_size"].transform("sum")
     grouped["prior_weight_share"] = grouped["weight_prior"] / grouped["weighted_sample_size"].where(grouped["weighted_sample_size"] != 0)
     grouped["usage_rate"] = grouped["weighted_sample_size"] / totals.where(totals != 0)
@@ -769,12 +893,128 @@ def _aggregate_weighted_pitcher_movement_arsenal(frame: pd.DataFrame) -> pd.Data
 def build_movement_context_tables(
     live_payload: CockroachPayload,
     config: AppConfig,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     source = _prepare_weighted_pitch_context_source(live_payload, config)
     pitcher_family_zone_context = _aggregate_weighted_pitcher_family_zone_profiles(source)
     pitcher_movement_arsenal = _aggregate_weighted_pitcher_movement_arsenal(source)
     batter_family_zone_profiles = live_payload.batter_family_zone_profiles.copy()
-    return pitcher_family_zone_context, pitcher_movement_arsenal, batter_family_zone_profiles
+    return pitcher_family_zone_context, pitcher_movement_arsenal, batter_family_zone_profiles, source
+
+
+def _pitch_shape_diagnostics(
+    schedule: list[dict],
+    live_payload: CockroachPayload,
+    source: pd.DataFrame,
+    pitcher_family_zone_context: pd.DataFrame,
+    pitcher_movement_arsenal: pd.DataFrame,
+) -> pd.DataFrame:
+    probable_rows: list[dict] = []
+    for game in schedule:
+        for side in ("away", "home"):
+            probable_rows.append(
+                {
+                    "team": game.get(f"{side}_team"),
+                    "pitcher_id": game.get(f"{side}_probable_pitcher_id"),
+                    "pitcher_name": game.get(f"{side}_probable_pitcher_name"),
+                    "opponent": game.get("home_team") if side == "away" else game.get("away_team"),
+                    "game_pk": game.get("game_pk"),
+                }
+            )
+    probable = pd.DataFrame(probable_rows).dropna(subset=["pitcher_id"]).drop_duplicates(subset=["pitcher_id"]).copy()
+    if probable.empty:
+        return probable
+    probable["pitcher_id"] = pd.to_numeric(probable["pitcher_id"], errors="coerce").astype("Int64")
+
+    live_counts = (
+        live_payload.live_pitch_mix.assign(pitcher_id=pd.to_numeric(live_payload.live_pitch_mix.get("pitcher"), errors="coerce"))
+        .groupby("pitcher_id", as_index=False)
+        .agg(live_2026_rows=("pitcher_id", "size"))
+        if not live_payload.live_pitch_mix.empty
+        else pd.DataFrame(columns=["pitcher_id", "live_2026_rows"])
+    )
+    baseline_counts = (
+        live_payload.pitcher_baseline_event_rows.assign(pitcher_id=pd.to_numeric(live_payload.pitcher_baseline_event_rows.get("pitcher"), errors="coerce"))
+        .groupby("pitcher_id", as_index=False)
+        .agg(
+            baseline_rows=("pitcher_id", "size"),
+            baseline_pitch_type_present=("pitch_type", lambda s: int(pd.Series(s).notna().sum())),
+            baseline_location_present=("plate_x", lambda s: int(pd.Series(s).notna().sum())),
+            baseline_location_z_present=("plate_z", lambda s: int(pd.Series(s).notna().sum())),
+            baseline_movement_present=("release_speed", lambda s: int(pd.to_numeric(s, errors="coerce").notna().sum())),
+        )
+        if not live_payload.pitcher_baseline_event_rows.empty
+        else pd.DataFrame(
+            columns=[
+                "pitcher_id",
+                "baseline_rows",
+                "baseline_pitch_type_present",
+                "baseline_location_present",
+                "baseline_location_z_present",
+                "baseline_movement_present",
+            ]
+        )
+    )
+    source_counts = (
+        source.groupby("pitcher_id", as_index=False).agg(
+            prepared_rows=("pitcher_id", "size"),
+            prepared_pitch_type_present=("pitch_type", lambda s: int(pd.Series(s).notna().sum())),
+            prepared_zone_bucket_present=("zone_bucket", lambda s: int(pd.Series(s).notna().sum())),
+        )
+        if not source.empty
+        else pd.DataFrame(columns=["pitcher_id", "prepared_rows", "prepared_pitch_type_present", "prepared_zone_bucket_present"])
+    )
+    movement_counts = (
+        pitcher_movement_arsenal.groupby("pitcher_id", as_index=False).agg(movement_rows=("pitcher_id", "size"))
+        if not pitcher_movement_arsenal.empty
+        else pd.DataFrame(columns=["pitcher_id", "movement_rows"])
+    )
+    family_counts = (
+        pitcher_family_zone_context.groupby("pitcher_id", as_index=False).agg(family_rows=("pitcher_id", "size"))
+        if not pitcher_family_zone_context.empty
+        else pd.DataFrame(columns=["pitcher_id", "family_rows"])
+    )
+
+    diagnostics = probable.merge(live_counts, on="pitcher_id", how="left")
+    diagnostics = diagnostics.merge(baseline_counts, on="pitcher_id", how="left")
+    diagnostics = diagnostics.merge(source_counts, on="pitcher_id", how="left")
+    diagnostics = diagnostics.merge(movement_counts, on="pitcher_id", how="left")
+    diagnostics = diagnostics.merge(family_counts, on="pitcher_id", how="left")
+    fill_zero_columns = [
+        "live_2026_rows",
+        "baseline_rows",
+        "baseline_pitch_type_present",
+        "baseline_location_present",
+        "baseline_location_z_present",
+        "baseline_movement_present",
+        "prepared_rows",
+        "prepared_pitch_type_present",
+        "prepared_zone_bucket_present",
+        "movement_rows",
+        "family_rows",
+    ]
+    for column in fill_zero_columns:
+        diagnostics[column] = pd.to_numeric(diagnostics.get(column), errors="coerce").fillna(0).astype(int)
+
+    def root_causes(row: pd.Series) -> str:
+        reasons: list[str] = []
+        if row["live_2026_rows"] == 0:
+            reasons.append("no_2026_live_rows")
+        if row["baseline_rows"] == 0:
+            reasons.append("no_baseline_rows")
+        if row["baseline_rows"] > 0 and row["prepared_pitch_type_present"] == 0:
+            reasons.append("missing_pitch_type")
+        if row["baseline_rows"] > 0 and row["prepared_zone_bucket_present"] == 0:
+            reasons.append("missing_usable_location")
+        if row["baseline_rows"] > 0 and row["baseline_movement_present"] == 0:
+            reasons.append("missing_movement_fields")
+        if row["movement_rows"] == 0:
+            reasons.append("no_movement_output")
+        if row["family_rows"] == 0:
+            reasons.append("no_family_output")
+        return ",".join(reasons)
+
+    diagnostics["root_causes"] = diagnostics.apply(root_causes, axis=1)
+    return diagnostics
 
 
 def build_metric_tables(raw_statcast: pd.DataFrame, config: AppConfig) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -860,6 +1100,8 @@ def _save_daily_files(
     pitcher_family_zone_context: pd.DataFrame,
     pitcher_movement_arsenal: pd.DataFrame,
     hitter_pitcher_exclusions: pd.DataFrame,
+    pitch_shape_diagnostics: pd.DataFrame,
+    tracking_health: pd.DataFrame,
 ) -> None:
     target_dir = context.config.daily_dir / context.target_date.isoformat()
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -894,16 +1136,20 @@ def _save_daily_files(
         target_dir / "daily_pitcher_movement_arsenal.parquet",
         index=False,
     )
+    pitch_shape_diagnostics.to_parquet(target_dir / "pitch_shape_diagnostics.parquet", index=False)
+    tracking_health.to_parquet(target_dir / "tracking_health.parquet", index=False)
     hitter_metrics.to_parquet(target_dir / "daily_hitter_metrics.parquet", index=False)
     hitter_pitcher_exclusions.to_parquet(target_dir / "hitter_pitcher_exclusions.parquet", index=False)
     metadata = {
-        "build_timestamp_utc": datetime.utcnow().isoformat(),
+        "build_timestamp_utc": datetime.now(UTC).isoformat(),
         "target_date": context.target_date.isoformat(),
         "metrics_version": context.config.metrics_version,
         "split_keys": list(DEFAULT_SPLITS),
         "recent_windows": list(DEFAULT_RECENT_WINDOWS),
         "pitch_groups": DEFAULT_PITCH_GROUPS,
         "movement_year_weights": context.config.movement_year_weights,
+        "live_source_table": context.config.cockroach_live_pitch_mix_table,
+        "live_source_max_event_date": None if tracking_health.empty else pd.to_datetime(tracking_health["source_max_event_date"], errors="coerce").dropna().max().date().isoformat() if pd.to_datetime(tracking_health["source_max_event_date"], errors="coerce").notna().any() else None,
     }
     (target_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
@@ -1184,39 +1430,23 @@ def _build_hitter_board_winners(snapshots: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(boards, ignore_index=True) if boards else pd.DataFrame(columns=["slate_date", "game_pk", "batter_id", "hitter_name", "team", "board_name", "board_rank", "board_score", "source_metric"])
 
 
-def _build_hitter_game_outcomes(target_date: date, raw_statcast: pd.DataFrame, snapshots: pd.DataFrame) -> pd.DataFrame:
+def _build_hitter_game_outcomes(
+    target_date: date,
+    raw_statcast: pd.DataFrame,
+    snapshots: pd.DataFrame,
+    source_max_event_date: date | None,
+) -> pd.DataFrame:
     if snapshots.empty:
-        return pd.DataFrame(columns=["slate_date", "game_pk", "team", "batter_id", "hitter_name", "had_plate_appearance", "started", "plate_appearances", "hits", "home_runs", "total_bases", "runs", "rbi", "walks", "strikeouts", "last_updated_at"])
+        return pd.DataFrame(columns=["slate_date", "game_pk", "team", "batter_id", "hitter_name", "had_plate_appearance", "started", "plate_appearances", "hits", "home_runs", "total_bases", "runs", "rbi", "walks", "strikeouts", "outcome_complete", "outcome_status", "source_max_event_date", "last_updated_at"])
     snapshot_players = snapshots[["slate_date", "game_pk", "team", "batter_id", "hitter_name"]].drop_duplicates(["slate_date", "game_pk", "batter_id"]).copy()
     day_frame = raw_statcast.loc[pd.to_datetime(raw_statcast["game_date"]).dt.date == target_date].copy()
     if day_frame.empty:
-        empty = snapshot_players.copy()
-        empty["had_plate_appearance"] = False
-        empty["started"] = False
-        empty["plate_appearances"] = 0
-        empty["hits"] = 0
-        empty["home_runs"] = 0
-        empty["total_bases"] = 0
-        empty["runs"] = 0
-        empty["rbi"] = 0
-        empty["walks"] = 0
-        empty["strikeouts"] = 0
-        empty["last_updated_at"] = datetime.utcnow()
+        status = OUTCOME_STATUS_SOURCE_LAG if source_max_event_date is not None and source_max_event_date < target_date else OUTCOME_STATUS_SOURCE_EMPTY
+        empty = _empty_hitter_outcome_frame(snapshot_players, target_date, status, source_max_event_date)
         return empty
     day_frame = day_frame.loc[day_frame["game_pk"].isin(snapshots["game_pk"].unique()) & day_frame["batter"].isin(snapshots["batter_id"].unique())].copy()
     if day_frame.empty:
-        empty = snapshot_players.copy()
-        empty["had_plate_appearance"] = False
-        empty["started"] = False
-        empty["plate_appearances"] = 0
-        empty["hits"] = 0
-        empty["home_runs"] = 0
-        empty["total_bases"] = 0
-        empty["runs"] = 0
-        empty["rbi"] = 0
-        empty["walks"] = 0
-        empty["strikeouts"] = 0
-        empty["last_updated_at"] = datetime.utcnow()
+        empty = _empty_hitter_outcome_frame(snapshot_players, target_date, OUTCOME_STATUS_SOURCE_MISSING_ROWS, source_max_event_date)
         return empty
 
     pa_events = (
@@ -1255,7 +1485,10 @@ def _build_hitter_game_outcomes(target_date: date, raw_statcast: pd.DataFrame, s
     outcomes["slate_date"] = target_date
     outcomes["had_plate_appearance"] = outcomes["plate_appearances"].gt(0)
     outcomes["started"] = outcomes["had_plate_appearance"]
-    outcomes["last_updated_at"] = datetime.utcnow()
+    outcomes["outcome_complete"] = True
+    outcomes["outcome_status"] = OUTCOME_STATUS_COMPLETE
+    outcomes["source_max_event_date"] = source_max_event_date
+    outcomes["last_updated_at"] = datetime.now(UTC)
     outcomes = outcomes.rename(columns={"batter": "batter_id"})
     outcomes = outcomes[
         [
@@ -1286,7 +1519,10 @@ def _build_hitter_game_outcomes(target_date: date, raw_statcast: pd.DataFrame, s
         full_outcomes[column] = pd.to_numeric(full_outcomes[column], errors="coerce").fillna(0).astype(int)
     full_outcomes["had_plate_appearance"] = full_outcomes["had_plate_appearance"].fillna(False)
     full_outcomes["started"] = full_outcomes["started"].fillna(False)
-    full_outcomes["last_updated_at"] = full_outcomes["last_updated_at"].fillna(datetime.utcnow())
+    full_outcomes["outcome_complete"] = full_outcomes["outcome_complete"].fillna(True)
+    full_outcomes["outcome_status"] = full_outcomes["outcome_status"].fillna(OUTCOME_STATUS_COMPLETE)
+    full_outcomes["source_max_event_date"] = full_outcomes["source_max_event_date"].fillna(source_max_event_date)
+    full_outcomes["last_updated_at"] = full_outcomes["last_updated_at"].fillna(datetime.now(UTC))
     return full_outcomes[
         [
             "slate_date",
@@ -1304,6 +1540,9 @@ def _build_hitter_game_outcomes(target_date: date, raw_statcast: pd.DataFrame, s
             "rbi",
             "walks",
             "strikeouts",
+            "outcome_complete",
+            "outcome_status",
+            "source_max_event_date",
             "last_updated_at",
         ]
     ]
@@ -1406,6 +1645,7 @@ def _build_pitcher_tracking_snapshots(
                     "called_strike_pct",
                     "csw_pct",
                     "swstr_pct",
+                    "putaway_pct",
                     "ball_pct",
                     "siera",
                     "barrel_bbe_pct",
@@ -1521,39 +1761,23 @@ def _build_pitcher_board_winners(snapshots: pd.DataFrame) -> pd.DataFrame:
     return ranked[["slate_date", "game_pk", "pitcher_id", "pitcher_name", "team", "board_name", "board_rank", "board_score", "source_metric"]]
 
 
-def _build_pitcher_game_outcomes(target_date: date, raw_statcast: pd.DataFrame, snapshots: pd.DataFrame) -> pd.DataFrame:
+def _build_pitcher_game_outcomes(
+    target_date: date,
+    raw_statcast: pd.DataFrame,
+    snapshots: pd.DataFrame,
+    source_max_event_date: date | None,
+) -> pd.DataFrame:
     if snapshots.empty:
-        return pd.DataFrame(columns=["slate_date", "game_pk", "team", "pitcher_id", "pitcher_name", "had_pitch", "started", "outs_recorded", "batters_faced", "hits_allowed", "home_runs_allowed", "runs_allowed", "earned_runs", "walks", "strikeouts", "last_updated_at"])
+        return pd.DataFrame(columns=["slate_date", "game_pk", "team", "pitcher_id", "pitcher_name", "had_pitch", "started", "outs_recorded", "batters_faced", "hits_allowed", "home_runs_allowed", "runs_allowed", "earned_runs", "walks", "strikeouts", "outcome_complete", "outcome_status", "source_max_event_date", "last_updated_at"])
     snapshot_pitchers = snapshots[["slate_date", "game_pk", "team", "pitcher_id", "pitcher_name"]].drop_duplicates(["slate_date", "game_pk", "pitcher_id"]).copy()
     day_frame = raw_statcast.loc[pd.to_datetime(raw_statcast["game_date"]).dt.date == target_date].copy()
     if day_frame.empty:
-        empty = snapshot_pitchers.copy()
-        empty["had_pitch"] = False
-        empty["started"] = False
-        empty["outs_recorded"] = None
-        empty["batters_faced"] = 0
-        empty["hits_allowed"] = 0
-        empty["home_runs_allowed"] = 0
-        empty["runs_allowed"] = None
-        empty["earned_runs"] = None
-        empty["walks"] = 0
-        empty["strikeouts"] = 0
-        empty["last_updated_at"] = datetime.utcnow()
+        status = OUTCOME_STATUS_SOURCE_LAG if source_max_event_date is not None and source_max_event_date < target_date else OUTCOME_STATUS_SOURCE_EMPTY
+        empty = _empty_pitcher_outcome_frame(snapshot_pitchers, target_date, status, source_max_event_date)
         return empty
     day_frame = day_frame.loc[day_frame["game_pk"].isin(snapshots["game_pk"].unique()) & day_frame["pitcher"].isin(snapshots["pitcher_id"].unique())].copy()
     if day_frame.empty:
-        empty = snapshot_pitchers.copy()
-        empty["had_pitch"] = False
-        empty["started"] = False
-        empty["outs_recorded"] = None
-        empty["batters_faced"] = 0
-        empty["hits_allowed"] = 0
-        empty["home_runs_allowed"] = 0
-        empty["runs_allowed"] = None
-        empty["earned_runs"] = None
-        empty["walks"] = 0
-        empty["strikeouts"] = 0
-        empty["last_updated_at"] = datetime.utcnow()
+        empty = _empty_pitcher_outcome_frame(snapshot_pitchers, target_date, OUTCOME_STATUS_SOURCE_MISSING_ROWS, source_max_event_date)
         return empty
     pa_events = (
         day_frame.sort_values(["game_pk", "pitcher", "at_bat_number", "pitch_number"])
@@ -1588,7 +1812,10 @@ def _build_pitcher_game_outcomes(target_date: date, raw_statcast: pd.DataFrame, 
     outcomes["started"] = outcomes["had_pitch"]
     outcomes["outs_recorded"] = None
     outcomes["earned_runs"] = None
-    outcomes["last_updated_at"] = datetime.utcnow()
+    outcomes["outcome_complete"] = True
+    outcomes["outcome_status"] = OUTCOME_STATUS_COMPLETE
+    outcomes["source_max_event_date"] = source_max_event_date
+    outcomes["last_updated_at"] = datetime.now(UTC)
     outcomes = outcomes.rename(columns={"pitcher": "pitcher_id", "fielding_team": "team"})
     outcomes = outcomes[
         [
@@ -1607,6 +1834,9 @@ def _build_pitcher_game_outcomes(target_date: date, raw_statcast: pd.DataFrame, 
             "earned_runs",
             "walks",
             "strikeouts",
+            "outcome_complete",
+            "outcome_status",
+            "source_max_event_date",
             "last_updated_at",
         ]
     ]
@@ -1619,7 +1849,10 @@ def _build_pitcher_game_outcomes(target_date: date, raw_statcast: pd.DataFrame, 
         full_outcomes[column] = pd.to_numeric(full_outcomes[column], errors="coerce").fillna(0).astype(int)
     full_outcomes["had_pitch"] = full_outcomes["had_pitch"].fillna(False)
     full_outcomes["started"] = full_outcomes["started"].fillna(False)
-    full_outcomes["last_updated_at"] = full_outcomes["last_updated_at"].fillna(datetime.utcnow())
+    full_outcomes["outcome_complete"] = full_outcomes["outcome_complete"].fillna(True)
+    full_outcomes["outcome_status"] = full_outcomes["outcome_status"].fillna(OUTCOME_STATUS_COMPLETE)
+    full_outcomes["source_max_event_date"] = full_outcomes["source_max_event_date"].fillna(source_max_event_date)
+    full_outcomes["last_updated_at"] = full_outcomes["last_updated_at"].fillna(datetime.now(UTC))
     return full_outcomes[
         [
             "slate_date",
@@ -1637,6 +1870,9 @@ def _build_pitcher_game_outcomes(target_date: date, raw_statcast: pd.DataFrame, 
             "earned_runs",
             "walks",
             "strikeouts",
+            "outcome_complete",
+            "outcome_status",
+            "source_max_event_date",
             "last_updated_at",
         ]
     ]
@@ -1651,7 +1887,7 @@ def run_build(context: BuildContext) -> None:
     hitter_pitcher_exclusions = _build_hitter_pitcher_exclusions(raw_statcast)
     batter_zone_profiles, pitcher_zone_profiles = _aggregate_zone_profiles(raw_statcast, context.config.zone_year_weights)
     hitter_metrics, pitcher_metrics, pitcher_summary_by_hand, pitcher_arsenal, pitcher_arsenal_by_hand, pitcher_usage_by_count = build_metric_tables(raw_statcast, context.config)
-    pitcher_family_zone_context, pitcher_movement_arsenal, batter_family_zone_profiles = build_movement_context_tables(live_payload, context.config)
+    pitcher_family_zone_context, pitcher_movement_arsenal, batter_family_zone_profiles, pitch_context_source = build_movement_context_tables(live_payload, context.config)
     _write_duckdb(
         context.config,
         hitter_metrics,
@@ -1688,6 +1924,37 @@ def run_build(context: BuildContext) -> None:
     )
     schedule = fetch_schedule(context.target_date)
     rosters = fetch_team_rosters_for_schedule(schedule, context.target_date)
+    source_max_event_date = _live_source_max_event_date(live_payload)
+    tracking_health = _build_live_tracking_health(
+        context.target_date,
+        schedule,
+        live_payload,
+        context.config.cockroach_live_pitch_mix_table,
+    )
+    if source_max_event_date is None or source_max_event_date < context.target_date:
+        warnings.warn(
+            f"Live event source {context.config.cockroach_live_pitch_mix_table} is stale for {context.target_date.isoformat()}. "
+            f"Latest available event date is {source_max_event_date.isoformat() if source_max_event_date else 'none'}; "
+            "tracked outcomes will be marked incomplete and excluded from backtesting."
+        )
+    pitch_shape_diagnostics = _pitch_shape_diagnostics(
+        schedule,
+        live_payload,
+        pitch_context_source,
+        pitcher_family_zone_context,
+        pitcher_movement_arsenal,
+    )
+    missing_pitch_shape = pitch_shape_diagnostics.loc[
+        pitch_shape_diagnostics["movement_rows"].eq(0) | pitch_shape_diagnostics["family_rows"].eq(0)
+    ].copy()
+    if not missing_pitch_shape.empty:
+        warning_lines = [
+            f"{row['pitcher_name']} ({int(row['pitcher_id'])}) -> {row['root_causes']}"
+            for _, row in missing_pitch_shape.iterrows()
+        ]
+        warnings.warn(
+            "Pitch shape context gaps detected for probable starters:\n" + "\n".join(warning_lines)
+        )
     rosters_frame = pd.DataFrame(rosters) if rosters else pd.DataFrame(columns=["team", "player_id", "player_name"])
     if context.config.odds_api_key:
         try:
@@ -1706,13 +1973,13 @@ def run_build(context: BuildContext) -> None:
         pitcher_zone_profiles,
     )
     board_winners = _build_hitter_board_winners(snapshots)
-    outcomes = _build_hitter_game_outcomes(context.target_date, raw_statcast, snapshots)
+    outcomes = _build_hitter_game_outcomes(context.target_date, raw_statcast, snapshots, source_max_event_date)
     probable_pitchers = _build_probable_pitcher_lookup(schedule)
     pitcher_snapshots = _build_pitcher_tracking_snapshots(context.target_date, probable_pitchers, pitcher_metrics)
     pitcher_arsenal_snapshots = _build_pitcher_arsenal_snapshots(context.target_date, probable_pitchers, pitcher_arsenal, pitcher_arsenal_by_hand)
     pitcher_count_snapshots = _build_pitcher_count_snapshots(context.target_date, probable_pitchers, pitcher_usage_by_count)
     pitcher_board_winners = _build_pitcher_board_winners(pitcher_snapshots)
-    pitcher_outcomes = _build_pitcher_game_outcomes(context.target_date, raw_statcast, pitcher_snapshots)
+    pitcher_outcomes = _build_pitcher_game_outcomes(context.target_date, raw_statcast, pitcher_snapshots, source_max_event_date)
     write_tracking_payload(
         context.config,
         snapshots,
@@ -1742,6 +2009,8 @@ def run_build(context: BuildContext) -> None:
         pitcher_family_zone_context,
         pitcher_movement_arsenal,
         hitter_pitcher_exclusions,
+        pitch_shape_diagnostics,
+        tracking_health,
     )
 
 

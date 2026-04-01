@@ -20,10 +20,11 @@ except ImportError:  # pragma: no cover
 
 
 BACKTEST_PRESETS = {
+    "Since Tracking Began": "tracking_start",
+    "Season to date": None,
     "Last 7": 7,
     "Last 14": 14,
     "Last 30": 30,
-    "Season to date": None,
     "Custom": "custom",
 }
 
@@ -77,7 +78,7 @@ def _render_metric_cards(cards: list[tuple[str, str, str | None]]) -> None:
 def _filters() -> dict[str, object]:
     st.subheader("Backtesting")
     row_one = st.columns([1.2, 1.0, 1.0, 1.0, 1.0, 0.9])
-    mode = row_one[0].radio("Mode", ["Slate Audit", "Historical Backtest"], horizontal=True)
+    mode = row_one[0].radio("Mode", ["Slate Audit", "Historical Backtest"], horizontal=True, index=1)
     entity = row_one[1].radio("Entity", ["Hitters", "Pitchers"], horizontal=True)
     split_key = row_one[2].selectbox("Split", ["overall", "vs_rhp", "vs_lhp", "home", "away"], index=0)
     recent_window = row_one[3].selectbox("Recent Window", ["season", "last_45_days", "last_14_days"], index=0)
@@ -96,16 +97,15 @@ def _filters() -> dict[str, object]:
         end_date = audit_date
     else:
         row_two = st.columns(3)
-        preset = row_two[0].selectbox("Date Preset", list(BACKTEST_PRESETS.keys()), index=1)
+        preset = row_two[0].selectbox("Date Preset", list(BACKTEST_PRESETS.keys()), index=0)
         if preset == "Custom":
             start_date = row_two[1].date_input("Start date", value=today - timedelta(days=14), key="bt-start")
             end_date = row_two[2].date_input("End date", value=today, key="bt-end")
         else:
             days = BACKTEST_PRESETS[preset]
-            start_date = season_start if days is None else today - timedelta(days=int(days) - 1)
-            end_date = today
+            end_date = row_two[2].date_input("End date", value=today, key="bt-end-historical")
+            start_date = date(2026, 1, 1) if days == "tracking_start" else season_start if days is None else end_date - timedelta(days=int(days) - 1)
             row_two[1].date_input("Start date", value=start_date, disabled=True, key="bt-start-fixed")
-            row_two[2].date_input("End date", value=end_date, disabled=True, key="bt-end-fixed")
 
     row_three = st.columns(4)
     top_n = row_three[0].selectbox("Top Cohort", [3, 5, 10, 15, 20], index=2)
@@ -129,7 +129,7 @@ def _filters() -> dict[str, object]:
 
 
 def _render_explainer(entity: str, mode: str) -> None:
-    history_text = "selected slate" if mode == "Slate Audit" else "forward-tracked history from stored build-time odds onward"
+    history_text = "selected slate" if mode == "Slate Audit" else "graded forward-tracked history through the selected end date"
     if entity == "Hitters":
         st.markdown(
             f"""
@@ -175,6 +175,11 @@ def _prepare_hitter_frame(snapshots: pd.DataFrame, outcomes: pd.DataFrame) -> pd
     frame["slate_date"] = pd.to_datetime(frame["slate_date"], errors="coerce")
     frame["hitter_name"] = frame["hitter_name"].fillna(frame.get("hitter_name_outcome"))
     frame["name_key"] = _normalize_key(frame["hitter_name"])
+    outcome_status = frame.get("outcome_status")
+    frame["outcome_status"] = outcome_status.fillna(pd.NA) if outcome_status is not None else pd.NA
+    outcome_complete = frame.get("outcome_complete")
+    frame["outcome_complete"] = outcome_complete.fillna(pd.NA) if outcome_complete is not None else pd.NA
+    frame["source_max_event_date"] = pd.to_datetime(frame.get("source_max_event_date"), errors="coerce")
     for column in ["matchup_score", "ceiling_score", "zone_fit_score", "xwoba", "xwoba_con", "swstr_pct", "pulled_barrel_pct", "sweet_spot_pct", "avg_launch_angle", "hard_hit_pct", "hits", "home_runs", "total_bases", "runs", "rbi"]:
         if column in frame.columns:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
@@ -192,11 +197,57 @@ def _prepare_pitcher_frame(snapshots: pd.DataFrame, outcomes: pd.DataFrame) -> p
     frame["slate_date"] = pd.to_datetime(frame["slate_date"], errors="coerce")
     frame["pitcher_name"] = frame["pitcher_name"].fillna(frame.get("pitcher_name_outcome"))
     frame["name_key"] = _normalize_key(frame["pitcher_name"])
-    for column in ["pitcher_score", "strikeout_score", "xwoba", "called_strike_pct", "csw_pct", "swstr_pct", "ball_pct", "siera", "strikeouts", "batters_faced", "hits_allowed", "runs_allowed"]:
+    outcome_status = frame.get("outcome_status")
+    frame["outcome_status"] = outcome_status.fillna(pd.NA) if outcome_status is not None else pd.NA
+    outcome_complete = frame.get("outcome_complete")
+    frame["outcome_complete"] = outcome_complete.fillna(pd.NA) if outcome_complete is not None else pd.NA
+    frame["source_max_event_date"] = pd.to_datetime(frame.get("source_max_event_date"), errors="coerce")
+    for column in ["pitcher_score", "strikeout_score", "xwoba", "called_strike_pct", "csw_pct", "swstr_pct", "putaway_pct", "ball_pct", "siera", "strikeouts", "batters_faced", "hits_allowed", "runs_allowed"]:
         if column in frame.columns:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
     frame["k5_flag"] = frame.get("strikeouts", 0).fillna(0).ge(5).astype(float)
     return frame
+
+
+def _graded_mask(frame: pd.DataFrame) -> pd.Series:
+    if frame.empty or "outcome_status" not in frame.columns:
+        return pd.Series(True, index=frame.index)
+    work = frame[["slate_date", "outcome_status", "outcome_complete"]].copy()
+    work["slate_date"] = pd.to_datetime(work["slate_date"], errors="coerce")
+    dates_with_explicit_status = set(work.loc[work["outcome_status"].notna(), "slate_date"].dropna().unique().tolist())
+    if not dates_with_explicit_status:
+        return pd.Series(True, index=frame.index)
+    mask = pd.Series(True, index=frame.index)
+    explicit_rows = frame["slate_date"].isin(dates_with_explicit_status)
+    mask.loc[explicit_rows] = frame.loc[explicit_rows, "outcome_complete"].fillna(False).astype(bool)
+    return mask
+
+
+def _render_outcome_status(frame: pd.DataFrame, entity: str) -> pd.Series:
+    graded_mask = _graded_mask(frame)
+    if frame.empty or "outcome_status" not in frame.columns:
+        return graded_mask
+    explicit = frame.loc[frame["outcome_status"].notna(), ["slate_date", "outcome_status", "source_max_event_date"]].copy()
+    if explicit.empty:
+        return graded_mask
+    explicit["slate_date"] = pd.to_datetime(explicit["slate_date"], errors="coerce")
+    incomplete_dates = explicit.loc[explicit["outcome_status"].ne("complete"), "slate_date"].dropna().dt.date.drop_duplicates().tolist()
+    if incomplete_dates:
+        latest_source = pd.to_datetime(explicit["source_max_event_date"], errors="coerce").dropna()
+        latest_text = latest_source.max().date().isoformat() if not latest_source.empty else "unknown"
+        label = "hitter" if entity == "Hitters" else "pitcher"
+        shown = ", ".join(day.isoformat() for day in incomplete_dates[:5])
+        if len(incomplete_dates) > 5:
+            shown += ", ..."
+        st.warning(
+            f"Some {label} outcomes are incomplete and excluded from summaries. "
+            f"Incomplete dates: {shown}. Latest available live event date: {latest_text}."
+        )
+    else:
+        graded_dates = frame.loc[graded_mask, "slate_date"].dropna().dt.date.nunique()
+        if graded_dates:
+            st.caption(f"Using graded results for {graded_dates} date(s) in this view.")
+    return graded_mask
 
 
 def _prepare_odds_history(frame: pd.DataFrame) -> pd.DataFrame:
@@ -426,18 +477,21 @@ def _render_verdict(title: str, capture_rate: float | None, roi: float | None, c
 
 
 def _render_hitter_view(frame: pd.DataFrame, score_column: str, filters: dict[str, object]) -> None:
+    graded_mask = _render_outcome_status(frame, "Hitters")
+    graded_frame = frame.loc[graded_mask].copy()
     top_n = int(filters["top_n"])
-    winners = frame["home_run_flag"].gt(0)
-    captured = winners & frame["slate_rank"].le(top_n)
-    missed = winners & frame["slate_rank"].gt(top_n)
-    false_positive = frame["slate_rank"].le(top_n) & frame["home_run_flag"].eq(0)
-    priced = frame.loc[frame["captured_price"].notna()].copy()
+    winners = graded_frame["home_run_flag"].fillna(0).gt(0)
+    captured = winners & graded_frame["slate_rank"].le(top_n)
+    missed = winners & graded_frame["slate_rank"].gt(top_n)
+    false_positive = graded_frame["slate_rank"].le(top_n) & graded_frame["home_run_flag"].fillna(0).eq(0)
+    priced = graded_frame.loc[graded_frame["captured_price"].notna()].copy()
     capture_rate = None if winners.sum() == 0 else float(captured.sum() / max(int(winners.sum()), 1))
     roi = pd.to_numeric(priced.get("units"), errors="coerce").mean() if not priced.empty else None
     clv = pd.to_numeric(priced.get("clv"), errors="coerce").mean() if not priced.empty else None
 
     _render_metric_cards([
         ("Tracked Rows", f"{len(frame):,}", None),
+        ("Graded Rows", f"{len(graded_frame):,}", None),
         ("HR Winners", f"{int(winners.sum()):,}", None),
         ("Captured Winners", f"{int(captured.sum()):,}", None),
         ("Missed Winners", f"{int(missed.sum()):,}", None),
@@ -445,13 +499,13 @@ def _render_hitter_view(frame: pd.DataFrame, score_column: str, filters: dict[st
     ])
     _render_verdict("Model Verdict Today" if filters["mode"] == "Slate Audit" else "Model Verdict Since Tracking Began", capture_rate, roi, clv)
 
-    render_metric_grid(_top_n_summary(frame, "home_run_flag", [1, 3, 5, top_n]), key=f"bt-h-topn-{score_column}", height=180, use_lightweight=True)
+    render_metric_grid(_top_n_summary(graded_frame, "home_run_flag", [1, 3, 5, top_n]), key=f"bt-h-topn-{score_column}", height=180, use_lightweight=True)
     cols = st.columns(2)
     with cols[0]:
-        _render_simple_chart(_rolling_top_n(frame, "home_run_flag", top_n), "slate_date", "Realized Rate", "line", "Top-N HR Hit Rate Over Time")
+        _render_simple_chart(_rolling_top_n(graded_frame, "home_run_flag", top_n), "slate_date", "Realized Rate", "line", "Top-N HR Hit Rate Over Time")
     with cols[1]:
-        _render_simple_chart(_rank_bucket_table(frame, "home_run_flag"), "rank_bucket", "Winners", "bar", "Captured vs Missed Winners by Rank Bucket")
-    bucket = _score_bucket_table(priced if not priced.empty else frame, score_column, "home_run_flag", int(filters["bucket_count"]), "units" if not priced.empty else None)
+        _render_simple_chart(_rank_bucket_table(graded_frame, "home_run_flag"), "rank_bucket", "Winners", "bar", "Captured vs Missed Winners by Rank Bucket")
+    bucket = _score_bucket_table(priced if not priced.empty else graded_frame, score_column, "home_run_flag", int(filters["bucket_count"]), "units" if not priced.empty else None)
     cols = st.columns(2)
     with cols[0]:
         _render_simple_chart(bucket, "Score Bucket", "Realized_Rate", "bar", "Score Bucket vs Realized HR Rate")
@@ -460,67 +514,72 @@ def _render_hitter_view(frame: pd.DataFrame, score_column: str, filters: dict[st
 
     detail_cols = _existing_columns(frame, ["slate_date", "hitter_name", "team", "game_label", "slate_rank", score_column, "home_runs", "total_bases", "runs_rbi", "captured_price", "closing_price", "clv", "units", "fair_odds"])
     st.markdown("#### Biggest Captured HRs")
-    render_metric_grid(frame.loc[captured, detail_cols].sort_values([score_column], ascending=[False], na_position="last"), key=f"bt-h-cap-{score_column}", height=240, use_lightweight=True)
+    render_metric_grid(graded_frame.loc[captured, detail_cols].sort_values([score_column], ascending=[False], na_position="last"), key=f"bt-h-cap-{score_column}", height=240, use_lightweight=True)
     st.markdown("#### Biggest Missed HRs")
-    render_metric_grid(frame.loc[missed, detail_cols].sort_values([score_column], ascending=[False], na_position="last"), key=f"bt-h-miss-{score_column}", height=240, use_lightweight=True)
+    render_metric_grid(graded_frame.loc[missed, detail_cols].sort_values([score_column], ascending=[False], na_position="last"), key=f"bt-h-miss-{score_column}", height=240, use_lightweight=True)
     st.markdown("#### Bad High-Rank Plays")
-    render_metric_grid(frame.loc[false_positive, detail_cols].sort_values(["slate_rank"]), key=f"bt-h-fp-{score_column}", height=240, use_lightweight=True)
+    render_metric_grid(graded_frame.loc[false_positive, detail_cols].sort_values(["slate_rank"]), key=f"bt-h-fp-{score_column}", height=240, use_lightweight=True)
 
     signals = ["matchup_score", "ceiling_score", "zone_fit_score", "xwoba", "xwoba_con", "swstr_pct", "pulled_barrel_pct", "sweet_spot_pct", "avg_launch_angle", "hard_hit_pct"]
     st.markdown("#### Signal Attribution Summary")
-    render_metric_grid(_signal_table(frame, signals, captured, missed if missed.any() else false_positive), key=f"bt-h-signals-{score_column}", height=240, use_lightweight=True)
+    render_metric_grid(_signal_table(graded_frame, signals, captured, missed if missed.any() else false_positive), key=f"bt-h-signals-{score_column}", height=240, use_lightweight=True)
 
 
 def _render_pitcher_view(base_frame: pd.DataFrame, line_frame: pd.DataFrame, score_column: str, filters: dict[str, object]) -> None:
+    graded_mask = _render_outcome_status(base_frame, "Pitchers")
+    graded_base = base_frame.loc[graded_mask].copy()
+    graded_keys = set(zip(graded_base["slate_date"], graded_base["name_key"]))
+    graded_line = line_frame.loc[line_frame.apply(lambda row: (row.get("slate_date"), row.get("name_key")) in graded_keys, axis=1)].copy() if not line_frame.empty else line_frame
     top_n = int(filters["top_n"])
-    clear_lines = line_frame["line_clear_flag"].gt(0) if not line_frame.empty else pd.Series(dtype="bool")
-    captured = clear_lines & line_frame["slate_rank"].le(top_n) if not line_frame.empty else pd.Series(dtype="bool")
-    missed = clear_lines & line_frame["slate_rank"].gt(top_n) if not line_frame.empty else pd.Series(dtype="bool")
-    false_positive = line_frame["slate_rank"].le(top_n) & line_frame["line_clear_flag"].eq(0) if not line_frame.empty else pd.Series(dtype="bool")
-    roi = pd.to_numeric(line_frame.get("units"), errors="coerce").mean() if not line_frame.empty else None
-    clv = pd.to_numeric(line_frame.get("clv"), errors="coerce").mean() if not line_frame.empty else None
-    capture_rate = None if line_frame.empty or clear_lines.sum() == 0 else float(captured.sum() / max(int(clear_lines.sum()), 1))
+    clear_lines = graded_line["line_clear_flag"].gt(0) if not graded_line.empty else pd.Series(dtype="bool")
+    captured = clear_lines & graded_line["slate_rank"].le(top_n) if not graded_line.empty else pd.Series(dtype="bool")
+    missed = clear_lines & graded_line["slate_rank"].gt(top_n) if not graded_line.empty else pd.Series(dtype="bool")
+    false_positive = graded_line["slate_rank"].le(top_n) & graded_line["line_clear_flag"].eq(0) if not graded_line.empty else pd.Series(dtype="bool")
+    roi = pd.to_numeric(graded_line.get("units"), errors="coerce").mean() if not graded_line.empty else None
+    clv = pd.to_numeric(graded_line.get("clv"), errors="coerce").mean() if not graded_line.empty else None
+    capture_rate = None if graded_line.empty or clear_lines.sum() == 0 else float(captured.sum() / max(int(clear_lines.sum()), 1))
 
     _render_metric_cards([
         ("Tracked Pitchers", f"{len(base_frame):,}", None),
-        ("Cleared K Props", f"{int(clear_lines.sum()):,}" if not line_frame.empty else "0", None),
-        ("Captured K Props", f"{int(captured.sum()):,}" if not line_frame.empty else "0", None),
-        ("Missed K Props", f"{int(missed.sum()):,}" if not line_frame.empty else "0", None),
-        ("Units", "N/A" if roi is None or pd.isna(roi) else f"{pd.to_numeric(line_frame.get('units'), errors='coerce').fillna(0).sum():+.2f}", None),
+        ("Graded Pitchers", f"{len(graded_base):,}", None),
+        ("Cleared K Props", f"{int(clear_lines.sum()):,}" if not graded_line.empty else "0", None),
+        ("Captured K Props", f"{int(captured.sum()):,}" if not graded_line.empty else "0", None),
+        ("Missed K Props", f"{int(missed.sum()):,}" if not graded_line.empty else "0", None),
+        ("Units", "N/A" if roi is None or pd.isna(roi) else f"{pd.to_numeric(graded_line.get('units'), errors='coerce').fillna(0).sum():+.2f}", None),
     ])
     _render_verdict("Model Verdict Today" if filters["mode"] == "Slate Audit" else "Model Verdict Since Tracking Began", capture_rate, roi, clv)
 
-    render_metric_grid(_pitcher_top_n_summary(base_frame, [1, 3, 5, top_n]), key=f"bt-p-topn-{score_column}", height=180, use_lightweight=True)
+    render_metric_grid(_pitcher_top_n_summary(graded_base, [1, 3, 5, top_n]), key=f"bt-p-topn-{score_column}", height=180, use_lightweight=True)
     cols = st.columns(2)
     with cols[0]:
-        _render_simple_chart(_rolling_top_n(base_frame, "k5_flag", top_n), "slate_date", "Realized Rate", "line", "Top-N Pitcher 5+ K Rate Over Time")
+        _render_simple_chart(_rolling_top_n(graded_base, "k5_flag", top_n), "slate_date", "Realized Rate", "line", "Top-N Pitcher 5+ K Rate Over Time")
     with cols[1]:
-        _render_simple_chart(_score_bucket_table(base_frame, score_column, "k5_flag", int(filters["bucket_count"])), "Score Bucket", "Realized_Rate", "bar", "Score Bucket vs 5+ K Rate")
+        _render_simple_chart(_score_bucket_table(graded_base, score_column, "k5_flag", int(filters["bucket_count"])), "Score Bucket", "Realized_Rate", "bar", "Score Bucket vs 5+ K Rate")
 
     st.markdown("#### K Leaders")
-    render_metric_grid(base_frame[_existing_columns(base_frame, ["slate_date", "pitcher_name", "team", "game_label", "slate_rank", score_column, "strikeouts", "k5_flag", "pitcher_score", "strikeout_score", "csw_pct", "swstr_pct", "ball_pct", "siera"])].sort_values(["strikeouts", score_column], ascending=[False, False], na_position="last"), key=f"bt-p-leaders-{score_column}", height=240, use_lightweight=True)
+    render_metric_grid(graded_base[_existing_columns(graded_base, ["slate_date", "pitcher_name", "team", "game_label", "slate_rank", score_column, "strikeouts", "k5_flag", "pitcher_score", "strikeout_score", "csw_pct", "swstr_pct", "putaway_pct", "ball_pct", "siera"])].sort_values(["strikeouts", score_column], ascending=[False, False], na_position="last"), key=f"bt-p-leaders-{score_column}", height=240, use_lightweight=True)
 
-    if line_frame.empty:
+    if graded_line.empty:
         st.info("No captured strikeout lines were stored for this view yet.")
         return
-    line_cols = _existing_columns(line_frame, ["slate_date", "pitcher_name", "team", "game_label", "slate_rank", score_column, "line", "strikeouts", "line_clear_flag", "captured_price", "closing_price", "clv", "units", "fair_odds"])
+    line_cols = _existing_columns(graded_line, ["slate_date", "pitcher_name", "team", "game_label", "slate_rank", score_column, "line", "strikeouts", "line_clear_flag", "captured_price", "closing_price", "clv", "units", "fair_odds"])
     st.markdown("#### Biggest Captured K Props")
-    render_metric_grid(line_frame.loc[captured, line_cols].sort_values([score_column, "line"], ascending=[False, True], na_position="last"), key=f"bt-p-cap-{score_column}", height=240, use_lightweight=True)
+    render_metric_grid(graded_line.loc[captured, line_cols].sort_values([score_column, "line"], ascending=[False, True], na_position="last"), key=f"bt-p-cap-{score_column}", height=240, use_lightweight=True)
     st.markdown("#### Biggest Missed K Props")
-    render_metric_grid(line_frame.loc[missed, line_cols].sort_values([score_column, "line"], ascending=[False, True], na_position="last"), key=f"bt-p-miss-{score_column}", height=240, use_lightweight=True)
+    render_metric_grid(graded_line.loc[missed, line_cols].sort_values([score_column, "line"], ascending=[False, True], na_position="last"), key=f"bt-p-miss-{score_column}", height=240, use_lightweight=True)
     st.markdown("#### Bad High-Rank K Props")
-    render_metric_grid(line_frame.loc[false_positive, line_cols].sort_values(["slate_rank", "line"]), key=f"bt-p-fp-{score_column}", height=240, use_lightweight=True)
+    render_metric_grid(graded_line.loc[false_positive, line_cols].sort_values(["slate_rank", "line"]), key=f"bt-p-fp-{score_column}", height=240, use_lightweight=True)
 
-    threshold = line_frame.groupby("line", as_index=False).agg(Clear_Rate=("line_clear_flag", "mean"), ROI=("units", "mean")).sort_values("line")
+    threshold = graded_line.groupby("line", as_index=False).agg(Clear_Rate=("line_clear_flag", "mean"), ROI=("units", "mean")).sort_values("line")
     cols = st.columns(2)
     with cols[0]:
         _render_simple_chart(threshold, "line", "Clear_Rate", "bar", "Pitcher K Line-Level Performance")
     with cols[1]:
         _render_simple_chart(threshold, "line", "ROI", "bar", "Pitcher K Line ROI by Threshold")
 
-    signals = ["strikeout_score", "pitcher_score", "csw_pct", "swstr_pct", "ball_pct", "siera", "xwoba"]
+    signals = ["strikeout_score", "pitcher_score", "csw_pct", "swstr_pct", "putaway_pct", "ball_pct", "siera", "xwoba"]
     st.markdown("#### Signal Attribution Summary")
-    render_metric_grid(_signal_table(line_frame, signals, captured, missed if missed.any() else false_positive), key=f"bt-p-signals-{score_column}", height=240, use_lightweight=True)
+    render_metric_grid(_signal_table(graded_line, signals, captured, missed if missed.any() else false_positive), key=f"bt-p-signals-{score_column}", height=240, use_lightweight=True)
 
 
 def render_backtesting_tab(config: AppConfig) -> None:

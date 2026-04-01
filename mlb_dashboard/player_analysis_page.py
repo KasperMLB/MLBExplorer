@@ -65,6 +65,7 @@ PITCHER_OVERVIEW_CARDS = [
     ("xwOBA", "xwoba"),
     ("CSW%", "csw_pct"),
     ("SwStr%", "swstr_pct"),
+    ("PutAway%", "putaway_pct"),
     ("Ball%", "ball_pct"),
     ("SIERA", "siera"),
     ("GB%", "gb_pct"),
@@ -83,6 +84,7 @@ PITCHER_OVERVIEW_COLUMNS = [
     "called_strike_pct",
     "csw_pct",
     "swstr_pct",
+    "putaway_pct",
     "ball_pct",
     "siera",
     "pulled_barrel_pct",
@@ -114,6 +116,7 @@ MATCHUP_PITCHER_COLUMNS = [
     "xwoba",
     "csw_pct",
     "swstr_pct",
+    "putaway_pct",
     "ball_pct",
     "siera",
     "gb_pct",
@@ -526,7 +529,7 @@ def _format_metric_value(value: object, column: str) -> str:
         return f"{float(value):.3f}"
     if column in {"matchup_score", "ceiling_score", "zone_fit_score", "pitcher_score", "strikeout_score", "likely_starter_score", "gb_fb_ratio", "siera"}:
         return f"{float(value):.1f}"
-    if column in {"pulled_barrel_pct", "barrel_bip_pct", "fb_pct", "hard_hit_pct", "swstr_pct", "called_strike_pct", "csw_pct", "ball_pct", "gb_pct"}:
+    if column in {"pulled_barrel_pct", "barrel_bip_pct", "fb_pct", "hard_hit_pct", "swstr_pct", "called_strike_pct", "csw_pct", "putaway_pct", "ball_pct", "gb_pct"}:
         return f"{float(value) * 100:.1f}%"
     return str(value)
 

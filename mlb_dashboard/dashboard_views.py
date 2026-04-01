@@ -104,6 +104,7 @@ TOP_PITCHER_COLUMNS = [
     "xwoba",
     "csw_pct",
     "swstr_pct",
+    "putaway_pct",
     "ball_pct",
     "siera",
     "pulled_barrel_pct",
@@ -122,6 +123,7 @@ PITCHER_SUMMARY_COLUMNS = [
     "called_strike_pct",
     "csw_pct",
     "swstr_pct",
+    "putaway_pct",
     "ball_pct",
     "siera",
     "pulled_barrel_pct",
@@ -246,6 +248,7 @@ PITCHER_HIGHER_IS_BETTER = {
     "swstr_pct",
     "called_strike_pct",
     "csw_pct",
+    "putaway_pct",
     "gb_pct",
     "gb_fb_ratio",
     "avg_release_speed",
@@ -444,6 +447,73 @@ def _zone_fit_for_hitter(
     return min(max(float(score), 0.0), 1.0)
 
 
+def _overlay_zone_fit_score(batter_map: pd.DataFrame, pitcher_map: pd.DataFrame) -> float:
+    if batter_map.empty or pitcher_map.empty:
+        return 0.5
+    overlay = build_zone_overlay_map(batter_map, pitcher_map)
+    if overlay.empty:
+        return 0.5
+    sample = pd.to_numeric(overlay["sample_size"], errors="coerce").fillna(0)
+    if float(sample.sum()) < ZONE_FIT_SAMPLE_FLOOR:
+        return 0.5
+    score = _weighted_average(overlay["zone_value"], sample)
+    if score is None:
+        return 0.5
+    return min(max(float(score), 0.0), 1.0)
+
+
+def _build_zone_fit_scores(
+    frame: pd.DataFrame,
+    batter_zone_profiles: pd.DataFrame | None,
+    pitcher_zone_profiles: pd.DataFrame | None,
+    opposing_pitcher_id: int | None,
+    opposing_pitcher_hand: str | None,
+) -> pd.Series:
+    scores = pd.Series(0.5, index=frame.index, dtype="float64")
+    if (
+        frame.empty
+        or batter_zone_profiles is None
+        or pitcher_zone_profiles is None
+        or opposing_pitcher_id is None
+    ):
+        return scores
+
+    work = frame.copy()
+    work["_batter_numeric"] = pd.to_numeric(work.get("batter"), errors="coerce")
+    work["_stand_key"] = work.get("stand", pd.Series("", index=work.index)).fillna("").astype(str).str.upper()
+    valid = work["_batter_numeric"].notna()
+    if not valid.any():
+        return scores
+
+    pitcher_map_cache: dict[str, pd.DataFrame] = {}
+    for stand_key in work.loc[valid, "_stand_key"].drop_duplicates().tolist():
+        pitcher_frame = _select_pitcher_zone_frame(pitcher_zone_profiles, opposing_pitcher_id, stand_key or None)
+        pitcher_map_cache[stand_key] = aggregate_pitcher_zone_map(pitcher_frame, "All pitches") if not pitcher_frame.empty else pd.DataFrame()
+
+    batter_map_cache: dict[int, pd.DataFrame] = {}
+    for batter_id in work.loc[valid, "_batter_numeric"].astype(int).drop_duplicates().tolist():
+        batter_frame = _select_batter_zone_frame(batter_zone_profiles, batter_id, opposing_pitcher_hand)
+        batter_map_cache[batter_id] = aggregate_batter_zone_map(batter_frame, "All pitches") if not batter_frame.empty else pd.DataFrame()
+
+    combo_scores: dict[tuple[int, str], float] = {}
+    unique_pairs = work.loc[valid, ["_batter_numeric", "_stand_key"]].drop_duplicates()
+    for _, pair in unique_pairs.iterrows():
+        batter_id = int(pair["_batter_numeric"])
+        stand_key = str(pair["_stand_key"])
+        combo_scores[(batter_id, stand_key)] = _overlay_zone_fit_score(
+            batter_map_cache.get(batter_id, pd.DataFrame()),
+            pitcher_map_cache.get(stand_key, pd.DataFrame()),
+        )
+
+    valid_index = work.index[valid]
+    valid_scores = [
+        combo_scores.get((int(work.at[idx, "_batter_numeric"]), str(work.at[idx, "_stand_key"])), 0.5)
+        for idx in valid_index
+    ]
+    scores.loc[valid_index] = valid_scores
+    return scores
+
+
 def add_hitter_matchup_score(
     frame: pd.DataFrame,
     batter_zone_profiles: pd.DataFrame | None = None,
@@ -457,9 +527,12 @@ def add_hitter_matchup_score(
     if "sweet_spot_pct" not in enriched.columns:
         enriched["sweet_spot_pct"] = pd.NA
     if batter_zone_profiles is not None and pitcher_zone_profiles is not None and opposing_pitcher_id is not None:
-        enriched["zone_fit_score"] = enriched.apply(
-            lambda row: _zone_fit_for_hitter(row, batter_zone_profiles, pitcher_zone_profiles, opposing_pitcher_id, opposing_pitcher_hand),
-            axis=1,
+        enriched["zone_fit_score"] = _build_zone_fit_scores(
+            enriched,
+            batter_zone_profiles,
+            pitcher_zone_profiles,
+            opposing_pitcher_id,
+            opposing_pitcher_hand,
         )
     else:
         enriched["zone_fit_score"] = 0.5
@@ -502,6 +575,7 @@ def add_pitcher_rank_score(frame: pd.DataFrame) -> pd.DataFrame:
     gbfb_score = normalize_series(enriched["gb_fb_ratio"])
     csw_score = normalize_series(enriched["csw_pct"]) if "csw_pct" in enriched.columns else pd.Series(0.5, index=enriched.index)
     siera_score = normalize_series(enriched["siera"], inverse=True) if "siera" in enriched.columns else pd.Series(0.5, index=enriched.index)
+    putaway_score = normalize_series(enriched["putaway_pct"]) if "putaway_pct" in enriched.columns else pd.Series(0.5, index=enriched.index)
     enriched["pitcher_score"] = (
         (xwoba_score * 0.25)
         + (barrel_bbe_score * 0.18)
@@ -511,10 +585,11 @@ def add_pitcher_rank_score(frame: pd.DataFrame) -> pd.DataFrame:
         + (gbfb_score * 0.12)
     ) * 100.0
     enriched["strikeout_score"] = (
-        (csw_score * 0.40)
+        (csw_score * 0.35)
         + (swstr_score * 0.30)
         + (ball_score * 0.20)
         + (siera_score * 0.10)
+        + (putaway_score * 0.05)
     ) * 100.0
     return enriched.sort_values(["pitcher_score", "xwoba"], ascending=[False, True], na_position="last")
 
@@ -557,6 +632,7 @@ def build_top_matchups_export_sections(
     selected_games: list[dict],
     hitters_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]],
     hitter_columns: list[str],
+    best_matchups_by_game: dict[int, pd.DataFrame] | None = None,
 ) -> list[dict]:
     sections: list[dict] = []
     export_columns = [
@@ -571,7 +647,10 @@ def build_top_matchups_export_sections(
     ]
     for game in selected_games:
         away_hitters, home_hitters = hitters_by_game.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        best_matchups = build_best_matchups(away_hitters, home_hitters)
+        if best_matchups_by_game is not None:
+            best_matchups = best_matchups_by_game.get(game["game_pk"], pd.DataFrame()).copy()
+        else:
+            best_matchups = build_best_matchups(away_hitters, home_hitters)
         if best_matchups.empty:
             continue
         game_label = f"{game['away_team']} @ {game['home_team']}"

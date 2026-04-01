@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from datetime import date, timedelta
+from time import perf_counter
 
 import pandas as pd
 import streamlit as st
@@ -109,6 +111,21 @@ def _default_target_date(config: AppConfig) -> date:
 
 def _existing_columns(frame: pd.DataFrame, columns: list[str]) -> list[str]:
     return [column for column in columns if column in frame.columns]
+
+
+def _perf_enabled() -> bool:
+    return os.getenv("MLB_PERF_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _record_perf(events: list[tuple[str, float]], label: str, start_time: float) -> None:
+    if _perf_enabled():
+        events.append((label, perf_counter() - start_time))
+
+
+def _render_perf(events: list[tuple[str, float]]) -> None:
+    if not _perf_enabled() or not events:
+        return
+    st.caption("Perf: " + " | ".join(f"{label} {duration:.2f}s" for label, duration in events))
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -1117,6 +1134,7 @@ def _render_top_sections(
     hitters_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]],
     pitchers_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]],
     hitter_preset: str,
+    best_matchups_by_game: dict[int, pd.DataFrame] | None = None,
 ) -> None:
     hitter_rows: list[pd.DataFrame] = []
     pitcher_rows: list[pd.DataFrame] = []
@@ -1141,7 +1159,7 @@ def _render_top_sections(
     else:
         preset_columns = hitter_columns_for_preset(hitter_preset)
         ranked_hitters = all_hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
-        export_sections = build_top_matchups_export_sections(selected_games, hitters_by_game, preset_columns)
+        export_sections = build_top_matchups_export_sections(selected_games, hitters_by_game, preset_columns, best_matchups_by_game)
         render_slate_export_hub("top-matchups-export", "Top Matchups Export", export_sections)
         render_metric_grid(
             ranked_hitters[["game"] + [column for column in preset_columns if column in all_hitters.columns]].head(10),
@@ -1294,6 +1312,7 @@ def _build_pitcher_export_sections(
 def main() -> None:
     st.set_page_config(page_title="MLB Local Explorer", layout="wide")
     st.title("MLB Local Explorer")
+    perf_events: list[tuple[str, float]] = []
     config = AppConfig()
     top_level_view = st.sidebar.radio("View", ["Slate Explorer", "Backtesting"], key="local-top-view")
     if top_level_view == "Backtesting":
@@ -1307,33 +1326,58 @@ def main() -> None:
         return
     rosters = engine.load_daily_rosters(target_date)
     selected_games = _game_selection(slate)
+    active_sections = {st.session_state.get(f"section-local-{game['game_pk']}", "Matchup") for game in selected_games}
     st.caption(f"Showing {len(selected_games)} of {len(slate)} games")
     st.caption("PulledBrl% tracks pulled barrels on tracked batted-ball events. Brl/BIP% uses all balls in play.")
 
     hitters_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
     pitchers_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
+    best_matchups_by_game: dict[int, pd.DataFrame] = {}
     pitcher_summary_by_hand_map: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
     pitcher_arsenal_map: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
     pitcher_by_hand_map: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
     pitcher_count_map: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
-    hitter_rolling = engine.load_daily_hitter_rolling(target_date)
-    pitcher_rolling = engine.load_daily_pitcher_rolling(target_date)
+    base_load_start = perf_counter()
     batter_zone_profiles = engine.load_daily_batter_zone_profiles(target_date)
     pitcher_zone_profiles = engine.load_daily_pitcher_zone_profiles(target_date)
-    batter_family_zone_profiles = engine.load_daily_batter_family_zone_profiles(target_date)
-    pitcher_family_zone_context = engine.load_daily_pitcher_family_zone_context(target_date)
-    pitcher_movement_arsenal = engine.load_daily_pitcher_movement_arsenal(target_date)
     hitter_pitcher_exclusions = engine.load_daily_hitter_pitcher_exclusions(target_date)
+    _record_perf(perf_events, "core load", base_load_start)
+
+    hitter_rolling = pd.DataFrame()
+    pitcher_rolling = pd.DataFrame()
+    if "Rolling" in active_sections:
+        rolling_start = perf_counter()
+        hitter_rolling = engine.load_daily_hitter_rolling(target_date)
+        pitcher_rolling = engine.load_daily_pitcher_rolling(target_date)
+        _record_perf(perf_events, "rolling load", rolling_start)
+
+    batter_family_zone_profiles = pd.DataFrame()
+    pitcher_family_zone_context = pd.DataFrame()
+    pitcher_movement_arsenal = pd.DataFrame()
+    if "Matchup" in active_sections:
+        shape_start = perf_counter()
+        batter_family_zone_profiles = engine.load_daily_batter_family_zone_profiles(target_date)
+        pitcher_family_zone_context = engine.load_daily_pitcher_family_zone_context(target_date)
+        pitcher_movement_arsenal = engine.load_daily_pitcher_movement_arsenal(target_date)
+        _record_perf(perf_events, "pitch-shape load", shape_start)
+
     valid_teams = tuple(sorted({game["away_team"] for game in slate} | {game["home_team"] for game in slate}))
     try:
+        rotowire_start = perf_counter()
         rotowire_lineups = resolve_rotowire_lineups(fetch_rotowire_lineups(target_date, valid_teams), rosters)
+        _record_perf(perf_events, "rotowire", rotowire_start)
     except Exception:
         rotowire_lineups = {}
     batter_join_col = "batter_id" if "batter_id" in batter_zone_profiles.columns else "batter"
     pitcher_join_col = "pitcher_id" if "pitcher_id" in pitcher_zone_profiles.columns else "pitcher"
-    roster_lookup = rosters[["team", "player_id", "player_name"]].drop_duplicates("player_id")
-    batter_zone_named = batter_zone_profiles.merge(roster_lookup, left_on=batter_join_col, right_on="player_id", how="left")
+    batter_zone_named = pd.DataFrame()
+    if {"Pitcher Zones", "Hitter Zones"} & active_sections:
+        zone_named_start = perf_counter()
+        roster_lookup = rosters[["team", "player_id", "player_name"]].drop_duplicates("player_id")
+        batter_zone_named = batter_zone_profiles.merge(roster_lookup, left_on=batter_join_col, right_on="player_id", how="left")
+        _record_perf(perf_events, "zone merge", zone_named_start)
 
+    game_prep_start = perf_counter()
     for game in selected_games:
         pitcher_ids = [pitcher_id for pitcher_id in [game.get("away_probable_pitcher_id"), game.get("home_probable_pitcher_id")] if pitcher_id]
         pitchers = engine.get_pitcher_cards(pitcher_ids, filters)
@@ -1371,6 +1415,7 @@ def main() -> None:
         )
 
         hitters_by_game[game["game_pk"]] = (away_hitters, home_hitters)
+        best_matchups_by_game[game["game_pk"]] = build_best_matchups(away_hitters, home_hitters)
         pitchers_by_game[game["game_pk"]] = (away_pitcher, home_pitcher)
         pitcher_summary_by_hand_map[game["game_pk"]] = (
             pitcher_summaries_by_hand.loc[pitcher_summaries_by_hand["pitcher_id"] == game.get("away_probable_pitcher_id")].copy(),
@@ -1388,8 +1433,10 @@ def main() -> None:
             usages_by_count.loc[usages_by_count["pitcher_id"] == game.get("away_probable_pitcher_id")].copy(),
             usages_by_count.loc[usages_by_count["pitcher_id"] == game.get("home_probable_pitcher_id")].copy(),
         )
+    _record_perf(perf_events, "game prep", game_prep_start)
 
-    _render_top_sections(selected_games, hitters_by_game, pitchers_by_game, hitter_preset)
+    _render_top_sections(selected_games, hitters_by_game, pitchers_by_game, hitter_preset, best_matchups_by_game)
+    _render_perf(perf_events)
     st.divider()
 
     hitter_columns = hitter_columns_for_preset(hitter_preset)
@@ -1401,7 +1448,7 @@ def main() -> None:
         away_arsenal, home_arsenal = pitcher_arsenal_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
         away_by_hand, home_by_hand = pitcher_by_hand_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
         away_count, home_count = pitcher_count_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        best_matchups = build_best_matchups(away_hitters, home_hitters)
+        best_matchups = best_matchups_by_game.get(game["game_pk"], pd.DataFrame()).copy()
         away_export_sections = _build_pitcher_export_sections(game["away_team"], away_summary_by_hand, away_arsenal, away_by_hand, away_count)
         home_export_sections = _build_pitcher_export_sections(game["home_team"], home_summary_by_hand, home_arsenal, home_by_hand, home_count)
 

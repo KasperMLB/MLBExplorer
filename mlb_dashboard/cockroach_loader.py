@@ -58,6 +58,21 @@ def _normalize_pitcher_baseline_event_rows(frame: pd.DataFrame) -> pd.DataFrame:
     normalized = frame.copy()
     normalized["game_date"] = pd.to_datetime(normalized["game_date"], errors="coerce")
     normalized["game_year"] = pd.to_numeric(normalized.get("source_season"), errors="coerce").fillna(2025).astype(int)
+    normalized["pitch_name"] = normalized.get("pitch_name", pd.Series(index=normalized.index, dtype="object")).astype("string")
+    normalized["pitch_type"] = normalized.get("pitch_type", pd.Series(index=normalized.index, dtype="object")).astype("string")
+    normalized["pitch_type"] = normalized["pitch_type"].fillna(normalized["pitch_name"])
+    normalized["p_throws"] = normalized.get("p_throws", normalized.get("pitcher_hand", pd.Series(index=normalized.index, dtype="object")))
+    normalized["stand"] = normalized.get("stand", normalized.get("batter_stand", pd.Series(index=normalized.index, dtype="object")))
+    normalized["plate_x"] = pd.to_numeric(normalized.get("plate_x"), errors="coerce")
+    normalized["plate_z"] = pd.to_numeric(normalized.get("plate_z"), errors="coerce")
+    normalized["release_speed"] = pd.to_numeric(normalized.get("release_speed"), errors="coerce")
+    normalized["release_spin_rate"] = pd.to_numeric(normalized.get("release_spin_rate"), errors="coerce")
+    normalized["release_extension"] = pd.to_numeric(normalized.get("release_extension"), errors="coerce")
+    normalized["release_pos_x"] = pd.to_numeric(normalized.get("release_pos_x"), errors="coerce")
+    normalized["release_pos_z"] = pd.to_numeric(normalized.get("release_pos_z"), errors="coerce")
+    normalized["pfx_x"] = pd.to_numeric(normalized.get("pfx_x"), errors="coerce")
+    normalized["pfx_z"] = pd.to_numeric(normalized.get("pfx_z"), errors="coerce")
+    normalized["spin_axis"] = pd.to_numeric(normalized.get("spin_axis"), errors="coerce")
     normalized["team"] = normalized.apply(
         lambda row: row["away_team"] if row.get("inning_topbot") == "Top" else row["home_team"],
         axis=1,
@@ -301,6 +316,9 @@ def _create_tracking_tables(conn, config: AppConfig) -> None:
         "rbi": "INT8",
         "walks": "INT8",
         "strikeouts": "INT8",
+        "outcome_complete": "BOOL",
+        "outcome_status": "STRING",
+        "source_max_event_date": "DATE",
         "last_updated_at": "TIMESTAMPTZ",
     }
     board_columns = {
@@ -334,6 +352,7 @@ def _create_tracking_tables(conn, config: AppConfig) -> None:
         "called_strike_pct": "FLOAT8",
         "csw_pct": "FLOAT8",
         "swstr_pct": "FLOAT8",
+        "putaway_pct": "FLOAT8",
         "ball_pct": "FLOAT8",
         "siera": "FLOAT8",
         "barrel_bbe_pct": "FLOAT8",
@@ -363,6 +382,9 @@ def _create_tracking_tables(conn, config: AppConfig) -> None:
         "earned_runs": "INT8",
         "walks": "INT8",
         "strikeouts": "INT8",
+        "outcome_complete": "BOOL",
+        "outcome_status": "STRING",
+        "source_max_event_date": "DATE",
         "last_updated_at": "TIMESTAMPTZ",
     }
     pitcher_board_columns = {
