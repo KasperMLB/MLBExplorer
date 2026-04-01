@@ -1166,7 +1166,7 @@ def _render_top_sections(
             "top-matchups-export",
             "Top Matchups Export",
             export_sections,
-            full_slate_export_frame=full_slate_export_frame,
+            full_slate_export_frame,
         )
         render_metric_grid(
             ranked_hitters[["game"] + [column for column in preset_columns if column in all_hitters.columns]].head(10),
