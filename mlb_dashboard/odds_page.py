@@ -7,10 +7,13 @@ import streamlit as st
 
 from .components import render_props_board
 from .config import AppConfig
-from .cockroach_loader import write_props_odds_snapshot
+from .cockroach_loader import read_latest_prop_odds_snapshot, write_props_odds_snapshot
 from .dashboard_views import latest_built_date
-from .odds_service import PropsBoardPayload, load_live_props_board
+from .odds_service import PropsBoardPayload, build_props_board_payload_from_rows, load_live_props_board, odds_config_from_app
 from .query_engine import StatcastQueryEngine
+
+
+SHARED_ODDS_TTL_SECONDS = 120
 
 
 def _hosted_base_url() -> str:
@@ -181,6 +184,29 @@ def _render_instruction_banner() -> None:
     )
 
 
+def _load_shared_or_live_props(config: AppConfig, target_date: date, rosters: pd.DataFrame, force_refresh: bool) -> tuple[PropsBoardPayload, str, pd.Timestamp | None]:
+    stored_rows = read_latest_prop_odds_snapshot(config, target_date, odds_config_from_app(config).markets)
+    snapshot_time = None
+    if not stored_rows.empty:
+        snapshot_time = pd.to_datetime(stored_rows["fetched_at"], errors="coerce", utc=True).dropna().max()
+    if not force_refresh and snapshot_time is not None:
+        age_seconds = (pd.Timestamp.now(tz="UTC") - snapshot_time).total_seconds()
+        if age_seconds <= SHARED_ODDS_TTL_SECONDS:
+            return build_props_board_payload_from_rows(stored_rows), "stored_snapshot", snapshot_time
+
+    payload = load_live_props_board(config, target_date, rosters)
+    if isinstance(payload, PropsBoardPayload) and not payload.raw_rows.empty:
+        try:
+            write_props_odds_snapshot(config, payload.raw_rows)
+        except Exception:
+            pass
+        refreshed_rows = read_latest_prop_odds_snapshot(config, target_date, odds_config_from_app(config).markets)
+        if not refreshed_rows.empty:
+            refreshed_time = pd.to_datetime(refreshed_rows["fetched_at"], errors="coerce", utc=True).dropna().max()
+            return build_props_board_payload_from_rows(refreshed_rows), "live_refresh", refreshed_time
+    return payload, "live_refresh", snapshot_time
+
+
 def main() -> None:
     st.set_page_config(page_title="Props Board", layout="wide")
     st.title("Props Board")
@@ -197,32 +223,44 @@ def main() -> None:
         st.caption(f"Using most recent available published slate: {loaded_date.isoformat()}")
 
     refresh_token = st.session_state.get("props_refresh_token", 0)
-    if st.sidebar.button("Refresh Odds"):
+    forced_refresh = st.sidebar.button("Refresh Odds")
+    if forced_refresh:
         refresh_token += 1
         st.session_state["props_refresh_token"] = refresh_token
     state_key = f"props_board::{loaded_date.isoformat()}::{refresh_token}"
     if state_key not in st.session_state:
         try:
-            payload = load_live_props_board(config, loaded_date, rosters)
-            if isinstance(payload, PropsBoardPayload) and not payload.raw_rows.empty:
-                try:
-                    write_props_odds_snapshot(config, payload.raw_rows)
-                except Exception:
-                    pass
-            st.session_state[state_key] = payload
+            payload, fetch_source, snapshot_time = _load_shared_or_live_props(config, loaded_date, rosters, forced_refresh)
+            st.session_state[state_key] = {
+                "payload": payload,
+                "fetch_source": fetch_source,
+                "snapshot_time": snapshot_time.isoformat() if snapshot_time is not None and not pd.isna(snapshot_time) else None,
+            }
         except Exception as exc:
             st.error(f"Unable to load live props: {exc}")
             return
-    payload = st.session_state[state_key]
+    state = st.session_state[state_key]
+    payload = state["payload"] if isinstance(state, dict) and "payload" in state else state
     if not isinstance(payload, PropsBoardPayload):
         st.error("Unexpected props payload shape.")
         return
+    fetch_source = state.get("fetch_source") if isinstance(state, dict) else "live_refresh"
+    snapshot_time = pd.to_datetime(state.get("snapshot_time"), errors="coerce", utc=True) if isinstance(state, dict) else pd.NaT
     board = payload.board
     book_details = payload.book_details
 
     if board.empty:
         st.info("No props were returned for the selected slate date.")
         return
+
+    if pd.notna(snapshot_time):
+        age_seconds = max(int((pd.Timestamp.now(tz="UTC") - snapshot_time).total_seconds()), 0)
+        source_label = "shared stored snapshot" if fetch_source == "stored_snapshot" else "fresh live refresh"
+        st.caption(
+            f"Odds source: {source_label} | Snapshot: {snapshot_time.tz_convert('America/Chicago').strftime('%Y-%m-%d %H:%M:%S %Z')} | Age: {age_seconds}s | Rows: {len(payload.raw_rows):,}"
+        )
+    else:
+        st.caption(f"Odds source: {'shared stored snapshot' if fetch_source == 'stored_snapshot' else 'fresh live refresh'}")
 
     filtered, sort_column, ascending = _apply_filters(board, book_details, payload.sportsbooks)
     display = _display_board(filtered)

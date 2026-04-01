@@ -772,6 +772,54 @@ def read_prop_odds_history(
         )
 
 
+def read_latest_prop_odds_snapshot(
+    config: AppConfig,
+    target_date,
+    markets: tuple[str, ...] | None = None,
+) -> pd.DataFrame:
+    _ensure_driver()
+    if not config.database_url:
+        return pd.DataFrame()
+    database_url = _normalize_database_url(config.database_url)
+    market_filter = ""
+    params: dict[str, object] = {"target_date": target_date}
+    if markets:
+        market_filter = "AND market_key = ANY(%(markets)s)"
+        params["markets"] = list(markets)
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        latest = _read_frame(
+            conn,
+            f"""
+            SELECT fetched_at, cache_key
+            FROM {config.cockroach_props_odds_table}
+            WHERE CAST(substr(commence_time, 1, 10) AS DATE) = %(target_date)s
+              {market_filter}
+            ORDER BY fetched_at DESC
+            LIMIT 1
+            """,
+            params,
+        )
+        if latest.empty:
+            return pd.DataFrame()
+        fetched_at = latest["fetched_at"].iloc[0]
+        cache_key = latest["cache_key"].iloc[0]
+        return _read_frame(
+            conn,
+            f"""
+            SELECT fetched_at, cache_key, provider, event_id, commence_time, away_team, home_team, sportsbook,
+                   sportsbook_key, market_key, market, player_name_raw, player_name, odds_american, line,
+                   selection_label, selection_scope, selection_side, market_family, market_variant, threshold,
+                   display_label, is_primary_line, is_modeled, player_event_market_key, row_source_type,
+                   coverage_completion_status, hr_books_requested, hr_books_present, hr_books_missing
+            FROM {config.cockroach_props_odds_table}
+            WHERE fetched_at = %(fetched_at)s
+              AND cache_key = %(cache_key)s
+            ORDER BY player_name, market_key, sportsbook
+            """,
+            {"fetched_at": fetched_at, "cache_key": cache_key},
+        )
+
+
 def write_props_odds_snapshot(config: AppConfig, frame: pd.DataFrame) -> None:
     _ensure_driver()
     if not config.database_url or frame.empty:

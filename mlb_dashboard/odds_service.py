@@ -322,3 +322,93 @@ def load_live_props_board(config: AppConfig, target_date: date, rosters: pd.Data
     details = pd.DataFrame(detail_rows).sort_values(["row_id", "sort_decimal", "sportsbook"], ascending=[True, False, True], na_position="last").reset_index(drop=True)
     sportsbooks = tuple(sorted(details["sportsbook"].dropna().astype(str).unique().tolist())) if not details.empty else tuple()
     return PropsBoardPayload(board=result, book_details=details, sportsbooks=sportsbooks, raw_rows=raw)
+
+
+def build_props_board_payload_from_rows(frame: pd.DataFrame) -> PropsBoardPayload:
+    if frame.empty:
+        return PropsBoardPayload(
+            board=pd.DataFrame(
+                columns=[
+                    "row_id",
+                    "game",
+                    "team",
+                    "player",
+                    "prop_type",
+                    "side",
+                    "line",
+                    "best_books",
+                    "best_price",
+                    "market_width",
+                    "largest_discrepancy",
+                    "model_odds",
+                    "edge_pct",
+                    "ev_pct",
+                ]
+            ),
+            book_details=pd.DataFrame(columns=["row_id", "sportsbook", "book_key", "price", "price_display"]),
+            sportsbooks=tuple(),
+            raw_rows=pd.DataFrame(),
+        )
+
+    raw = frame.copy()
+    if "game" not in raw.columns:
+        raw["game"] = raw.apply(
+            lambda row: f"{str(row.get('away_team', '')).strip()} @ {str(row.get('home_team', '')).strip()}".strip(),
+            axis=1,
+        )
+    if "team" not in raw.columns:
+        raw["team"] = pd.NA
+    if "player" not in raw.columns:
+        raw["player"] = raw.get("player_name")
+    if "prop_type" not in raw.columns:
+        raw["prop_type"] = raw.get("market_key", pd.Series(dtype="object")).map(MARKET_LABELS).fillna(raw.get("market"))
+    if "side" not in raw.columns:
+        raw["side"] = raw.get("selection_label")
+    if "price" not in raw.columns:
+        raw["price"] = pd.to_numeric(raw.get("odds_american"), errors="coerce")
+
+    grouped_rows: list[dict] = []
+    detail_rows: list[dict] = []
+    for idx, (keys, group) in enumerate(raw.groupby(["game", "team", "player", "prop_type", "side", "line"], dropna=False, sort=False), start=1):
+        prices = pd.to_numeric(group["price"], errors="coerce").tolist()
+        best_price = _best_price(prices)
+        best_books = group.loc[pd.to_numeric(group["price"], errors="coerce") == best_price, "sportsbook"].astype(str).tolist() if best_price is not None else []
+        row_id = f"prop-{idx}"
+        for _, row in group.sort_values(["sportsbook", "price"], ascending=[True, False]).iterrows():
+            detail_rows.append(
+                {
+                    "row_id": row_id,
+                    "sportsbook": str(row.get("sportsbook", "")),
+                    "book_key": str(row.get("sportsbook_key", "")),
+                    "price": float(row["price"]) if pd.notna(row["price"]) else None,
+                    "price_display": "" if pd.isna(row["price"]) else f"{int(row['price']):+d}",
+                    "sort_decimal": _american_to_decimal(row["price"]),
+                }
+            )
+        grouped_rows.append(
+            {
+                "row_id": row_id,
+                "game": keys[0],
+                "team": keys[1],
+                "player": keys[2],
+                "prop_type": keys[3],
+                "side": keys[4],
+                "line": keys[5],
+                "best_books": ", ".join(best_books),
+                "best_price": best_price,
+                "market_width": _market_width_implied(prices),
+                "largest_discrepancy": _largest_discrepancy_points(prices),
+                "model_odds": None,
+                "edge_pct": None,
+                "ev_pct": None,
+            }
+        )
+
+    result = pd.DataFrame(grouped_rows).sort_values(
+        ["prop_type", "player", "line", "best_price"],
+        ascending=[True, True, True, False],
+        na_position="last",
+    ).reset_index(drop=True)
+    details = pd.DataFrame(detail_rows).sort_values(["row_id", "sort_decimal", "sportsbook"], ascending=[True, False, True], na_position="last").reset_index(drop=True)
+    sportsbooks = tuple(sorted(details["sportsbook"].dropna().astype(str).unique().tolist())) if not details.empty else tuple()
+    return PropsBoardPayload(board=result, book_details=details, sportsbooks=sportsbooks, raw_rows=raw)
