@@ -1957,3 +1957,110 @@ def render_slate_export_hub(key: str, title: str, sections: list[dict], heading:
             use_container_width=True,
             key=f"{key}-jpg",
         )
+
+
+def render_slate_export_controls(
+    key: str,
+    title: str,
+    sections: list[dict],
+    full_slate_frame: pd.DataFrame | None = None,
+    heading: str = "Export Top Matchups",
+) -> None:
+    has_sections = bool(sections)
+    has_full_slate = full_slate_frame is not None and not full_slate_frame.empty
+    if not has_sections and not has_full_slate:
+        return
+
+    st.markdown(f"#### {heading}")
+    csv_bytes = None
+    safe_name = f"{key}-full_slate_full_game_compact.csv"
+    if has_full_slate:
+        csv_bytes = full_slate_frame.to_csv(index=False).encode("utf-8-sig")
+
+    if not HAS_PILLOW:
+        if has_full_slate:
+            st.download_button(
+                label="Export Full Slate",
+                data=csv_bytes,
+                file_name=safe_name,
+                mime="text/csv",
+                use_container_width=True,
+                key=f"{key}-csv",
+            )
+        st.caption("Install `Pillow` to enable PNG/JPG export.")
+        return
+
+    prep_key = f"{key}-prepared"
+    if not has_sections:
+        st.download_button(
+            label="Export Full Slate",
+            data=csv_bytes,
+            file_name=safe_name,
+            mime="text/csv",
+            use_container_width=True,
+            key=f"{key}-csv",
+        )
+        return
+
+    if not st.session_state.get(prep_key, False):
+        if has_full_slate:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.button(
+                    "Prepare exports",
+                    key=f"{key}-prepare",
+                    use_container_width=True,
+                    on_click=lambda: st.session_state.__setitem__(prep_key, True),
+                )
+            with col2:
+                st.download_button(
+                    label="Export Full Slate",
+                    data=csv_bytes,
+                    file_name=safe_name,
+                    mime="text/csv",
+                    use_container_width=True,
+                    key=f"{key}-csv",
+                )
+        else:
+            st.button(
+                "Prepare exports",
+                key=f"{key}-prepare",
+                use_container_width=True,
+                on_click=lambda: st.session_state.__setitem__(prep_key, True),
+            )
+        st.caption("Exports are generated on demand to keep the hosted app fast and stable.")
+        return
+
+    subtitle = "Top matchup hitters by game | Generated from the Kasper matchup dashboard"
+    png_bytes = _build_top_matchups_report_image(title=title, subtitle=subtitle, sections=sections)
+    jpg_bytes = png_to_jpg_bytes(png_bytes)
+    image_safe_name = f"{key}-top_matchups"
+    columns = st.columns(3 if has_full_slate else 2)
+    with columns[0]:
+        st.download_button(
+            label="Download PNG",
+            data=png_bytes,
+            file_name=f"{image_safe_name}.png",
+            mime="image/png",
+            use_container_width=True,
+            key=f"{key}-png",
+        )
+    with columns[1]:
+        st.download_button(
+            label="Download JPG",
+            data=jpg_bytes,
+            file_name=f"{image_safe_name}.jpg",
+            mime="image/jpeg",
+            use_container_width=True,
+            key=f"{key}-jpg",
+        )
+    if has_full_slate:
+        with columns[2]:
+            st.download_button(
+                label="Export Full Slate",
+                data=csv_bytes,
+                file_name=safe_name,
+                mime="text/csv",
+                use_container_width=True,
+                key=f"{key}-csv",
+            )

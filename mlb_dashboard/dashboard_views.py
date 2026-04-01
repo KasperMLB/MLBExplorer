@@ -829,6 +829,47 @@ def build_game_export_options(
     }
 
 
+def build_full_slate_export_frame(
+    selected_games: list[dict],
+    export_options_by_game: dict[int, dict[str, list[dict]]],
+) -> pd.DataFrame:
+    rows: list[pd.DataFrame] = []
+    metadata_columns = [
+        "game_pk",
+        "game",
+        "away_team",
+        "home_team",
+        "export_scope",
+        "export_layout",
+        "section_title",
+    ]
+    for game in selected_games:
+        export_options = export_options_by_game.get(game["game_pk"], {})
+        full_game_sections = export_options.get("Full game", [])
+        game_label = f"{game['away_team']} @ {game['home_team']}"
+        for section in full_game_sections:
+            frame = section.get("frame")
+            if not isinstance(frame, pd.DataFrame) or frame.empty:
+                continue
+            section_frame = frame.copy()
+            if isinstance(section_frame.columns, pd.MultiIndex):
+                section_frame.columns = [
+                    " | ".join(str(part) for part in column if str(part))
+                    for column in section_frame.columns.to_flat_index()
+                ]
+            section_frame.insert(0, "section_title", str(section.get("title", "")))
+            section_frame.insert(0, "export_layout", "Compact single poster")
+            section_frame.insert(0, "export_scope", "Full game")
+            section_frame.insert(0, "home_team", game["home_team"])
+            section_frame.insert(0, "away_team", game["away_team"])
+            section_frame.insert(0, "game", game_label)
+            section_frame.insert(0, "game_pk", game["game_pk"])
+            rows.append(section_frame)
+    if not rows:
+        return pd.DataFrame(columns=metadata_columns)
+    return pd.concat(rows, ignore_index=True, sort=False)
+
+
 def aggregate_batter_zone_map(frame: pd.DataFrame, pitch_type: str = "All pitches") -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(columns=["zone", "sample_size", "zone_value", "display_value"])

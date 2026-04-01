@@ -34,6 +34,7 @@ from .dashboard_views import (
     apply_roster_names,
     build_zone_overlay_map,
     build_best_matchups,
+    build_full_slate_export_frame,
     compute_family_fit_score,
     build_game_export_options,
     build_top_matchups_export_sections,
@@ -53,7 +54,7 @@ from .ui_components import (
     render_export_hub,
     render_matchup_header,
     render_metric_grid,
-    render_slate_export_hub,
+    render_slate_export_controls,
     render_zone_tool,
 )
 
@@ -1135,6 +1136,7 @@ def _render_top_sections(
     pitchers_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]],
     hitter_preset: str,
     best_matchups_by_game: dict[int, pd.DataFrame] | None = None,
+    full_slate_export_frame: pd.DataFrame | None = None,
 ) -> None:
     hitter_rows: list[pd.DataFrame] = []
     pitcher_rows: list[pd.DataFrame] = []
@@ -1160,7 +1162,12 @@ def _render_top_sections(
         preset_columns = hitter_columns_for_preset(hitter_preset)
         ranked_hitters = all_hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
         export_sections = build_top_matchups_export_sections(selected_games, hitters_by_game, preset_columns, best_matchups_by_game)
-        render_slate_export_hub("top-matchups-export", "Top Matchups Export", export_sections)
+        render_slate_export_controls(
+            "top-matchups-export",
+            "Top Matchups Export",
+            export_sections,
+            full_slate_export_frame=full_slate_export_frame,
+        )
         render_metric_grid(
             ranked_hitters[["game"] + [column for column in preset_columns if column in all_hitters.columns]].head(10),
             key="top-slate-hitters",
@@ -1435,7 +1442,35 @@ def main() -> None:
         )
     _record_perf(perf_events, "game prep", game_prep_start)
 
-    _render_top_sections(selected_games, hitters_by_game, pitchers_by_game, hitter_preset, best_matchups_by_game)
+    export_options_by_game: dict[int, dict[str, list[dict]]] = {}
+    for game in selected_games:
+        away_hitters, home_hitters = hitters_by_game.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
+        away_summary_by_hand, home_summary_by_hand = pitcher_summary_by_hand_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
+        away_arsenal, home_arsenal = pitcher_arsenal_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
+        away_by_hand, home_by_hand = pitcher_by_hand_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
+        away_count, home_count = pitcher_count_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
+        away_export_sections = _build_pitcher_export_sections(game["away_team"], away_summary_by_hand, away_arsenal, away_by_hand, away_count)
+        home_export_sections = _build_pitcher_export_sections(game["home_team"], home_summary_by_hand, home_arsenal, home_by_hand, home_count)
+        export_options_by_game[game["game_pk"]] = build_game_export_options(
+            game_title=f"{game['away_team']} @ {game['home_team']}",
+            away_team=game["away_team"],
+            home_team=game["home_team"],
+            best_matchups=best_matchups_by_game.get(game["game_pk"], pd.DataFrame()).copy(),
+            away_sections=away_export_sections,
+            home_sections=home_export_sections,
+            away_hitters=away_hitters,
+            home_hitters=home_hitters,
+        )
+    full_slate_export_frame = build_full_slate_export_frame(selected_games, export_options_by_game)
+
+    _render_top_sections(
+        selected_games,
+        hitters_by_game,
+        pitchers_by_game,
+        hitter_preset,
+        best_matchups_by_game,
+        full_slate_export_frame,
+    )
     _render_perf(perf_events)
     st.divider()
 
@@ -1690,16 +1725,18 @@ def main() -> None:
                             use_lightweight=True,
                         )
 
-            export_options = build_game_export_options(
-                game_title=f"{game['away_team']} @ {game['home_team']}",
-                away_team=game["away_team"],
-                home_team=game["home_team"],
-                best_matchups=best_matchups,
-                away_sections=away_export_sections,
-                home_sections=home_export_sections,
-                away_hitters=away_hitters,
-                home_hitters=home_hitters,
-            )
+            export_options = export_options_by_game.get(game["game_pk"])
+            if export_options is None:
+                export_options = build_game_export_options(
+                    game_title=f"{game['away_team']} @ {game['home_team']}",
+                    away_team=game["away_team"],
+                    home_team=game["home_team"],
+                    best_matchups=best_matchups,
+                    away_sections=away_export_sections,
+                    home_sections=home_export_sections,
+                    away_hitters=away_hitters,
+                    home_hitters=home_hitters,
+                )
             render_export_hub(
                 key=f"export-{game['game_pk']}",
                 title=f"{game['away_team']} @ {game['home_team']}",
