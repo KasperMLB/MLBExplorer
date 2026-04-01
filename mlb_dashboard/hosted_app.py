@@ -583,6 +583,10 @@ def main() -> None:
     hitters_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
     pitchers_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
     best_matchups_by_game: dict[int, pd.DataFrame] = {}
+    pitcher_summary_by_hand_map: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
+    pitcher_arsenal_map: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
+    pitcher_by_hand_map: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
+    pitcher_count_map: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
     filtered_pitchers = _filter_pitcher_frame(pitchers, split, recent_window, weighted_mode)
     filtered_summary = _filter_pitcher_frame(pitcher_summary_by_hand, split, recent_window, weighted_mode)
     filtered_arsenal = _filter_pitcher_frame(arsenal, split, recent_window, weighted_mode)
@@ -624,6 +628,22 @@ def main() -> None:
         )
         pitchers_by_game[game["game_pk"]] = (away_pitcher, home_pitcher)
         best_matchups_by_game[game["game_pk"]] = build_best_matchups(*hitters_by_game[game["game_pk"]])
+        pitcher_summary_by_hand_map[game["game_pk"]] = (
+            summary_by_pitcher.get(game.get("away_probable_pitcher_id"), filtered_summary.head(0)).copy(),
+            summary_by_pitcher.get(game.get("home_probable_pitcher_id"), filtered_summary.head(0)).copy(),
+        )
+        pitcher_arsenal_map[game["game_pk"]] = (
+            arsenal_by_pitcher.get(game.get("away_probable_pitcher_id"), filtered_arsenal.head(0)).copy(),
+            arsenal_by_pitcher.get(game.get("home_probable_pitcher_id"), filtered_arsenal.head(0)).copy(),
+        )
+        pitcher_by_hand_map[game["game_pk"]] = (
+            arsenal_by_hand_by_pitcher.get(game.get("away_probable_pitcher_id"), filtered_arsenal_by_hand.head(0)).copy(),
+            arsenal_by_hand_by_pitcher.get(game.get("home_probable_pitcher_id"), filtered_arsenal_by_hand.head(0)).copy(),
+        )
+        pitcher_count_map[game["game_pk"]] = (
+            count_by_pitcher.get(game.get("away_probable_pitcher_id"), filtered_count.head(0)).copy(),
+            count_by_pitcher.get(game.get("home_probable_pitcher_id"), filtered_count.head(0)).copy(),
+        )
     _record_perf(perf_events, "game prep", game_loop_start)
 
     hitter_rows: list[pd.DataFrame] = []
