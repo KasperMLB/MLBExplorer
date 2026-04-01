@@ -91,6 +91,10 @@ def _present_columns(frame: pd.DataFrame, columns: list[str]) -> list[str]:
     return [column for column in columns if column in frame.columns]
 
 
+def _empty_like(frame: pd.DataFrame) -> pd.DataFrame:
+    return frame.head(0).copy() if not frame.empty else frame.copy()
+
+
 def _build_family_fit_board(
     hitters: pd.DataFrame,
     batter_family_zone_profiles: pd.DataFrame,
@@ -344,7 +348,12 @@ def _render_pitcher_tab(
         arsenal_tabs = st.tabs([BATTER_SIDE_LABELS[key] for key in BATTER_SIDE_LABELS])
         for side_key, side_tab in zip(BATTER_SIDE_LABELS, arsenal_tabs):
             with side_tab:
-                side_frame = sort_arsenal_frame(pitcher_arsenal) if side_key == "all" else sort_arsenal_frame(pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key])
+                if side_key == "all":
+                    side_frame = sort_arsenal_frame(pitcher_arsenal)
+                elif "batter_side_key" in pitcher_by_hand.columns:
+                    side_frame = sort_arsenal_frame(pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key])
+                else:
+                    side_frame = _empty_like(pitcher_by_hand)
                 if side_frame.empty:
                     st.info("No arsenal data available.")
                 else:
@@ -370,11 +379,16 @@ def _render_pitcher_tab(
         sub_tabs = st.tabs([BATTER_SIDE_LABELS[key] for key in BATTER_SIDE_LABELS])
         for side_key, side_tab in zip(BATTER_SIDE_LABELS, sub_tabs):
             with side_tab:
-                side_count = pitcher_count_usage.loc[pitcher_count_usage["batter_side_key"] == side_key]
+                if "batter_side_key" in pitcher_count_usage.columns:
+                    side_count = pitcher_count_usage.loc[pitcher_count_usage["batter_side_key"] == side_key]
+                else:
+                    side_count = _empty_like(pitcher_count_usage)
                 if side_key == "all":
                     side_arsenal = pitcher_arsenal[["pitch_name", "usage_pct"]] if not pitcher_arsenal.empty else pd.DataFrame(columns=["pitch_name", "usage_pct"])
-                else:
+                elif "batter_side_key" in pitcher_by_hand.columns:
                     side_arsenal = pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key, ["pitch_name", "usage_pct"]]
+                else:
+                    side_arsenal = pd.DataFrame(columns=["pitch_name", "usage_pct"])
                 count_frame = pivot_count_usage(side_count, side_arsenal)
                 if count_frame.empty:
                     st.info("No count-state usage data available.")
@@ -420,7 +434,12 @@ def _build_pitcher_export_sections(
                     }
                 )
 
-        side_arsenal = sort_arsenal_frame(pitcher_arsenal) if side_key == "all" else sort_arsenal_frame(pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key])
+        if side_key == "all":
+            side_arsenal = sort_arsenal_frame(pitcher_arsenal)
+        elif "batter_side_key" in pitcher_by_hand.columns:
+            side_arsenal = sort_arsenal_frame(pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key])
+        else:
+            side_arsenal = _empty_like(pitcher_by_hand)
         if not side_arsenal.empty:
             arsenal_columns = _present_columns(side_arsenal, ARSENAL_COLUMNS)
             export_sections.append(
@@ -432,11 +451,16 @@ def _build_pitcher_export_sections(
                 }
             )
 
-        side_count = pitcher_count_usage.loc[pitcher_count_usage["batter_side_key"] == side_key]
+        if "batter_side_key" in pitcher_count_usage.columns:
+            side_count = pitcher_count_usage.loc[pitcher_count_usage["batter_side_key"] == side_key]
+        else:
+            side_count = _empty_like(pitcher_count_usage)
         if side_key == "all":
             side_usage = pitcher_arsenal[["pitch_name", "usage_pct"]] if not pitcher_arsenal.empty else pd.DataFrame(columns=["pitch_name", "usage_pct"])
-        else:
+        elif "batter_side_key" in pitcher_by_hand.columns:
             side_usage = pitcher_by_hand.loc[pitcher_by_hand["batter_side_key"] == side_key, ["pitch_name", "usage_pct"]]
+        else:
+            side_usage = pd.DataFrame(columns=["pitch_name", "usage_pct"])
         count_frame = pivot_count_usage(side_count, side_usage)
         if not count_frame.empty:
             count_columns = _present_columns(count_frame, COUNT_USAGE_COLUMNS)
@@ -603,14 +627,14 @@ def main() -> None:
         away_pitcher, home_pitcher = pitchers_by_game.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
         away_pitcher_id = game.get("away_probable_pitcher_id")
         home_pitcher_id = game.get("home_probable_pitcher_id")
-        away_summary_by_hand = summary_by_pitcher.get(away_pitcher_id, pd.DataFrame()).copy()
-        home_summary_by_hand = summary_by_pitcher.get(home_pitcher_id, pd.DataFrame()).copy()
-        away_arsenal = arsenal_by_pitcher.get(away_pitcher_id, pd.DataFrame()).copy()
-        home_arsenal = arsenal_by_pitcher.get(home_pitcher_id, pd.DataFrame()).copy()
-        away_by_hand = arsenal_by_hand_by_pitcher.get(away_pitcher_id, pd.DataFrame()).copy()
-        home_by_hand = arsenal_by_hand_by_pitcher.get(home_pitcher_id, pd.DataFrame()).copy()
-        away_count = count_by_pitcher.get(away_pitcher_id, pd.DataFrame()).copy()
-        home_count = count_by_pitcher.get(home_pitcher_id, pd.DataFrame()).copy()
+        away_summary_by_hand = summary_by_pitcher.get(away_pitcher_id, filtered_summary.head(0)).copy()
+        home_summary_by_hand = summary_by_pitcher.get(home_pitcher_id, filtered_summary.head(0)).copy()
+        away_arsenal = arsenal_by_pitcher.get(away_pitcher_id, filtered_arsenal.head(0)).copy()
+        home_arsenal = arsenal_by_pitcher.get(home_pitcher_id, filtered_arsenal.head(0)).copy()
+        away_by_hand = arsenal_by_hand_by_pitcher.get(away_pitcher_id, filtered_arsenal_by_hand.head(0)).copy()
+        home_by_hand = arsenal_by_hand_by_pitcher.get(home_pitcher_id, filtered_arsenal_by_hand.head(0)).copy()
+        away_count = count_by_pitcher.get(away_pitcher_id, filtered_count.head(0)).copy()
+        home_count = count_by_pitcher.get(home_pitcher_id, filtered_count.head(0)).copy()
         away_family_context = family_context_by_pitcher.get(away_pitcher_id, pd.DataFrame()).copy()
         home_family_context = family_context_by_pitcher.get(home_pitcher_id, pd.DataFrame()).copy()
         away_movement = movement_arsenal_by_pitcher.get(away_pitcher_id, pd.DataFrame()).copy()
