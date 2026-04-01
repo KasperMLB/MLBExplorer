@@ -889,6 +889,8 @@ def _table_section_height(title: str, frame: pd.DataFrame) -> int:
 def _export_section_height_estimate(title: str, frame: pd.DataFrame, subtitle: str = "") -> int:
     lowered = title.lower()
     subtitle_height = 20 if subtitle else 0
+    if "top slate hitters" in lowered or "top slate pitchers" in lowered:
+        return 82 + len(frame) * 46 + 40 + subtitle_height
     if "summary" in lowered:
         return _table_section_height(title, frame) + 24 + subtitle_height
     return 54 + len(frame) * 62 + 36 + subtitle_height
@@ -1033,6 +1035,15 @@ REPORT_BORDER = "#cfd8e3"
 REPORT_TEXT = "#111111"
 REPORT_MUTED = "#4b5563"
 REPORT_ACCENT = "#1f4e79"
+GRAFFITI_BG = "#f4efe4"
+GRAFFITI_PANEL = "#f7f4ec"
+GRAFFITI_PANEL_ALT = "#fffaf0"
+GRAFFITI_BORDER = "#1d1d1d"
+GRAFFITI_TAG = "#0f0f10"
+GRAFFITI_PINK = "#ff5c8a"
+GRAFFITI_ORANGE = "#ff8a3d"
+GRAFFITI_TEAL = "#1cb5a3"
+GRAFFITI_YELLOW = "#ffd24a"
 
 
 _FONT_WARNING_EMITTED = False
@@ -1083,6 +1094,43 @@ def _section_team(title: str) -> str:
 
 def _panel(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], fill: str = REPORT_PANEL, radius: int = 18) -> None:
     draw.rounded_rectangle(box, radius=radius, fill=fill, outline=REPORT_BORDER, width=2)
+
+
+def _graffiti_panel(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    fill: str = GRAFFITI_PANEL,
+    radius: int = 28,
+) -> None:
+    left, top, right, bottom = box
+    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=GRAFFITI_BORDER, width=3)
+    draw.arc((left - 10, top - 12, left + 120, top + 64), start=200, end=350, fill=GRAFFITI_PINK, width=5)
+    draw.arc((right - 150, top - 8, right + 8, top + 82), start=190, end=320, fill=GRAFFITI_TEAL, width=5)
+    draw.line((left + 20, bottom - 18, left + 90, bottom - 30, left + 150, bottom - 16), fill=GRAFFITI_ORANGE, width=4)
+    draw.line((right - 170, bottom - 26, right - 115, bottom - 16, right - 60, bottom - 28), fill=GRAFFITI_PINK, width=4)
+
+
+def _draw_graffiti_header(
+    draw: ImageDraw.ImageDraw,
+    width: int,
+    title: str,
+    subtitle: str,
+) -> int:
+    header_box = (20, 20, width - 20, 190)
+    _graffiti_panel(draw, header_box, fill=GRAFFITI_BG, radius=34)
+    draw.rounded_rectangle((40, 38, 220, 76), radius=16, fill=GRAFFITI_TAG)
+    _text(draw, (58, 46), "KASPER", _load_font(22, bold=True), "#ffffff")
+    draw.rounded_rectangle((238, 46, 430, 64), radius=9, fill=GRAFFITI_PINK)
+    draw.rounded_rectangle((248, 66, 478, 82), radius=9, fill=GRAFFITI_TEAL)
+
+    hero_font = _load_font(52, bold=True)
+    shadow_fill = GRAFFITI_ORANGE
+    outline_fill = GRAFFITI_TAG
+    _text(draw, (54, 82), "KASPER", hero_font, shadow_fill, stroke_width=7, stroke_fill=outline_fill)
+    _text(draw, (48, 76), "KASPER", hero_font, "#fff8ed", stroke_width=3, stroke_fill=GRAFFITI_TAG)
+    _text(draw, (48, 128), title, _load_font(32, bold=True), REPORT_TEXT)
+    _text(draw, (48, 156), subtitle, _load_font(22, bold=True), REPORT_MUTED)
+    return header_box[3]
 
 
 def _text(
@@ -1494,24 +1542,19 @@ def _draw_top_matchups_game_section(
 def _build_top_matchups_report_image(title: str, subtitle: str, sections: list[dict]) -> bytes:
     if not HAS_PILLOW:
         raise RuntimeError("Pillow is required for PNG/JPG export.")
-    title_font = _load_font(38, bold=True)
-    subtitle_font = _load_font(22, bold=True)
     section_title_font = _load_font(36, bold=True)
     section_body_font = _load_font(24, bold=True)
-    width = 1240
-    header_height = 98
-    total_height = header_height + 24
+    width = 1480
+    header_height = 190
+    total_height = header_height + 10
     for section in sections:
         total_height += _export_section_height_estimate(section["title"], section["frame"], str(section.get("subtitle", "")))
 
-    image = Image.new("RGB", (width, total_height), REPORT_BG)
+    image = Image.new("RGB", (width, total_height), GRAFFITI_BG)
     draw = ImageDraw.Draw(image)
-    _panel(draw, (18, 18, width - 18, header_height), fill="#f5f7fa", radius=22)
-    _text(draw, (36, 26), "KASPER SCOUTING REPORT", _load_font(20, bold=True), REPORT_ACCENT)
-    _text(draw, (36, 46), title, title_font, REPORT_TEXT)
-    _text(draw, (36, 72), subtitle, subtitle_font, REPORT_TEXT)
+    _draw_graffiti_header(draw, width, title, subtitle)
 
-    y = header_height + 12
+    y = header_height + 8
     for section in sections:
         if section["frame"].empty:
             continue
@@ -1527,10 +1570,10 @@ def _slate_group_height(section: dict) -> int:
     inner_sections = section.get("sections", [])
     if not inner_sections:
         return 0
-    total = 112
+    total = 98
     for inner in inner_sections:
-        total += _export_section_height_estimate(inner["title"], inner["frame"], str(inner.get("subtitle", ""))) + 8
-    return total + 18
+        total += _export_section_height_estimate(inner["title"], inner["frame"], str(inner.get("subtitle", ""))) + 4
+    return total + 10
 
 
 def _draw_slate_summary_group(
@@ -1547,46 +1590,120 @@ def _draw_slate_summary_group(
         return top
 
     panel_height = _slate_group_height({**section, "sections": inner_sections})
-    _panel(draw, (left, top, left + width, top + panel_height), fill="#f3f7fb", radius=28)
-    chip_width = min(420, width - 48)
-    draw.rounded_rectangle((left + 24, top + 18, left + 24 + chip_width, top + 66), radius=18, fill=REPORT_ACCENT)
-    _text(draw, (left + 42, top + 29), section["title"], _load_font(26, bold=True), "#ffffff")
+    _graffiti_panel(draw, (left, top, left + width, top + panel_height), fill=GRAFFITI_PANEL, radius=30)
+    chip_width = min(480, width - 56)
+    draw.rounded_rectangle((left + 24, top + 16, left + 24 + chip_width, top + 62), radius=18, fill=GRAFFITI_TAG)
+    draw.rounded_rectangle((left + 34, top + 58, left + 210, top + 72), radius=7, fill=GRAFFITI_YELLOW)
+    _text(draw, (left + 42, top + 25), section["title"], _load_font(28, bold=True), "#ffffff")
     if section.get("subtitle"):
-        _text(draw, (left + 28, top + 76), str(section["subtitle"]), _load_font(20, bold=True), REPORT_TEXT)
+        _text(draw, (left + 28, top + 74), str(section["subtitle"]), _load_font(20, bold=True), REPORT_TEXT)
 
-    y = top + 108
+    y = top + 96
     for inner in inner_sections:
-        y = _draw_export_section(draw, y, left + 18, width - 36, inner, title_font, body_font) + 8
+        y = _draw_export_section(draw, y, left + 16, width - 32, inner, title_font, body_font) + 4
+    return top + panel_height
+
+
+def _draw_top_slate_table_section(
+    draw: ImageDraw.ImageDraw,
+    top: int,
+    left: int,
+    width: int,
+    section: dict,
+    font: ImageFont.ImageFont,
+    small_font: ImageFont.ImageFont,
+) -> int:
+    frame = section["frame"]
+    title = section["title"]
+    subtitle = str(section.get("subtitle", "")).strip()
+    title_font = _load_font(28, bold=True)
+    subtitle_font = _load_font(19, bold=True)
+    cell_font = _load_font(16, bold=True)
+    header_font = _load_font(15, bold=True)
+    header_height = 40
+    row_height = 44
+    padding_x = 12
+    padding_y = 10
+    title_block_height = 74 if subtitle else 54
+    panel_height = title_block_height + header_height + row_height * max(len(frame), 1) + 24
+    _graffiti_panel(draw, (left, top, left + width, top + panel_height), fill=GRAFFITI_PANEL_ALT, radius=24)
+    chip_width = min(360, width - 52)
+    draw.rounded_rectangle((left + 22, top + 14, left + 22 + chip_width, top + 52), radius=14, fill=GRAFFITI_TAG)
+    _text(draw, (left + 36, top + 21), title, title_font, "#ffffff")
+    if subtitle:
+        _text(draw, (left + 28, top + 54), subtitle, subtitle_font, REPORT_TEXT)
+
+    if frame.empty:
+        _text(draw, (left + 28, top + title_block_height), "No data available", subtitle_font, REPORT_MUTED)
+        return top + panel_height
+
+    y = top + title_block_height
+    display_frame = _display_frame(frame).copy()
+    headers = list(display_frame.columns)
+    source_by_label = {DISPLAY_LABELS.get(col, col): col for col in frame.columns}
+    formatted_rows = [[_format_value(source_by_label.get(column, column), row[column], export_mode=True) for column in headers] for _, row in display_frame.iterrows()]
+
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    col_widths: list[int] = []
+    for col_idx, header in enumerate(headers):
+        max_width = _measure(probe, header, header_font)[0]
+        for row in formatted_rows:
+            max_width = max(max_width, _measure(probe, row[col_idx], cell_font)[0])
+        col_widths.append(max_width + padding_x * 2)
+    total_width = sum(col_widths)
+    if total_width < width - 28:
+        extra = (width - 28 - total_width) // max(len(col_widths), 1)
+        col_widths = [size + extra for size in col_widths]
+
+    x = left + 14
+    for idx, header in enumerate(headers):
+        draw.rounded_rectangle((x, y, x + col_widths[idx], y + header_height), radius=10, fill="#dbe6f3")
+        _text(draw, (x + padding_x, y + 9), header, header_font, REPORT_TEXT)
+        x += col_widths[idx]
+
+    for row_idx, row in enumerate(formatted_rows, start=1):
+        current_y = y + header_height + (row_idx - 1) * row_height
+        x = left + 14
+        for col_idx, value in enumerate(row):
+            display_label = headers[col_idx]
+            source_column = source_by_label.get(display_label, display_label)
+            fill = "#fffdf8" if row_idx % 2 else "#f8f3ea"
+            if source_column in frame.columns and (source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS):
+                fill = _background_hex(
+                    source_column,
+                    frame.iloc[row_idx - 1][source_column],
+                    frame[source_column],
+                    lower_is_better=section.get("lower_is_better") or LOWER_IS_BETTER,
+                    higher_is_better=section.get("higher_is_better") or HIGHER_IS_BETTER,
+                ) or fill
+            draw.rounded_rectangle((x, current_y, x + col_widths[col_idx], current_y + row_height - 3), radius=8, fill=fill)
+            _text(draw, (x + padding_x, current_y + padding_y), value, cell_font, REPORT_TEXT)
+            x += col_widths[col_idx]
     return top + panel_height
 
 
 def _build_slate_summary_report_image(title: str, subtitle: str, sections: list[dict]) -> bytes:
     if not HAS_PILLOW:
         raise RuntimeError("Pillow is required for PNG/JPG export.")
-    title_font = _load_font(38, bold=True)
-    subtitle_font = _load_font(22, bold=True)
     section_title_font = _load_font(34, bold=True)
     section_body_font = _load_font(24, bold=True)
-    width = 1320
-    header_height = 98
-    total_height = header_height + 24
+    width = 1520
+    header_height = 190
+    total_height = header_height + 10
     for section in sections:
         if section.get("section_type") == "slate_summary_group":
-            total_height += _slate_group_height(section) + 12
+            total_height += _slate_group_height(section) + 8
         else:
             total_height += _export_section_height_estimate(section["title"], section["frame"], str(section.get("subtitle", ""))) + 8
 
-    image = Image.new("RGB", (width, total_height), REPORT_BG)
+    image = Image.new("RGB", (width, total_height), GRAFFITI_BG)
     draw = ImageDraw.Draw(image)
-    _panel(draw, (18, 18, width - 18, header_height), fill="#f5f7fa", radius=22)
-    _text(draw, (36, 26), "KASPER SCOUTING REPORT", _load_font(20, bold=True), REPORT_ACCENT)
-    _text(draw, (36, 46), title, title_font, REPORT_TEXT)
-    _text(draw, (36, 72), subtitle, subtitle_font, REPORT_TEXT)
+    _draw_graffiti_header(draw, width, title, subtitle)
 
-    y = header_height + 12
+    y = header_height + 8
     for section in sections:
         if section.get("section_type") == "slate_summary_group":
-            y = _draw_slate_summary_group(draw, y, 12, width - 24, section, section_title_font, section_body_font) + 10
+            y = _draw_slate_summary_group(draw, y, 12, width - 24, section, section_title_font, section_body_font) + 6
             continue
         if section["frame"].empty:
             continue
@@ -1609,6 +1726,8 @@ def _draw_export_section(
 ) -> int:
     if section.get("section_type") == "top_matchups_game":
         return _draw_top_matchups_game_section(draw, top, left, width, section, font, small_font)
+    if section.get("section_type") in {"top_slate_hitters", "top_slate_pitchers"}:
+        return _draw_top_slate_table_section(draw, top, left, width, section, font, small_font)
     title = section["title"]
     frame = section["frame"]
     return _draw_dark_table(
