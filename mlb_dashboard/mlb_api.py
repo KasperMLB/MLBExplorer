@@ -82,3 +82,7 @@ def fetch_team_rosters_for_schedule(schedule: list[dict], target_date: date) -> 
 
 def fetch_tomorrow_schedule(today: date) -> list[dict]:
     return fetch_schedule(today + timedelta(days=1))
+
+
+def fetch_game_feed(game_pk: int) -> dict:
+    return _get_json(f"/../v1.1/game/{game_pk}/feed/live")

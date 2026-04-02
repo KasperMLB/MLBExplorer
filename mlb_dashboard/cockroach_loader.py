@@ -585,6 +585,156 @@ def _ensure_table_columns(conn, table_name: str, column_definitions: dict[str, s
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} {clean_definition}")
 
 
+def _create_live_event_tables(conn, config: AppConfig) -> None:
+    live_pitch_mix_columns = {
+        "event_key": "STRING PRIMARY KEY",
+        "pa_key": "STRING",
+        "game_pk": "INT8",
+        "game_date": "STRING",
+        "source_season": "INT8",
+        "batter": "INT8",
+        "pitcher": "INT8",
+        "player_name": "STRING",
+        "stand": "STRING",
+        "p_throws": "STRING",
+        "home_team": "STRING",
+        "away_team": "STRING",
+        "inning": "INT8",
+        "inning_topbot": "STRING",
+        "at_bat_number": "INT8",
+        "pitch_number": "INT8",
+        "pitch_type": "STRING",
+        "pitch_name": "STRING",
+        "release_speed": "FLOAT8",
+        "effective_speed": "FLOAT8",
+        "release_spin_rate": "FLOAT8",
+        "spin_axis": "FLOAT8",
+        "pfx_x": "FLOAT8",
+        "pfx_z": "FLOAT8",
+        "release_pos_x": "FLOAT8",
+        "release_pos_y": "FLOAT8",
+        "release_pos_z": "FLOAT8",
+        "release_extension": "FLOAT8",
+        "plate_x": "FLOAT8",
+        "plate_z": "FLOAT8",
+        "zone": "INT8",
+        "balls": "INT8",
+        "strikes": "INT8",
+        "outs_when_up": "INT8",
+        "bat_score": "INT8",
+        "fld_score": "INT8",
+        "post_bat_score": "INT8",
+        "post_fld_score": "INT8",
+        "type": "STRING",
+        "description": "STRING",
+        "events": "STRING",
+        "launch_speed": "FLOAT8",
+        "launch_angle": "FLOAT8",
+        "hit_distance_sc": "FLOAT8",
+        "hc_x": "FLOAT8",
+        "hc_y": "FLOAT8",
+        "spray_angle": "FLOAT8",
+        "bb_type": "STRING",
+        "launch_speed_angle": "INT8",
+        "barrel": "INT8",
+        "estimated_ba_using_speedangle": "FLOAT8",
+        "estimated_woba_using_speedangle": "FLOAT8",
+        "woba_value": "FLOAT8",
+        "woba_denom": "INT8",
+        "delta_home_win_exp": "FLOAT8",
+        "delta_run_exp": "FLOAT8",
+        "created_at": "TIMESTAMP",
+    }
+    baseline_columns = {
+        "rowid": "INT8 NOT NULL DEFAULT unique_rowid()",
+        "player_name": "STRING",
+        "event_key": "STRING",
+        "batter": "INT8",
+        "pitcher": "INT8",
+        "game_date": "STRING",
+        "game_pk": "INT8",
+        "source_season": "INT8",
+        "pitch_type": "STRING",
+        "pitch_name": "STRING",
+        "events": "STRING",
+        "description": "STRING",
+        "stand": "STRING",
+        "p_throws": "STRING",
+        "home_team": "STRING",
+        "away_team": "STRING",
+        "inning": "INT8",
+        "inning_topbot": "STRING",
+        "at_bat_number": "INT8",
+        "pitch_number": "INT8",
+        "plate_x": "FLOAT8",
+        "plate_z": "FLOAT8",
+        "release_speed": "FLOAT8",
+        "release_spin_rate": "FLOAT8",
+        "release_extension": "FLOAT8",
+        "release_pos_x": "FLOAT8",
+        "release_pos_z": "FLOAT8",
+        "pfx_x": "FLOAT8",
+        "pfx_z": "FLOAT8",
+        "launch_speed": "FLOAT8",
+        "launch_angle": "FLOAT8",
+        "estimated_woba_using_speedangle": "FLOAT8",
+        "spray_angle": "FLOAT8",
+        "hc_x": "FLOAT8",
+        "hc_y": "FLOAT8",
+        "bb_type": "STRING",
+        "balls": "FLOAT8",
+        "strikes": "FLOAT8",
+        "outs_when_up": "FLOAT8",
+        "bat_score": "FLOAT8",
+        "fld_score": "FLOAT8",
+        "post_bat_score": "FLOAT8",
+        "post_fld_score": "FLOAT8",
+        "pitcher_hand": "STRING",
+        "batter_stand": "STRING",
+        "movement_magnitude": "FLOAT8",
+        "spin_efficiency_proxy": "FLOAT8",
+        "release_height_proxy": "FLOAT8",
+        "release_side_proxy": "FLOAT8",
+        "count_string": "STRING",
+        "baseline_mode": "STRING",
+        "prior_sample_size": "INT8",
+        "season_2026_sample_size": "INT8",
+        "prior_weight": "FLOAT8",
+        "season_2026_weight": "FLOAT8",
+        "baseline_driver": "STRING",
+        "rolling_overlay_active": "BOOL",
+        "baseline_role": "STRING",
+        "baseline_source": "STRING",
+        "snapshot_built_at": "STRING",
+        "snapshot_version": "STRING",
+        "source_status": "STRING",
+    }
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {config.cockroach_live_pitch_mix_table} ({', '.join(f'{name} {definition}' for name, definition in live_pitch_mix_columns.items())})"
+    )
+    _ensure_table_columns(conn, config.cockroach_live_pitch_mix_table, live_pitch_mix_columns)
+    conn.execute(
+        f"CREATE UNIQUE INDEX IF NOT EXISTS idx_lpm_game_pk ON {config.cockroach_live_pitch_mix_table} (game_pk, event_key)"
+    )
+    conn.execute(
+        f"CREATE UNIQUE INDEX IF NOT EXISTS idx_lpm_pa_key ON {config.cockroach_live_pitch_mix_table} (pa_key, event_key)"
+    )
+    conn.execute(
+        f"CREATE UNIQUE INDEX IF NOT EXISTS idx_lpm_batter_date ON {config.cockroach_live_pitch_mix_table} (batter, game_date, event_key)"
+    )
+
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {config.cockroach_pitcher_baseline_event_table} ({', '.join(f'{name} {definition}' for name, definition in baseline_columns.items())}, PRIMARY KEY (rowid))"
+    )
+    _ensure_table_columns(conn, config.cockroach_pitcher_baseline_event_table, baseline_columns)
+    conn.execute(
+        f"CREATE INDEX IF NOT EXISTS idx_shared_pitcher_baseline_event_rows_player_name ON {config.cockroach_pitcher_baseline_event_table} (player_name)"
+    )
+    conn.execute(
+        f"CREATE INDEX IF NOT EXISTS idx_shared_pitcher_baseline_event_rows_player_date ON {config.cockroach_pitcher_baseline_event_table} (player_name, game_date)"
+    )
+
+
 def _create_props_odds_table(conn, config: AppConfig) -> None:
     columns = {
         "rowid": "INT8 NOT NULL DEFAULT unique_rowid()",
@@ -628,7 +778,7 @@ def _create_props_odds_table(conn, config: AppConfig) -> None:
 
 
 def _prepare_records(frame: pd.DataFrame, columns: list[str]) -> list[tuple]:
-    work = frame.loc[:, columns].copy()
+    work = frame.loc[:, columns].copy().astype(object)
     for column in work.columns:
         if column == "last_updated_at":
             work[column] = pd.to_datetime(work[column], errors="coerce").apply(lambda value: value.to_pydatetime() if pd.notna(value) else None)
@@ -1113,6 +1263,48 @@ def write_props_odds_snapshot(config: AppConfig, frame: pd.DataFrame) -> None:
                 ]
             ].copy(),
         )
+
+
+def replace_live_event_payload(
+    config: AppConfig,
+    live_pitch_mix: pd.DataFrame,
+    baseline_event_rows: pd.DataFrame,
+    *,
+    start_date: date,
+    end_date: date,
+) -> None:
+    _ensure_driver()
+    if not config.database_url:
+        raise RuntimeError("DATABASE_URL must be set to write live event payloads.")
+    database_url = _normalize_database_url(config.database_url)
+    with psycopg.connect(database_url) as conn:
+        _create_live_event_tables(conn, config)
+        live_game_pks = sorted({int(value) for value in pd.to_numeric(live_pitch_mix.get("game_pk"), errors="coerce").dropna().astype(int).tolist()}) if not live_pitch_mix.empty else []
+        baseline_game_pks = sorted({int(value) for value in pd.to_numeric(baseline_event_rows.get("game_pk"), errors="coerce").dropna().astype(int).tolist()}) if not baseline_event_rows.empty else []
+        if live_game_pks:
+            conn.execute(
+                f"DELETE FROM {config.cockroach_live_pitch_mix_table} WHERE game_pk = ANY(%s)",
+                (live_game_pks,),
+            )
+        else:
+            conn.execute(
+                f"DELETE FROM {config.cockroach_live_pitch_mix_table} WHERE CAST(game_date AS DATE) BETWEEN %s AND %s",
+                (start_date, end_date),
+            )
+        if baseline_game_pks:
+            conn.execute(
+                f"DELETE FROM {config.cockroach_pitcher_baseline_event_table} WHERE game_pk = ANY(%s)",
+                (baseline_game_pks,),
+            )
+        else:
+            conn.execute(
+                f"DELETE FROM {config.cockroach_pitcher_baseline_event_table} WHERE CAST(game_date AS DATE) BETWEEN %s AND %s",
+                (start_date, end_date),
+            )
+        _insert_frame(conn, config.cockroach_live_pitch_mix_table, live_pitch_mix)
+        baseline_columns = [column for column in baseline_event_rows.columns if column != "rowid"]
+        _insert_frame(conn, config.cockroach_pitcher_baseline_event_table, baseline_event_rows.loc[:, baseline_columns].copy())
+        conn.commit()
 
 
 def load_cockroach_payload(config: AppConfig) -> CockroachPayload:

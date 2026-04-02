@@ -581,6 +581,8 @@ def add_hitter_matchup_score(
 
 def _projected_lineup_weights(frame: pd.DataFrame) -> tuple[pd.Series, str]:
     slots = pd.to_numeric(frame.get("projected_lineup_slot"), errors="coerce")
+    if not isinstance(slots, pd.Series):
+        return pd.Series(1.0, index=frame.index, dtype="float64"), "team_pool"
     if slots.notna().nunique() >= 7:
         weights = (11 - slots).clip(lower=1, upper=10).fillna(1.0).astype(float)
         return weights, "projected_lineup"

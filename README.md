@@ -44,6 +44,24 @@ python -m mlb_dashboard.health_check `
 
 Use `--strict` to return a non-zero exit code when either tracked Cockroach source is stale.
 
+## Ingest 2026 live events into Cockroach
+
+```powershell
+python -m mlb_dashboard.ingest --date 2026-04-02
+```
+
+Backfill a date range:
+
+```powershell
+python -m mlb_dashboard.ingest --start-date 2026-03-27 --end-date 2026-04-02
+```
+
+Sync recent days and then build:
+
+```powershell
+python -m mlb_dashboard.ingest --sync-recent 3 --build-after
+```
+
 ## Run the local explorer
 
 ```powershell
