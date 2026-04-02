@@ -6,7 +6,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import pandas as pd
 
 from .config import AppConfig
-from .metrics import IN_PLAY_TYPES, add_metric_flags
+from .metrics import add_metric_flags
 
 try:
     import certifi
@@ -860,11 +860,10 @@ def read_hitter_exit_velo_events(
         "launch_angle",
     ]
     if not config.database_url:
-        return pd.DataFrame(columns=columns + ["team", "opponent", "game_label"])
+        raise RuntimeError("DATABASE_URL must be set to load exit velocity results from Cockroach.")
     database_url = _normalize_database_url(config.database_url)
     where = [
         "batter IS NOT NULL",
-        "player_name IS NOT NULL",
         "launch_speed IS NOT NULL",
         "launch_angle IS NOT NULL",
     ]
@@ -879,7 +878,7 @@ def read_hitter_exit_velo_events(
             f"""
             SELECT game_date, game_pk, away_team, home_team, inning_topbot, batter, player_name,
                    at_bat_number, pitch_number, bb_type, events, launch_speed, launch_angle
-            FROM {config.cockroach_live_pitch_mix_table}
+            FROM {config.cockroach_pitcher_baseline_event_table}
             WHERE {where_sql}
             ORDER BY game_date DESC, game_pk DESC, at_bat_number DESC, pitch_number DESC
             """,
@@ -894,13 +893,11 @@ def read_hitter_exit_velo_events(
     work["batter"] = pd.to_numeric(work["batter"], errors="coerce")
     work["at_bat_number"] = pd.to_numeric(work["at_bat_number"], errors="coerce")
     work["pitch_number"] = pd.to_numeric(work["pitch_number"], errors="coerce")
-    work["bb_type"] = work["bb_type"].fillna("").astype(str).str.lower()
     work = work.loc[
         work["game_date"].notna()
         & work["launch_speed"].notna()
         & work["launch_angle"].notna()
         & work["batter"].notna()
-        & work["bb_type"].isin(IN_PLAY_TYPES)
     ].copy()
     if work.empty:
         return pd.DataFrame(columns=columns + ["team", "opponent", "game_label"])

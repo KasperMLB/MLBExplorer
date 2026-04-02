@@ -1,16 +1,24 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
 
 from .cockroach_loader import read_hitter_exit_velo_events
 from .config import AppConfig
+from .dashboard_views import latest_built_date
+from .query_engine import StatcastQueryEngine, load_remote_parquet
 
 
 WINDOWS = [1, 3, 5, 10, 15, 25]
 SORT_DEPTH = 20
+
+
+def _hosted_base_url() -> str:
+    import os
+
+    return os.getenv("MLB_HOSTED_BASE_URL", "").rstrip("/")
 
 
 def _empty_board() -> pd.DataFrame:
@@ -51,6 +59,45 @@ def _prepare_events(events: pd.DataFrame) -> pd.DataFrame:
     work = work.merge(games, on=["batter", "game_pk", "game_date"], how="left")
     work["player_label"] = work["player_name"].fillna("").astype(str)
     return work
+
+
+def _load_rosters(config: AppConfig, end_date: date | None) -> pd.DataFrame:
+    target_date = end_date or latest_built_date(config.daily_dir) or date.today()
+    local_path = config.daily_dir / target_date.isoformat() / "rosters.parquet"
+    if local_path.exists():
+        engine = StatcastQueryEngine(config)
+        return engine.load_daily_rosters(target_date)
+    base_url = _hosted_base_url()
+    if not base_url:
+        return pd.DataFrame(columns=["team", "player_id", "player_name"])
+    for offset in range(21):
+        candidate = target_date - timedelta(days=offset)
+        try:
+            rosters = load_remote_parquet(f"{base_url}/daily/{candidate.isoformat()}", "rosters.parquet")
+            if not rosters.empty:
+                return rosters
+        except Exception:
+            continue
+    return pd.DataFrame(columns=["team", "player_id", "player_name"])
+
+
+def _apply_roster_names(events: pd.DataFrame, rosters: pd.DataFrame) -> pd.DataFrame:
+    if events.empty:
+        return events
+    work = events.copy()
+    if rosters.empty or "player_id" not in rosters.columns or "player_name" not in rosters.columns:
+        work["player_name"] = work["batter"].apply(lambda value: f"ID {int(value)}" if pd.notna(value) else "Unknown")
+        return work
+    lookup = rosters.loc[:, [column for column in ["team", "player_id", "player_name"] if column in rosters.columns]].copy()
+    lookup["player_id"] = pd.to_numeric(lookup["player_id"], errors="coerce")
+    lookup = lookup.loc[lookup["player_id"].notna()].copy()
+    lookup["player_id"] = lookup["player_id"].astype(int)
+    lookup = lookup.drop_duplicates(["team", "player_id"])
+    work = work.merge(lookup, left_on=["team", "batter"], right_on=["team", "player_id"], how="left", suffixes=("", "_roster"))
+    work["player_name"] = work["player_name_roster"]
+    unresolved = work["player_name"].isna() | work["player_name"].astype(str).str.strip().eq("")
+    work.loc[unresolved, "player_name"] = work.loc[unresolved, "batter"].apply(lambda value: f"ID {int(value)}" if pd.notna(value) else "Unknown")
+    return work.drop(columns=["player_id", "player_name_roster"], errors="ignore")
 
 
 def _build_sort_columns(frame: pd.DataFrame) -> pd.DataFrame:
@@ -147,10 +194,16 @@ def main() -> None:
     config = AppConfig()
     use_end_date = st.sidebar.checkbox("Use end-date override", value=False)
     end_date = st.sidebar.date_input("End date", value=date.today(), disabled=not use_end_date)
-    raw = read_hitter_exit_velo_events(config, end_date=end_date if use_end_date else None)
-    if raw.empty:
-        st.info("No hitter exit velocity results are available from Cockroach.")
+    try:
+        raw = read_hitter_exit_velo_events(config, end_date=end_date if use_end_date else None)
+    except Exception as exc:
+        st.error(f"Unable to load hitter exit velocity results from Cockroach: {exc}")
         return
+    if raw.empty:
+        st.info("No hitter exit velocity results were found in the Cockroach event source.")
+        return
+    rosters = _load_rosters(config, end_date if use_end_date else None)
+    raw = _apply_roster_names(raw, rosters)
 
     latest_tracked = pd.to_datetime(raw["game_date"], errors="coerce").max()
     if pd.notna(latest_tracked):
