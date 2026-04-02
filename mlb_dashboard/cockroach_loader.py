@@ -1321,13 +1321,40 @@ def write_props_odds_snapshot(config: AppConfig, frame: pd.DataFrame) -> None:
     _ensure_driver()
     if not config.database_url or frame.empty:
         return
+    work = frame.copy()
+    if "sportsbook" not in work.columns and "book_title" in work.columns:
+        work["sportsbook"] = work["book_title"]
+    if "sportsbook_key" not in work.columns and "book_key" in work.columns:
+        work["sportsbook_key"] = work["book_key"]
+    for column in [
+        "sportsbook",
+        "sportsbook_key",
+        "player_name_raw",
+        "player_name",
+        "selection_label",
+        "selection_scope",
+        "selection_side",
+        "market_family",
+        "market_variant",
+        "display_label",
+        "row_source_type",
+        "coverage_completion_status",
+        "hr_books_requested",
+        "hr_books_present",
+        "hr_books_missing",
+    ]:
+        if column not in work.columns:
+            work[column] = pd.NA
+    for column in ["fetched_at", "cache_key", "provider", "event_id", "commence_time", "away_team", "home_team", "market_key", "market"]:
+        if column not in work.columns:
+            raise KeyError(f"Missing required odds snapshot column: {column}")
     database_url = _normalize_database_url(config.database_url)
     with psycopg.connect(database_url, autocommit=True) as conn:
         _create_props_odds_table(conn, config)
         _insert_frame(
             conn,
             config.cockroach_props_odds_table,
-            frame[
+            work[
                 [
                     "fetched_at",
                     "cache_key",

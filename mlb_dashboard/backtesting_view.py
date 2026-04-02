@@ -547,6 +547,60 @@ def _render_verdict(title: str, capture_rate: float | None, roi: float | None, c
         st.markdown(f"- {verdict}")
 
 
+def _render_backtest_diagnostics(
+    *,
+    tracked_rows: int,
+    merged_outcome_rows: int,
+    graded_rows: int,
+    priced_rows: int,
+    odds_rows: int,
+    stale_dates: list[str],
+    explicit_incomplete_dates: list[str],
+) -> None:
+    st.markdown("#### Data Diagnostics")
+    _render_metric_cards(
+        [
+            ("Tracked Rows", f"{tracked_rows:,}", None),
+            ("Merged Outcome Rows", f"{merged_outcome_rows:,}", None),
+            ("Graded Rows", f"{graded_rows:,}", None),
+            ("Priced Rows", f"{priced_rows:,}", None),
+            ("Odds Rows", f"{odds_rows:,}", None),
+        ]
+    )
+    if tracked_rows > 0 and graded_rows == 0:
+        st.warning("Tracked snapshot rows exist, but none of them are currently eligible as graded rows for this filter set.")
+    elif graded_rows > 0 and priced_rows == 0:
+        st.info("Graded rows exist for this view, but no captured odds rows joined to them yet. Non-pricing charts should still render.")
+    dates_to_show = stale_dates or explicit_incomplete_dates
+    if dates_to_show:
+        shown = ", ".join(dates_to_show[:8])
+        if len(dates_to_show) > 8:
+            shown += ", ..."
+        st.caption(f"Excluded incomplete/stale dates: {shown}")
+
+
+def _diagnostic_dates(frame: pd.DataFrame) -> tuple[list[str], list[str]]:
+    if frame.empty:
+        return [], []
+    stale_dates = sorted(day.date().isoformat() for day in _legacy_stale_dates(frame))
+    explicit = frame.loc[
+        frame.get("outcome_status", pd.Series(pd.NA, index=frame.index, dtype="object")).notna()
+        | frame.get("outcome_complete", pd.Series(pd.NA, index=frame.index, dtype="object")).notna(),
+        ["slate_date", "outcome_status"],
+    ].copy()
+    if explicit.empty:
+        return stale_dates, []
+    explicit["slate_date"] = pd.to_datetime(explicit["slate_date"], errors="coerce")
+    incomplete_dates = (
+        explicit.loc[explicit["outcome_status"].ne("complete"), "slate_date"]
+        .dropna()
+        .dt.date.drop_duplicates()
+        .astype(str)
+        .tolist()
+    )
+    return stale_dates, incomplete_dates
+
+
 def _render_hitter_view(frame: pd.DataFrame, score_column: str, filters: dict[str, object]) -> None:
     graded_mask = _render_outcome_status(frame, "Hitters")
     graded_frame = frame.loc[graded_mask].copy()
@@ -556,19 +610,31 @@ def _render_hitter_view(frame: pd.DataFrame, score_column: str, filters: dict[st
     missed = winners & graded_frame["slate_rank"].gt(top_n)
     false_positive = graded_frame["slate_rank"].le(top_n) & graded_frame["home_run_flag"].fillna(0).eq(0)
     priced = graded_frame.loc[graded_frame["captured_price"].notna()].copy()
+    stale_dates, explicit_incomplete_dates = _diagnostic_dates(frame)
     capture_rate = None if winners.sum() == 0 else float(captured.sum() / max(int(winners.sum()), 1))
     roi = pd.to_numeric(priced.get("units"), errors="coerce").mean() if not priced.empty else None
     clv = pd.to_numeric(priced.get("clv"), errors="coerce").mean() if not priced.empty else None
 
+    _render_backtest_diagnostics(
+        tracked_rows=len(frame),
+        merged_outcome_rows=int(frame.get("outcome_status", pd.Series(index=frame.index)).notna().sum()) if not frame.empty else 0,
+        graded_rows=len(graded_frame),
+        priced_rows=len(priced),
+        odds_rows=int(frame.get("captured_price", pd.Series(index=frame.index)).notna().sum()) if not frame.empty else 0,
+        stale_dates=stale_dates,
+        explicit_incomplete_dates=explicit_incomplete_dates,
+    )
     _render_metric_cards([
-        ("Tracked Rows", f"{len(frame):,}", None),
-        ("Graded Rows", f"{len(graded_frame):,}", None),
         ("HR Winners", f"{int(winners.sum()):,}", None),
         ("Captured Winners", f"{int(captured.sum()):,}", None),
         ("Missed Winners", f"{int(missed.sum()):,}", None),
         ("Units", "N/A" if roi is None or pd.isna(roi) else f"{pd.to_numeric(priced.get('units'), errors='coerce').fillna(0).sum():+.2f}", None),
     ])
     _render_verdict("Model Verdict Today" if filters["mode"] == "Slate Audit" else "Model Verdict Since Tracking Began", capture_rate, roi, clv)
+
+    if graded_frame.empty:
+        st.info("No graded hitter rows are available for this selection after outcome filtering.")
+        return
 
     render_metric_grid(_top_n_summary(graded_frame, "home_run_flag", [1, 3, 5, top_n]), key=f"bt-h-topn-{score_column}", height=180, use_lightweight=True)
     cols = st.columns(2)
@@ -609,16 +675,28 @@ def _render_pitcher_view(base_frame: pd.DataFrame, line_frame: pd.DataFrame, sco
     roi = pd.to_numeric(graded_line.get("units"), errors="coerce").mean() if not graded_line.empty else None
     clv = pd.to_numeric(graded_line.get("clv"), errors="coerce").mean() if not graded_line.empty else None
     capture_rate = None if graded_line.empty or clear_lines.sum() == 0 else float(captured.sum() / max(int(clear_lines.sum()), 1))
+    stale_dates, explicit_incomplete_dates = _diagnostic_dates(base_frame)
 
+    _render_backtest_diagnostics(
+        tracked_rows=len(base_frame),
+        merged_outcome_rows=int(base_frame.get("outcome_status", pd.Series(index=base_frame.index)).notna().sum()) if not base_frame.empty else 0,
+        graded_rows=len(graded_base),
+        priced_rows=len(graded_line),
+        odds_rows=len(line_frame),
+        stale_dates=stale_dates,
+        explicit_incomplete_dates=explicit_incomplete_dates,
+    )
     _render_metric_cards([
-        ("Tracked Pitchers", f"{len(base_frame):,}", None),
-        ("Graded Pitchers", f"{len(graded_base):,}", None),
         ("Cleared K Props", f"{int(clear_lines.sum()):,}" if not graded_line.empty else "0", None),
         ("Captured K Props", f"{int(captured.sum()):,}" if not graded_line.empty else "0", None),
         ("Missed K Props", f"{int(missed.sum()):,}" if not graded_line.empty else "0", None),
         ("Units", "N/A" if roi is None or pd.isna(roi) else f"{pd.to_numeric(graded_line.get('units'), errors='coerce').fillna(0).sum():+.2f}", None),
     ])
     _render_verdict("Model Verdict Today" if filters["mode"] == "Slate Audit" else "Model Verdict Since Tracking Began", capture_rate, roi, clv)
+
+    if graded_base.empty:
+        st.info("No graded pitcher rows are available for this selection after outcome filtering.")
+        return
 
     render_metric_grid(_pitcher_top_n_summary(graded_base, [1, 3, 5, top_n]), key=f"bt-p-topn-{score_column}", height=180, use_lightweight=True)
     cols = st.columns(2)

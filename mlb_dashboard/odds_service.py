@@ -247,6 +247,8 @@ def load_live_props_board(config: AppConfig, target_date: date, rosters: pd.Data
                             "hr_books_requested": None,
                             "hr_books_present": None,
                             "hr_books_missing": None,
+                            "sportsbook": book_title,
+                            "sportsbook_key": book_key,
                             "book_key": book_key,
                             "book_title": book_title,
                             "price": float(price),
