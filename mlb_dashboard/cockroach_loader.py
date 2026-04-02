@@ -1212,7 +1212,10 @@ def read_recent_batter_name_lookup(
             WITH base AS (
                 SELECT
                     batter,
-                    team,
+                    CASE
+                        WHEN inning_topbot = 'Top' THEN away_team
+                        ELSE home_team
+                    END AS team,
                     player_name,
                     CAST(game_date AS DATE) AS game_date
                 FROM {config.cockroach_live_pitch_mix_table}
