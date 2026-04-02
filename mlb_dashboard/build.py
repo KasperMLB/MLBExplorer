@@ -10,7 +10,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from .cockroach_loader import CockroachPayload, load_cockroach_payload, write_props_odds_snapshot, write_tracking_payload
+from .cockroach_loader import (
+    CockroachPayload,
+    load_cockroach_payload,
+    read_source_freshness_report,
+    write_props_odds_snapshot,
+    write_tracking_payload,
+)
 from .config import AppConfig, DEFAULT_PITCH_GROUPS, DEFAULT_RECENT_WINDOWS, DEFAULT_SPLITS, ensure_directories
 from .dashboard_views import add_hitter_matchup_score, add_pitcher_rank_score, apply_projected_lineup, build_pitcher_matchup_key
 from .mlb_api import fetch_schedule, fetch_team_rosters_for_schedule
@@ -155,6 +161,29 @@ def _build_live_tracking_health(
             }
         )
     return pd.DataFrame(rows, columns=columns)
+
+
+def _require_fresh_cockroach_sources(config: AppConfig, target_date: date, lookback_days: int) -> None:
+    if not config.database_url:
+        raise RuntimeError("DATABASE_URL must be set when --require-fresh-sources is used.")
+    report = read_source_freshness_report(
+        config,
+        target_date=target_date,
+        lookback_days=lookback_days,
+    )
+    stale_summaries = [summary for summary in report if not bool(summary.get("is_fresh"))]
+    if not stale_summaries:
+        return
+    details = "\n".join(
+        f"- {summary['source_name']} ({summary['table_name']}): max_event_date={summary.get('max_event_date') or 'none'}, "
+        f"lag_days={summary.get('lag_days') if summary.get('lag_days') is not None else 'unknown'}, "
+        f"missing_dates={', '.join(summary.get('missing_dates') or []) or 'none'}"
+        for summary in stale_summaries
+    )
+    raise RuntimeError(
+        "Cockroach event sources are stale for "
+        f"{target_date.isoformat()} and the build was stopped by --require-fresh-sources:\n{details}"
+    )
 
 
 def _empty_hitter_outcome_frame(snapshot_players: pd.DataFrame, target_date: date, status: str, source_max_event_date: date | None) -> pd.DataFrame:
@@ -2080,12 +2109,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--db-path", type=Path, required=True)
     parser.add_argument("--artifacts-dir", type=Path, required=True)
     parser.add_argument("--target-date", type=lambda value: date.fromisoformat(value), default=date.today())
+    parser.add_argument(
+        "--require-fresh-sources",
+        action="store_true",
+        help="Fail the build when Cockroach live event sources lag behind the target date.",
+    )
+    parser.add_argument(
+        "--freshness-lookback-days",
+        type=int,
+        default=7,
+        help="Recent-day window to inspect when checking Cockroach source freshness.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     config = AppConfig(csv_dir=args.csv_dir, db_path=args.db_path, artifacts_dir=args.artifacts_dir)
+    if args.require_fresh_sources:
+        _require_fresh_cockroach_sources(
+            config,
+            target_date=args.target_date,
+            lookback_days=max(args.freshness_lookback_days, 1),
+        )
     context = BuildContext(config=config, target_date=args.target_date, csv_dir=args.csv_dir)
     run_build(context)
 

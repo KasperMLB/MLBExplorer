@@ -23,6 +23,27 @@ python -m mlb_dashboard.build `
   --target-date 2026-03-27
 ```
 
+To stop a build when Cockroach event sources are stale, add:
+
+```powershell
+python -m mlb_dashboard.build `
+  --csv-dir "C:\Users\Sheldon\Documents\MLB_Data" `
+  --db-path "C:\Users\Sheldon\Documents\MLB_Data\artifacts\statcast.duckdb" `
+  --artifacts-dir "C:\Users\Sheldon\Documents\MLB_Data\artifacts" `
+  --target-date 2026-03-27 `
+  --require-fresh-sources
+```
+
+## Check Cockroach source freshness
+
+```powershell
+python -m mlb_dashboard.health_check `
+  --target-date 2026-04-02 `
+  --lookback-days 7
+```
+
+Use `--strict` to return a non-zero exit code when either tracked Cockroach source is stale.
+
 ## Run the local explorer
 
 ```powershell

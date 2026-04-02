@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import date, timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import pandas as pd
@@ -28,6 +29,22 @@ class CockroachPayload:
     batter_zone_profiles: pd.DataFrame
     pitcher_zone_profiles: pd.DataFrame
     batter_family_zone_profiles: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class SourceFreshnessSummary:
+    source_name: str
+    table_name: str
+    target_date: date
+    max_event_date: date | None
+    lag_days: int | None
+    row_count: int
+    recent_daily_counts: list[dict[str, object]]
+    missing_dates: list[str]
+
+    @property
+    def is_fresh(self) -> bool:
+        return self.max_event_date is not None and self.max_event_date >= self.target_date
 
 
 def _ensure_driver() -> None:
@@ -273,6 +290,74 @@ def _read_frame(conn, sql: str, params: dict | None = None) -> pd.DataFrame:
         rows = cur.fetchall()
         columns = [desc.name for desc in cur.description] if cur.description else []
     return pd.DataFrame(rows, columns=columns)
+
+
+def _read_source_freshness_summary(
+    conn,
+    *,
+    source_name: str,
+    table_name: str,
+    target_date: date,
+    lookback_days: int,
+) -> SourceFreshnessSummary:
+    max_date_frame = _read_frame(
+        conn,
+        f"""
+        SELECT
+            MAX(game_date::date) AS max_event_date,
+            COUNT(*)::INT8 AS row_count
+        FROM {table_name}
+        """,
+    )
+    max_event_date = None
+    row_count = 0
+    if not max_date_frame.empty:
+        max_value = pd.to_datetime(max_date_frame.loc[0, "max_event_date"], errors="coerce")
+        max_event_date = None if pd.isna(max_value) else max_value.date()
+        row_count = int(pd.to_numeric(max_date_frame.loc[0, "row_count"], errors="coerce") or 0)
+
+    start_date = target_date - timedelta(days=max(lookback_days - 1, 0))
+    daily_counts = _read_frame(
+        conn,
+        f"""
+        SELECT
+            game_date::date AS event_date,
+            COUNT(*)::INT8 AS row_count
+        FROM {table_name}
+        WHERE game_date::date BETWEEN %(start_date)s AND %(target_date)s
+        GROUP BY game_date::date
+        ORDER BY game_date::date
+        """,
+        {"start_date": start_date, "target_date": target_date},
+    )
+    counts_map: dict[date, int] = {}
+    recent_daily_counts: list[dict[str, object]] = []
+    if not daily_counts.empty:
+        for _, row in daily_counts.iterrows():
+            parsed_date = pd.to_datetime(row["event_date"], errors="coerce")
+            if pd.isna(parsed_date):
+                continue
+            event_date = parsed_date.date()
+            count = int(pd.to_numeric(row["row_count"], errors="coerce") or 0)
+            counts_map[event_date] = count
+            recent_daily_counts.append({"event_date": event_date.isoformat(), "row_count": count})
+
+    missing_dates = [
+        day.date().isoformat()
+        for day in pd.date_range(start=start_date, end=target_date, freq="D")
+        if counts_map.get(day.date(), 0) <= 0
+    ]
+    lag_days = None if max_event_date is None else (target_date - max_event_date).days
+    return SourceFreshnessSummary(
+        source_name=source_name,
+        table_name=table_name,
+        target_date=target_date,
+        max_event_date=max_event_date,
+        lag_days=lag_days,
+        row_count=row_count,
+        recent_daily_counts=recent_daily_counts,
+        missing_dates=missing_dates,
+    )
 
 
 def _create_tracking_tables(conn, config: AppConfig) -> None:
@@ -950,6 +1035,37 @@ def read_hitter_exit_velo_events(
             "release_speed",
         ]
     ].reset_index(drop=True)
+
+
+def read_source_freshness_report(
+    config: AppConfig,
+    *,
+    target_date: date | None = None,
+    lookback_days: int = 7,
+) -> list[dict[str, object]]:
+    _ensure_driver()
+    if not config.database_url:
+        return []
+    check_date = target_date or date.today()
+    database_url = _normalize_database_url(config.database_url)
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        summaries = [
+            _read_source_freshness_summary(
+                conn,
+                source_name="live_pitch_mix",
+                table_name=config.cockroach_live_pitch_mix_table,
+                target_date=check_date,
+                lookback_days=lookback_days,
+            ),
+            _read_source_freshness_summary(
+                conn,
+                source_name="pitcher_baseline_event_rows",
+                table_name=config.cockroach_pitcher_baseline_event_table,
+                target_date=check_date,
+                lookback_days=lookback_days,
+            ),
+        ]
+    return [asdict(summary) | {"is_fresh": summary.is_fresh} for summary in summaries]
 
 
 def write_props_odds_snapshot(config: AppConfig, frame: pd.DataFrame) -> None:
