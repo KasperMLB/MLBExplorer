@@ -13,6 +13,7 @@ from .query_engine import StatcastQueryEngine, load_remote_parquet
 
 WINDOWS = [1, 3, 5, 10, 15, 25]
 SORT_DEPTH = 20
+EVENT_LOG_LIMIT = 250
 
 
 def _hosted_base_url() -> str:
@@ -44,6 +45,7 @@ def _prepare_events(events: pd.DataFrame) -> pd.DataFrame:
     if events.empty:
         return events
     work = events.copy()
+    work["game_date"] = pd.to_datetime(work["game_date"], errors="coerce")
     games = (
         work[["batter", "game_pk", "game_date"]]
         .drop_duplicates()
@@ -57,6 +59,10 @@ def _prepare_events(events: pd.DataFrame) -> pd.DataFrame:
         + "/"
         + pd.to_numeric(work["launch_angle"], errors="coerce").round(1).map(lambda value: "" if pd.isna(value) else f"{float(value):.1f}")
     )
+    work["pa_number"] = pd.to_numeric(work["at_bat_number"], errors="coerce")
+    work["inning_number"] = pd.NA
+    if "inning" in work.columns:
+        work["inning_number"] = pd.to_numeric(work["inning"], errors="coerce")
     return work
 
 
@@ -167,9 +173,79 @@ def _build_leaderboard(frame: pd.DataFrame) -> pd.DataFrame:
     return board.reset_index(drop=True)
 
 
+def _result_text(series: pd.Series) -> pd.Series:
+    return series.fillna("").astype(str).str.replace("_", " ").str.title()
+
+
+def _build_event_log(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(columns=["Batter", "Team", "Date", "PA", "In.", "Result", "Exit Velo", "LA", "Pitch Velo"])
+    ordered = frame.sort_values(
+        ["game_date", "game_pk", "at_bat_number", "pitch_number"],
+        ascending=[False, False, False, False],
+        na_position="last",
+    ).head(EVENT_LOG_LIMIT).copy()
+    ordered["Batter"] = ordered["player_name"].fillna("")
+    ordered["Team"] = ordered["team"].fillna("")
+    ordered["Date"] = ordered["game_date"].dt.date.astype(str)
+    ordered["PA"] = pd.to_numeric(ordered["at_bat_number"], errors="coerce").fillna(0).astype(int)
+    if "inning" in ordered.columns:
+        ordered["In."] = pd.to_numeric(ordered["inning"], errors="coerce").fillna(0).astype(int)
+    else:
+        ordered["In."] = ""
+    ordered["Result"] = _result_text(ordered["events"])
+    ordered["Exit Velo"] = pd.to_numeric(ordered["launch_speed"], errors="coerce").round(1)
+    ordered["LA"] = pd.to_numeric(ordered["launch_angle"], errors="coerce").round(1)
+    ordered["Pitch Velo"] = pd.to_numeric(ordered["release_speed"], errors="coerce").round(1)
+    return ordered[["Batter", "Team", "Date", "PA", "In.", "Result", "Exit Velo", "LA", "Pitch Velo"]].reset_index(drop=True)
+
+
+def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return _empty_board()
+    base = (
+        frame.sort_values(["game_date", "game_pk"], ascending=[False, False], na_position="last")
+        .groupby("batter", as_index=False)
+        .first()[["batter", "player_name", "team"]]
+        .rename(columns={"player_name": "Player", "team": "Team"})
+    )
+    summaries: list[pd.DataFrame] = []
+    for window in WINDOWS:
+        subset = frame.loc[frame["recent_game_rank"] <= window].copy()
+        grouped = (
+            subset.groupby("batter", as_index=False)
+            .agg(
+                avg_ev=("launch_speed", lambda s: pd.to_numeric(s, errors="coerce").mean()),
+                max_ev=("launch_speed", lambda s: pd.to_numeric(s, errors="coerce").max()),
+                avg_la=("launch_angle", lambda s: pd.to_numeric(s, errors="coerce").mean()),
+                bbe=("launch_speed", lambda s: pd.to_numeric(s, errors="coerce").notna().sum()),
+            )
+        )
+        grouped[f"Last {window}"] = grouped.apply(
+            lambda row: "-"
+            if pd.isna(row["avg_ev"])
+            else f"{float(row['avg_ev']):.1f} avg | {float(row['max_ev']):.1f} max | {float(row['avg_la']):.1f} LA | {int(row['bbe'])} BBE",
+            axis=1,
+        )
+        summaries.append(grouped[["batter", f"Last {window}"]])
+    board = base.copy()
+    for summary in summaries:
+        board = board.merge(summary, on="batter", how="left")
+    sort_frame = _build_sort_columns(frame)
+    if not sort_frame.empty:
+        board = board.merge(sort_frame, on="batter", how="left")
+        sort_columns = [f"sort_ev_{idx}" for idx in range(1, SORT_DEPTH + 1)]
+        board = board.sort_values(sort_columns, ascending=[False] * len(sort_columns), na_position="last")
+        board = board.drop(columns=sort_columns, errors="ignore")
+    for window in WINDOWS:
+        column = f"Last {window}"
+        board[column] = board[column].fillna("-")
+    return board.reset_index(drop=True)
+
+
 def _format_detail_table(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
-        return pd.DataFrame(columns=["Date", "Game", "Result", "EV", "LA"])
+        return pd.DataFrame(columns=["Date", "Game", "PA", "In.", "Result", "EV", "LA", "Pitch Velo"])
     detail = frame.sort_values(
         ["game_date", "game_pk", "at_bat_number", "pitch_number"],
         ascending=[False, False, False, False],
@@ -177,10 +253,16 @@ def _format_detail_table(frame: pd.DataFrame) -> pd.DataFrame:
     ).copy()
     detail["Date"] = pd.to_datetime(detail["game_date"], errors="coerce").dt.date.astype(str)
     detail["Game"] = detail["game_label"].fillna("")
-    detail["Result"] = detail["events"].fillna("").astype(str).str.replace("_", " ").str.title()
+    detail["PA"] = pd.to_numeric(detail["at_bat_number"], errors="coerce").fillna(0).astype(int)
+    if "inning" in detail.columns:
+        detail["In."] = pd.to_numeric(detail["inning"], errors="coerce").fillna(0).astype(int)
+    else:
+        detail["In."] = ""
+    detail["Result"] = _result_text(detail["events"])
     detail["EV"] = pd.to_numeric(detail["launch_speed"], errors="coerce").round(1)
     detail["LA"] = pd.to_numeric(detail["launch_angle"], errors="coerce").round(1)
-    return detail[["Date", "Game", "Result", "EV", "LA"]].reset_index(drop=True)
+    detail["Pitch Velo"] = pd.to_numeric(detail["release_speed"], errors="coerce").round(1)
+    return detail[["Date", "Game", "PA", "In.", "Result", "EV", "LA", "Pitch Velo"]].reset_index(drop=True)
 
 
 def _render_side_detail(frame: pd.DataFrame, board: pd.DataFrame) -> None:
@@ -249,15 +331,18 @@ def main() -> None:
         st.info("No hitters matched the current filters.")
         return
 
-    board = _build_leaderboard(filtered)
-    left, right = st.columns([2.4, 1.2])
+    event_log = _build_event_log(filtered)
+    summary_board = _build_player_summary(filtered)
+    left, right = st.columns([2.0, 1.1])
     with left:
-        st.subheader("Leaderboard")
-        st.caption(f"{len(board):,} hitters")
-        display = board.drop(columns=["batter"], errors="ignore")
-        st.dataframe(display, hide_index=True, use_container_width=True, height=860)
+        st.subheader("Recent Event Log")
+        st.caption(f"{len(event_log):,} recent tracked batted-ball events")
+        st.dataframe(event_log, hide_index=True, use_container_width=True, height=520)
     with right:
-        _render_side_detail(filtered, board)
+        _render_side_detail(filtered, summary_board)
+    st.subheader("Player Summary")
+    st.caption(f"{len(summary_board):,} hitters")
+    st.dataframe(summary_board.drop(columns=["batter"], errors="ignore"), hide_index=True, use_container_width=True, height=520)
 
 
 if __name__ == "__main__":
