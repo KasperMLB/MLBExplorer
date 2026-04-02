@@ -1187,6 +1187,92 @@ def read_hitter_exit_velo_events(
     ].reset_index(drop=True)
 
 
+def read_recent_batter_name_lookup(
+    config: AppConfig,
+    *,
+    end_date: date | None = None,
+    lookback_days: int = 45,
+) -> pd.DataFrame:
+    _ensure_driver()
+    if not config.database_url:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    database_url = _normalize_database_url(config.database_url)
+    params: dict[str, object] = {
+        "season_start": date(2026, 1, 1),
+        "lookback_days": max(int(lookback_days), 1),
+    }
+    end_filter = ""
+    if end_date is not None:
+        params["end_date"] = end_date
+        end_filter = "AND CAST(game_date AS DATE) <= %(end_date)s"
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        frame = _read_frame(
+            conn,
+            f"""
+            WITH base AS (
+                SELECT
+                    batter,
+                    team,
+                    player_name,
+                    CAST(game_date AS DATE) AS game_date
+                FROM {config.cockroach_live_pitch_mix_table}
+                WHERE batter IS NOT NULL
+                  AND player_name IS NOT NULL
+                  AND NULLIF(BTRIM(player_name), '') IS NOT NULL
+                  AND CAST(game_date AS DATE) >= %(season_start)s
+                  {end_filter}
+            ),
+            max_date AS (
+                SELECT COALESCE(MAX(game_date), %(season_start)s) AS latest_date
+                FROM base
+            ),
+            trimmed AS (
+                SELECT b.*
+                FROM base b
+                CROSS JOIN max_date m
+                WHERE b.game_date >= m.latest_date - (%(lookback_days)s::INT * INTERVAL '1 day')
+            ),
+            counted AS (
+                SELECT
+                    batter,
+                    team,
+                    player_name,
+                    MAX(game_date) AS last_seen_date,
+                    COUNT(*) AS name_count
+                FROM trimmed
+                GROUP BY batter, team, player_name
+            ),
+            ranked AS (
+                SELECT
+                    batter,
+                    team,
+                    player_name,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY batter, team
+                        ORDER BY name_count DESC, last_seen_date DESC, player_name
+                    ) AS choice_rank
+                FROM counted
+            )
+            SELECT batter, team, player_name
+            FROM ranked
+            WHERE choice_rank = 1
+            """,
+            params,
+        )
+    if frame.empty:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    work = frame.copy()
+    work["batter"] = pd.to_numeric(work["batter"], errors="coerce")
+    work = work.loc[work["batter"].notna()].copy()
+    if work.empty:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    work["batter"] = work["batter"].astype(int)
+    work["team"] = work["team"].fillna("").astype(str).str.strip().str.upper()
+    work["player_name"] = work["player_name"].fillna("").astype(str).str.strip()
+    work = work.loc[work["player_name"].ne("")].drop_duplicates(["batter", "team"])
+    return work.reset_index(drop=True)
+
+
 def read_source_freshness_report(
     config: AppConfig,
     *,

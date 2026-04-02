@@ -5,15 +5,22 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
-from .cockroach_loader import read_hitter_exit_velo_events
+from .cockroach_loader import read_hitter_exit_velo_events, read_recent_batter_name_lookup
 from .config import AppConfig
 from .dashboard_views import latest_built_date
 from .query_engine import StatcastQueryEngine, load_remote_parquet
+from .ui_components import render_custom_metric_table
 
 
 WINDOWS = [1, 3, 5, 10, 15, 25]
 SORT_DEPTH = 20
 EVENT_LOG_LIMIT = 250
+EXIT_VELO_METRIC_STYLES = {
+    "Exit Velo": {"mode": "high", "low": 65.0, "high": 112.0},
+    "EV": {"mode": "high", "low": 65.0, "high": 112.0},
+    "Pitch Velo": {"mode": "high", "low": 80.0, "high": 100.0},
+    "LA": {"mode": "target", "low": -30.0, "ideal": 18.0, "high": 50.0},
+}
 
 
 def _hosted_base_url() -> str:
@@ -26,12 +33,9 @@ def _empty_board() -> pd.DataFrame:
     return pd.DataFrame(columns=["Player", "Team", "Last 1", "Last 3", "Last 5", "Last 10", "Last 15", "Last 25"])
 
 
-def _format_event_pair(launch_speed: object, launch_angle: object) -> str:
-    ev = pd.to_numeric(pd.Series([launch_speed]), errors="coerce").iloc[0]
-    la = pd.to_numeric(pd.Series([launch_angle]), errors="coerce").iloc[0]
-    if pd.isna(ev) or pd.isna(la):
-        return ""
-    return f"{float(ev):.1f}/{float(la):.1f}"
+def _normalize_name(value: object) -> str:
+    text = "" if value is None else str(value)
+    return " ".join(text.strip().split())
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -39,6 +43,13 @@ def _load_exit_velo_events_cached(end_date_value: str | None) -> pd.DataFrame:
     config = AppConfig()
     parsed_end_date = date.fromisoformat(end_date_value) if end_date_value else None
     return read_hitter_exit_velo_events(config, end_date=parsed_end_date)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _load_recent_batter_names_cached(end_date_value: str | None) -> pd.DataFrame:
+    config = AppConfig()
+    parsed_end_date = date.fromisoformat(end_date_value) if end_date_value else None
+    return read_recent_batter_name_lookup(config, end_date=parsed_end_date)
 
 
 def _prepare_events(events: pd.DataFrame) -> pd.DataFrame:
@@ -87,23 +98,107 @@ def _load_rosters(config: AppConfig, end_date: date | None) -> pd.DataFrame:
     return pd.DataFrame(columns=["team", "player_id", "player_name"])
 
 
-def _apply_roster_names(events: pd.DataFrame, rosters: pd.DataFrame) -> pd.DataFrame:
+@st.cache_data(show_spinner=False, ttl=300)
+def _load_hitter_artifact_names(config: AppConfig, end_date: date | None) -> pd.DataFrame:
+    local_path = config.reusable_dir / "hitter_metrics.parquet"
+    frame = pd.DataFrame()
+    if local_path.exists():
+        try:
+            frame = pd.read_parquet(local_path)
+        except Exception:
+            frame = pd.DataFrame()
+    elif _hosted_base_url():
+        try:
+            frame = load_remote_parquet(f"{_hosted_base_url()}/reusable", "hitter_metrics.parquet")
+        except Exception:
+            frame = pd.DataFrame()
+    if frame.empty:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    batter_column = next((column for column in ["hitter_id", "batter", "player_id"] if column in frame.columns), None)
+    name_column = next((column for column in ["hitter_name", "player_name"] if column in frame.columns), None)
+    if batter_column is None or name_column is None:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    lookup_columns = [batter_column, name_column]
+    if "team" in frame.columns:
+        lookup_columns.append("team")
+    lookup = frame.loc[:, lookup_columns].copy()
+    lookup = lookup.rename(columns={batter_column: "batter", name_column: "player_name"})
+    lookup["batter"] = pd.to_numeric(lookup["batter"], errors="coerce")
+    lookup = lookup.loc[lookup["batter"].notna()].copy()
+    if lookup.empty:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    lookup["batter"] = lookup["batter"].astype(int)
+    lookup["player_name"] = lookup["player_name"].map(_normalize_name)
+    lookup["team"] = lookup.get("team", pd.Series("", index=lookup.index)).fillna("").astype(str).str.strip().str.upper()
+    lookup = lookup.loc[lookup["player_name"].ne("")].drop_duplicates(["batter", "team"])
+    return lookup.reset_index(drop=True)
+
+
+def _prepare_name_lookup(frame: pd.DataFrame, *, id_column: str, team_column: str | None = None, name_column: str = "player_name") -> pd.DataFrame:
+    if frame.empty or id_column not in frame.columns or name_column not in frame.columns:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    lookup = frame.copy()
+    lookup["batter"] = pd.to_numeric(lookup[id_column], errors="coerce")
+    lookup = lookup.loc[lookup["batter"].notna()].copy()
+    if lookup.empty:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    lookup["batter"] = lookup["batter"].astype(int)
+    lookup["player_name"] = lookup[name_column].map(_normalize_name)
+    lookup["team"] = ""
+    if team_column and team_column in lookup.columns:
+        lookup["team"] = lookup[team_column].fillna("").astype(str).str.strip().str.upper()
+    lookup = lookup.loc[lookup["player_name"].ne("")][["batter", "team", "player_name"]]
+    return lookup.drop_duplicates(["batter", "team"])
+
+
+def _apply_name_source(work: pd.DataFrame, lookup: pd.DataFrame, *, source_label: str) -> pd.DataFrame:
+    if work.empty or lookup.empty:
+        return work
+    merged = work.merge(lookup, on=["batter", "team"], how="left", suffixes=("", "_candidate"))
+    unresolved = merged["resolved_name"].eq("")
+    candidate = merged["player_name_candidate"].fillna("").map(_normalize_name)
+    merged.loc[unresolved & candidate.ne(""), "resolved_name"] = candidate[unresolved & candidate.ne("")]
+    merged.loc[unresolved & candidate.ne(""), "name_source"] = source_label
+    merged = merged.drop(columns=["player_name_candidate"], errors="ignore")
+    unresolved = merged["resolved_name"].eq("")
+    if unresolved.any():
+        teamless = lookup.loc[lookup["player_name"].map(_normalize_name).ne("") & lookup["team"].eq(""), ["batter", "player_name"]].drop_duplicates("batter")
+        if not teamless.empty:
+            merged = merged.merge(teamless, on="batter", how="left", suffixes=("", "_teamless"))
+            fallback = merged["player_name_teamless"].fillna("").map(_normalize_name)
+            mask = merged["resolved_name"].eq("") & fallback.ne("")
+            merged.loc[mask, "resolved_name"] = fallback[mask]
+            merged.loc[mask, "name_source"] = source_label
+            merged = merged.drop(columns=["player_name_teamless"], errors="ignore")
+    return merged
+
+
+def _apply_layered_names(
+    events: pd.DataFrame,
+    rosters: pd.DataFrame,
+    hitter_artifact_names: pd.DataFrame,
+    recent_live_names: pd.DataFrame,
+) -> pd.DataFrame:
     if events.empty:
         return events
     work = events.copy()
-    if rosters.empty or "player_id" not in rosters.columns or "player_name" not in rosters.columns:
-        work["player_name"] = work["batter"].apply(lambda value: f"ID {int(value)}" if pd.notna(value) else "Unknown")
-        return work
-    lookup = rosters.loc[:, [column for column in ["team", "player_id", "player_name"] if column in rosters.columns]].copy()
-    lookup["player_id"] = pd.to_numeric(lookup["player_id"], errors="coerce")
-    lookup = lookup.loc[lookup["player_id"].notna()].copy()
-    lookup["player_id"] = lookup["player_id"].astype(int)
-    lookup = lookup.drop_duplicates(["team", "player_id"])
-    work = work.merge(lookup, left_on=["team", "batter"], right_on=["team", "player_id"], how="left", suffixes=("", "_roster"))
-    work["player_name"] = work["player_name_roster"]
-    unresolved = work["player_name"].isna() | work["player_name"].astype(str).str.strip().eq("")
-    work.loc[unresolved, "player_name"] = work.loc[unresolved, "batter"].apply(lambda value: f"ID {int(value)}" if pd.notna(value) else "Unknown")
-    return work.drop(columns=["player_id", "player_name_roster"], errors="ignore")
+    work["team"] = work["team"].fillna("").astype(str).str.strip().str.upper()
+    work["resolved_name"] = ""
+    work["name_source"] = ""
+
+    roster_lookup = pd.DataFrame(columns=["batter", "team", "player_name"])
+    if not rosters.empty and "player_id" in rosters.columns and "player_name" in rosters.columns:
+        roster_lookup = _prepare_name_lookup(rosters, id_column="player_id", team_column="team")
+
+    work = _apply_name_source(work, roster_lookup, source_label="roster")
+    work = _apply_name_source(work, hitter_artifact_names, source_label="artifact")
+    work = _apply_name_source(work, recent_live_names, source_label="live")
+
+    unresolved = work["resolved_name"].eq("")
+    work.loc[unresolved, "resolved_name"] = work.loc[unresolved, "batter"].apply(lambda value: f"ID {int(value)}" if pd.notna(value) else "Unknown")
+    work.loc[unresolved, "name_source"] = "id"
+    work["player_name"] = work["resolved_name"]
+    return work.drop(columns=["resolved_name"], errors="ignore")
 
 
 def _build_sort_columns(frame: pd.DataFrame) -> pd.DataFrame:
@@ -287,7 +382,7 @@ def _render_side_detail(frame: pd.DataFrame, board: pd.DataFrame) -> None:
             if detail.empty:
                 st.info("No tracked batted-ball events in this window.")
             else:
-                st.dataframe(detail, hide_index=True, use_container_width=True, height=420)
+                render_custom_metric_table(detail, key=f"exit-velo-detail-{int(selected['batter'])}-{window}", height=420, metric_styles=EXIT_VELO_METRIC_STYLES)
 
 
 def main() -> None:
@@ -307,7 +402,9 @@ def main() -> None:
         st.info("No hitter exit velocity results were found in the Cockroach event source.")
         return
     rosters = _load_rosters(config, end_date if use_end_date else None)
-    raw = _apply_roster_names(raw, rosters)
+    hitter_artifact_names = _load_hitter_artifact_names(config, end_date if use_end_date else None)
+    recent_live_names = _load_recent_batter_names_cached(end_date.isoformat() if use_end_date else None)
+    raw = _apply_layered_names(raw, rosters, hitter_artifact_names, recent_live_names)
 
     latest_tracked = pd.to_datetime(raw["game_date"], errors="coerce").max()
     if pd.notna(latest_tracked):
@@ -337,7 +434,7 @@ def main() -> None:
     with left:
         st.subheader("Recent Event Log")
         st.caption(f"{len(event_log):,} recent tracked batted-ball events")
-        st.dataframe(event_log, hide_index=True, use_container_width=True, height=520)
+        render_custom_metric_table(event_log, key="exit-velo-event-log", height=520, metric_styles=EXIT_VELO_METRIC_STYLES)
     with right:
         _render_side_detail(filtered, summary_board)
     st.subheader("Player Summary")

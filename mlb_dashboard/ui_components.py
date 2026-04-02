@@ -422,6 +422,58 @@ def _build_lightweight_grid_payload(
     return display_frame, styles
 
 
+def render_custom_metric_table(
+    frame: pd.DataFrame,
+    *,
+    key: str,
+    height: int = 320,
+    metric_styles: dict[str, dict[str, object]] | None = None,
+) -> pd.DataFrame:
+    if frame.empty:
+        st.info("No data available for this selection.")
+        return frame
+
+    display_frame = frame.copy()
+    styles = pd.DataFrame("", index=display_frame.index, columns=display_frame.columns)
+    metric_styles = metric_styles or {}
+
+    for column, config in metric_styles.items():
+        if column not in display_frame.columns:
+            continue
+        numeric = pd.to_numeric(display_frame[column], errors="coerce")
+        style_values: list[str] = []
+        mode = str(config.get("mode", "high")).strip().lower()
+        low = float(config.get("low", 0.0))
+        high = float(config.get("high", 1.0))
+        ideal = float(config.get("ideal", (low + high) / 2.0))
+        for value in numeric:
+            if pd.isna(value):
+                style_values.append("")
+                continue
+            if mode == "target":
+                ratio = _two_sided_target_ratio(float(value), low, ideal, high)
+                background = _zone_heatmap_hex(ratio)
+            else:
+                if abs(high - low) < 1e-9:
+                    ratio = 0.5
+                else:
+                    ratio = (float(value) - low) / (high - low)
+                ratio = max(0.0, min(1.0, ratio))
+                if mode == "low":
+                    ratio = 1.0 - ratio
+                background = _diverging_heatmap_hex(ratio)
+            style_values.append(f"background-color: {background}; color: #1f1f1f")
+        styles[column] = style_values
+
+    st.dataframe(
+        display_frame.style.apply(lambda _: styles, axis=None),
+        hide_index=True,
+        use_container_width=True,
+        height=height,
+    )
+    return frame
+
+
 def _prepare_grid_frame(
     frame: pd.DataFrame,
     lower_is_better: set[str] | None = None,
