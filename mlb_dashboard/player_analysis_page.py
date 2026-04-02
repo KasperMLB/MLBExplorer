@@ -380,6 +380,9 @@ def _build_slate_lookup(
     top_key: str | None = None
     top_score: float | None = None
     pitcher_frame = _filter_pitcher_metrics(daily_pitchers, filters)
+    slate_pitcher_frames: list[pd.DataFrame] = []
+    opponent_hitters_by_key: dict[tuple[object, object, object, object, object], pd.DataFrame] = {}
+    raw_pitchers_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
 
     for game in slate.to_dict("records"):
         away_pitcher_id = game.get("away_probable_pitcher_id")
@@ -405,24 +408,62 @@ def _build_slate_lookup(
             opposing_pitcher_id=away_pitcher_id,
             opposing_pitcher_hand=home_hand,
         )
-        away_pitcher = add_pitcher_rank_score(
-            away_pitcher,
-            opponent_hitters_by_key={
-                build_pitcher_matchup_key(game.get("game_pk"), away_pitcher_id, filters.split, filters.recent_window, filters.weighted_mode): home_hitters
-            } if away_pitcher_id else None,
-            batter_family_zone_profiles=batter_family_zone_profiles,
-            pitcher_family_zone_context=pitcher_family_zone_context,
-        )
-        home_pitcher = add_pitcher_rank_score(
-            home_pitcher,
-            opponent_hitters_by_key={
-                build_pitcher_matchup_key(game.get("game_pk"), home_pitcher_id, filters.split, filters.recent_window, filters.weighted_mode): away_hitters
-            } if home_pitcher_id else None,
-            batter_family_zone_profiles=batter_family_zone_profiles,
-            pitcher_family_zone_context=pitcher_family_zone_context,
-        )
+        if away_pitcher_id:
+            opponent_hitters_by_key[
+                build_pitcher_matchup_key(game.get("game_pk"), away_pitcher_id, filters.split, filters.recent_window, filters.weighted_mode)
+            ] = home_hitters
+        if home_pitcher_id:
+            opponent_hitters_by_key[
+                build_pitcher_matchup_key(game.get("game_pk"), home_pitcher_id, filters.split, filters.recent_window, filters.weighted_mode)
+            ] = away_hitters
+        raw_pitchers_by_game[int(game.get("game_pk"))] = (away_pitcher, home_pitcher)
+        if not away_pitcher.empty:
+            slate_pitcher_frames.append(away_pitcher)
+        if not home_pitcher.empty:
+            slate_pitcher_frames.append(home_pitcher)
         game_label = f"{game.get('away_team', '')} @ {game.get('home_team', '')}"
 
+    scored_slate_pitchers = (
+        add_pitcher_rank_score(
+            pd.concat(slate_pitcher_frames, ignore_index=True, sort=False).drop_duplicates(
+                subset=["pitcher_id", "split_key", "recent_window", "weighted_mode"],
+                keep="last",
+            ),
+            opponent_hitters_by_key=opponent_hitters_by_key or None,
+            batter_family_zone_profiles=batter_family_zone_profiles,
+            pitcher_family_zone_context=pitcher_family_zone_context,
+        )
+        if slate_pitcher_frames
+        else pd.DataFrame()
+    )
+    scored_pitchers_by_id = {
+        pitcher_id: group.copy()
+        for pitcher_id, group in scored_slate_pitchers.groupby("pitcher_id", sort=False)
+    } if not scored_slate_pitchers.empty else {}
+
+    for game in slate.to_dict("records"):
+        away_pitcher_id = game.get("away_probable_pitcher_id")
+        home_pitcher_id = game.get("home_probable_pitcher_id")
+        away_pitcher, home_pitcher = raw_pitchers_by_game.get(int(game.get("game_pk")), (pd.DataFrame(), pd.DataFrame()))
+        away_pitcher = scored_pitchers_by_id.get(away_pitcher_id, away_pitcher).copy()
+        home_pitcher = scored_pitchers_by_id.get(home_pitcher_id, home_pitcher).copy()
+        away_hand = home_pitcher["p_throws"].iloc[0] if not home_pitcher.empty else None
+        home_hand = away_pitcher["p_throws"].iloc[0] if not away_pitcher.empty else None
+        away_hitters = add_hitter_matchup_score(
+            _filter_team_hitters(daily_hitters, rosters, hitter_pitcher_exclusions, rotowire_lineups, str(game.get("away_team") or ""), away_hand, filters),
+            batter_zone_profiles=batter_zone_profiles,
+            pitcher_zone_profiles=pitcher_zone_profiles,
+            opposing_pitcher_id=home_pitcher_id,
+            opposing_pitcher_hand=away_hand,
+        )
+        home_hitters = add_hitter_matchup_score(
+            _filter_team_hitters(daily_hitters, rosters, hitter_pitcher_exclusions, rotowire_lineups, str(game.get("home_team") or ""), home_hand, filters),
+            batter_zone_profiles=batter_zone_profiles,
+            pitcher_zone_profiles=pitcher_zone_profiles,
+            opposing_pitcher_id=away_pitcher_id,
+            opposing_pitcher_hand=home_hand,
+        )
+        game_label = f"{game.get('away_team', '')} @ {game.get('home_team', '')}"
         for hitter_frame, opponent_pitcher, team_label, opponent_team in [
             (away_hitters, home_pitcher, str(game.get("away_team") or ""), str(game.get("home_team") or "")),
             (home_hitters, away_pitcher, str(game.get("home_team") or ""), str(game.get("away_team") or "")),

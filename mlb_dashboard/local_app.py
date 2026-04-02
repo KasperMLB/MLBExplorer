@@ -1407,6 +1407,9 @@ def main() -> None:
         _record_perf(perf_events, "zone merge", zone_named_start)
 
     game_prep_start = perf_counter()
+    opponent_hitters_by_key: dict[tuple[object, object, object, object, object], pd.DataFrame] = {}
+    raw_pitchers_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
+    slate_pitcher_frames: list[pd.DataFrame] = []
     for game in selected_games:
         pitcher_ids = [pitcher_id for pitcher_id in [game.get("away_probable_pitcher_id"), game.get("home_probable_pitcher_id")] if pitcher_id]
         pitchers = engine.get_pitcher_cards(pitcher_ids, filters)
@@ -1442,26 +1445,22 @@ def main() -> None:
             opposing_pitcher_id=game.get("away_probable_pitcher_id"),
             opposing_pitcher_hand=home_hand,
         )
-        away_pitcher = add_pitcher_rank_score(
-            away_pitcher,
-            opponent_hitters_by_key={
-                build_pitcher_matchup_key(game["game_pk"], game.get("away_probable_pitcher_id"), split, recent_window, weighted_mode): home_hitters
-            } if game.get("away_probable_pitcher_id") else None,
-            batter_family_zone_profiles=batter_family_zone_profiles,
-            pitcher_family_zone_context=pitcher_family_zone_context,
-        )
-        home_pitcher = add_pitcher_rank_score(
-            home_pitcher,
-            opponent_hitters_by_key={
-                build_pitcher_matchup_key(game["game_pk"], game.get("home_probable_pitcher_id"), split, recent_window, weighted_mode): away_hitters
-            } if game.get("home_probable_pitcher_id") else None,
-            batter_family_zone_profiles=batter_family_zone_profiles,
-            pitcher_family_zone_context=pitcher_family_zone_context,
-        )
+        if game.get("away_probable_pitcher_id"):
+            opponent_hitters_by_key[
+                build_pitcher_matchup_key(game["game_pk"], game.get("away_probable_pitcher_id"), split, recent_window, weighted_mode)
+            ] = home_hitters
+        if game.get("home_probable_pitcher_id"):
+            opponent_hitters_by_key[
+                build_pitcher_matchup_key(game["game_pk"], game.get("home_probable_pitcher_id"), split, recent_window, weighted_mode)
+            ] = away_hitters
 
         hitters_by_game[game["game_pk"]] = (away_hitters, home_hitters)
         best_matchups_by_game[game["game_pk"]] = build_best_matchups(away_hitters, home_hitters)
-        pitchers_by_game[game["game_pk"]] = (away_pitcher, home_pitcher)
+        raw_pitchers_by_game[game["game_pk"]] = (away_pitcher, home_pitcher)
+        if not away_pitcher.empty:
+            slate_pitcher_frames.append(away_pitcher)
+        if not home_pitcher.empty:
+            slate_pitcher_frames.append(home_pitcher)
         pitcher_summary_by_hand_map[game["game_pk"]] = (
             pitcher_summaries_by_hand.loc[pitcher_summaries_by_hand["pitcher_id"] == game.get("away_probable_pitcher_id")].copy(),
             pitcher_summaries_by_hand.loc[pitcher_summaries_by_hand["pitcher_id"] == game.get("home_probable_pitcher_id")].copy(),
@@ -1477,6 +1476,29 @@ def main() -> None:
         pitcher_count_map[game["game_pk"]] = (
             usages_by_count.loc[usages_by_count["pitcher_id"] == game.get("away_probable_pitcher_id")].copy(),
             usages_by_count.loc[usages_by_count["pitcher_id"] == game.get("home_probable_pitcher_id")].copy(),
+        )
+    scored_slate_pitchers = (
+        add_pitcher_rank_score(
+            pd.concat(slate_pitcher_frames, ignore_index=True, sort=False).drop_duplicates(
+                subset=["pitcher_id", "split_key", "recent_window", "weighted_mode"],
+                keep="last",
+            ),
+            opponent_hitters_by_key=opponent_hitters_by_key or None,
+            batter_family_zone_profiles=batter_family_zone_profiles,
+            pitcher_family_zone_context=pitcher_family_zone_context,
+        )
+        if slate_pitcher_frames
+        else pd.DataFrame()
+    )
+    scored_pitchers_by_id = {
+        pitcher_id: group.copy()
+        for pitcher_id, group in scored_slate_pitchers.groupby("pitcher_id", sort=False)
+    } if not scored_slate_pitchers.empty else {}
+    empty_pitcher_frame = slate_pitcher_frames[0].head(0).copy() if slate_pitcher_frames else pd.DataFrame()
+    for game in selected_games:
+        pitchers_by_game[game["game_pk"]] = (
+            scored_pitchers_by_id.get(game.get("away_probable_pitcher_id"), empty_pitcher_frame).copy(),
+            scored_pitchers_by_id.get(game.get("home_probable_pitcher_id"), empty_pitcher_frame).copy(),
         )
     _record_perf(perf_events, "game prep", game_prep_start)
 

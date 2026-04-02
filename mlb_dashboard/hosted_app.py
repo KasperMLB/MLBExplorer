@@ -607,6 +607,7 @@ def main() -> None:
     pitcher_arsenal_map: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
     pitcher_by_hand_map: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
     pitcher_count_map: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
+    opponent_hitters_by_key: dict[tuple[object, object, object, object, object], pd.DataFrame] = {}
     filtered_pitchers = _filter_pitcher_frame(pitchers, split, recent_window, weighted_mode)
     filtered_summary = _filter_pitcher_frame(pitcher_summary_by_hand, split, recent_window, weighted_mode)
     filtered_arsenal = _filter_pitcher_frame(arsenal, split, recent_window, weighted_mode)
@@ -647,23 +648,14 @@ def main() -> None:
             ),
         )
         away_scored_hitters, home_scored_hitters = hitters_by_game[game["game_pk"]]
-        away_pitcher = add_pitcher_rank_score(
-            away_pitcher,
-            opponent_hitters_by_key={
-                build_pitcher_matchup_key(game["game_pk"], game.get("away_probable_pitcher_id"), split, recent_window, weighted_mode): home_scored_hitters
-            } if game.get("away_probable_pitcher_id") else None,
-            batter_family_zone_profiles=batter_family_zone_profiles,
-            pitcher_family_zone_context=pitcher_family_zone_context,
-        )
-        home_pitcher = add_pitcher_rank_score(
-            home_pitcher,
-            opponent_hitters_by_key={
-                build_pitcher_matchup_key(game["game_pk"], game.get("home_probable_pitcher_id"), split, recent_window, weighted_mode): away_scored_hitters
-            } if game.get("home_probable_pitcher_id") else None,
-            batter_family_zone_profiles=batter_family_zone_profiles,
-            pitcher_family_zone_context=pitcher_family_zone_context,
-        )
-        pitchers_by_game[game["game_pk"]] = (away_pitcher, home_pitcher)
+        if game.get("away_probable_pitcher_id"):
+            opponent_hitters_by_key[
+                build_pitcher_matchup_key(game["game_pk"], game.get("away_probable_pitcher_id"), split, recent_window, weighted_mode)
+            ] = home_scored_hitters
+        if game.get("home_probable_pitcher_id"):
+            opponent_hitters_by_key[
+                build_pitcher_matchup_key(game["game_pk"], game.get("home_probable_pitcher_id"), split, recent_window, weighted_mode)
+            ] = away_scored_hitters
         best_matchups_by_game[game["game_pk"]] = build_best_matchups(*hitters_by_game[game["game_pk"]])
         pitcher_summary_by_hand_map[game["game_pk"]] = (
             summary_by_pitcher.get(game.get("away_probable_pitcher_id"), filtered_summary.head(0)).copy(),
@@ -680,6 +672,28 @@ def main() -> None:
         pitcher_count_map[game["game_pk"]] = (
             count_by_pitcher.get(game.get("away_probable_pitcher_id"), filtered_count.head(0)).copy(),
             count_by_pitcher.get(game.get("home_probable_pitcher_id"), filtered_count.head(0)).copy(),
+        )
+    slate_pitcher_ids = {
+        pitcher_id
+        for game in selected_games
+        for pitcher_id in [game.get("away_probable_pitcher_id"), game.get("home_probable_pitcher_id")]
+        if pitcher_id
+    }
+    scored_slate_pitchers = (
+        add_pitcher_rank_score(
+            filtered_pitchers.loc[filtered_pitchers["pitcher_id"].isin(slate_pitcher_ids)].copy(),
+            opponent_hitters_by_key=opponent_hitters_by_key or None,
+            batter_family_zone_profiles=batter_family_zone_profiles,
+            pitcher_family_zone_context=pitcher_family_zone_context,
+        )
+        if slate_pitcher_ids
+        else filtered_pitchers.head(0).copy()
+    )
+    scored_pitchers_by_id = _frame_by_pitcher_id(scored_slate_pitchers)
+    for game in selected_games:
+        pitchers_by_game[game["game_pk"]] = (
+            scored_pitchers_by_id.get(game.get("away_probable_pitcher_id"), filtered_pitchers.head(0)).copy(),
+            scored_pitchers_by_id.get(game.get("home_probable_pitcher_id"), filtered_pitchers.head(0)).copy(),
         )
     _record_perf(perf_events, "game prep", game_loop_start)
 
