@@ -186,6 +186,12 @@ def _apply_layered_names(
     work["resolved_name"] = ""
     work["name_source"] = ""
 
+    if "batter_name" in work.columns:
+        canonical = work["batter_name"].fillna("").map(_normalize_name)
+        mask = canonical.ne("")
+        work.loc[mask, "resolved_name"] = canonical[mask]
+        work.loc[mask, "name_source"] = "event"
+
     roster_lookup = pd.DataFrame(columns=["batter", "team", "player_name"])
     if not rosters.empty and "player_id" in rosters.columns and "player_name" in rosters.columns:
         roster_lookup = _prepare_name_lookup(rosters, id_column="player_id", team_column="team")

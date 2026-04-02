@@ -22,6 +22,8 @@ LIVE_COLUMNS = [
     "source_season",
     "batter",
     "pitcher",
+    "batter_name",
+    "pitcher_name",
     "player_name",
     "stand",
     "p_throws",
@@ -75,6 +77,8 @@ LIVE_COLUMNS = [
 ]
 
 BASELINE_COLUMNS = [
+    "batter_name",
+    "pitcher_name",
     "player_name",
     "event_key",
     "batter",
@@ -241,6 +245,7 @@ def _normalize_game_feed_to_rows(game: dict, feed: dict, target_date: date, capt
         source_season = target_date.year
         batter_id = _as_int(matchup.get("batter", {}).get("id"))
         pitcher_id = _as_int(matchup.get("pitcher", {}).get("id"))
+        batter_name = str(matchup.get("batter", {}).get("fullName") or "").strip()
         pitcher_name = str(matchup.get("pitcher", {}).get("fullName") or "").strip()
         stand = str(matchup.get("batSide", {}).get("code") or "").strip()
         p_throws = str(matchup.get("pitchHand", {}).get("code") or "").strip()
@@ -272,7 +277,9 @@ def _normalize_game_feed_to_rows(game: dict, feed: dict, target_date: date, capt
                 "source_season": source_season,
                 "batter": batter_id,
                 "pitcher": pitcher_id,
-                "player_name": pitcher_name or None,
+                "batter_name": batter_name or None,
+                "pitcher_name": pitcher_name or None,
+                "player_name": batter_name or None,
                 "stand": stand or None,
                 "p_throws": p_throws or None,
                 "home_team": home_team or None,
@@ -330,7 +337,9 @@ def _normalize_game_feed_to_rows(game: dict, feed: dict, target_date: date, capt
                 movement_magnitude = math.sqrt((live_row["pfx_x"] ** 2) + (live_row["pfx_z"] ** 2))
             baseline_rows.append(
                 {
-                    "player_name": pitcher_name or None,
+                    "batter_name": batter_name or None,
+                    "pitcher_name": pitcher_name or None,
+                    "player_name": batter_name or None,
                     "event_key": event_key,
                     "batter": batter_id,
                     "pitcher": pitcher_id,

@@ -74,7 +74,9 @@ def _normalize_live_pitch_mix(frame: pd.DataFrame) -> pd.DataFrame:
     normalized["team"] = normalized.apply(lambda row: row["away_team"] if row["inning_topbot"] == "Top" else row["home_team"], axis=1)
     normalized["fielding_team"] = normalized.apply(lambda row: row["home_team"] if row["inning_topbot"] == "Top" else row["away_team"], axis=1)
     normalized["release_spin_rate"] = pd.to_numeric(normalized.get("release_spin_rate"), errors="coerce")
-    normalized["pitcher_name"] = normalized["player_name"]
+    normalized["batter_name"] = normalized.get("batter_name", normalized.get("player_name", pd.Series(index=normalized.index, dtype="object")))
+    normalized["pitcher_name"] = normalized.get("pitcher_name", pd.Series(index=normalized.index, dtype="object")).fillna(normalized.get("player_name"))
+    normalized["player_name"] = normalized["batter_name"].fillna(normalized["player_name"])
     return add_metric_flags(normalized)
 
 
@@ -107,8 +109,9 @@ def _normalize_pitcher_baseline_event_rows(frame: pd.DataFrame) -> pd.DataFrame:
         lambda row: row["home_team"] if row.get("inning_topbot") == "Top" else row["away_team"],
         axis=1,
     )
-    normalized["pitcher_name"] = normalized["player_name"]
-    normalized["player_name"] = normalized["player_name"].fillna(normalized["pitcher_name"])
+    normalized["batter_name"] = normalized.get("batter_name", normalized.get("player_name", pd.Series(index=normalized.index, dtype="object")))
+    normalized["pitcher_name"] = normalized.get("pitcher_name", pd.Series(index=normalized.index, dtype="object")).fillna(normalized.get("player_name"))
+    normalized["player_name"] = normalized["batter_name"].fillna(normalized["player_name"])
     normalized["release_pos_y"] = pd.to_numeric(normalized.get("release_pos_y"), errors="coerce")
     return add_metric_flags(normalized)
 
@@ -594,6 +597,8 @@ def _create_live_event_tables(conn, config: AppConfig) -> None:
         "source_season": "INT8",
         "batter": "INT8",
         "pitcher": "INT8",
+        "batter_name": "STRING",
+        "pitcher_name": "STRING",
         "player_name": "STRING",
         "stand": "STRING",
         "p_throws": "STRING",
@@ -647,6 +652,8 @@ def _create_live_event_tables(conn, config: AppConfig) -> None:
     }
     baseline_columns = {
         "rowid": "INT8 NOT NULL DEFAULT unique_rowid()",
+        "batter_name": "STRING",
+        "pitcher_name": "STRING",
         "player_name": "STRING",
         "event_key": "STRING",
         "batter": "INT8",
@@ -1086,6 +1093,8 @@ def read_hitter_exit_velo_events(
         "home_team",
         "inning_topbot",
         "batter",
+        "batter_name",
+        "pitcher_name",
         "player_name",
         "at_bat_number",
         "pitch_number",
@@ -1114,7 +1123,7 @@ def read_hitter_exit_velo_events(
             conn,
             f"""
             WITH base AS (
-                SELECT game_date, game_pk, away_team, home_team, inning_topbot, batter, player_name,
+                SELECT game_date, game_pk, away_team, home_team, inning_topbot, batter, batter_name, pitcher_name, player_name,
                        at_bat_number, pitch_number, bb_type, events, launch_speed, launch_angle, release_speed
                 FROM {config.cockroach_pitcher_baseline_event_table}
                 WHERE {where_sql}
@@ -1130,7 +1139,7 @@ def read_hitter_exit_velo_events(
                     FROM base
                 )
             )
-            SELECT b.game_date, b.game_pk, b.away_team, b.home_team, b.inning_topbot, b.batter, b.player_name,
+            SELECT b.game_date, b.game_pk, b.away_team, b.home_team, b.inning_topbot, b.batter, b.batter_name, b.pitcher_name, b.player_name,
                    b.at_bat_number, b.pitch_number, b.bb_type, b.events, b.launch_speed, b.launch_angle, b.release_speed
             FROM base b
             JOIN ranked_games g
@@ -1172,6 +1181,8 @@ def read_hitter_exit_velo_events(
             "home_team",
             "inning_topbot",
             "batter",
+            "batter_name",
+            "pitcher_name",
             "player_name",
             "team",
             "opponent",
@@ -1216,12 +1227,11 @@ def read_recent_batter_name_lookup(
                         WHEN inning_topbot = 'Top' THEN away_team
                         ELSE home_team
                     END AS team,
-                    player_name,
+                    COALESCE(NULLIF(BTRIM(batter_name), ''), NULLIF(BTRIM(player_name), '')) AS player_name,
                     CAST(game_date AS DATE) AS game_date
                 FROM {config.cockroach_live_pitch_mix_table}
                 WHERE batter IS NOT NULL
-                  AND player_name IS NOT NULL
-                  AND NULLIF(BTRIM(player_name), '') IS NOT NULL
+                  AND COALESCE(NULLIF(BTRIM(batter_name), ''), NULLIF(BTRIM(player_name), '')) IS NOT NULL
                   AND CAST(game_date AS DATE) >= %(season_start)s
                   {end_filter}
             ),
