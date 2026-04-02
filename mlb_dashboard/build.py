@@ -74,6 +74,35 @@ OUTCOME_STATUS_SOURCE_LAG = "source_lag"
 OUTCOME_STATUS_SOURCE_EMPTY = "source_empty"
 OUTCOME_STATUS_SOURCE_MISSING_ROWS = "source_missing_rows"
 
+PITCHER_METRIC_INPUT_COLUMNS = [
+    "game_year",
+    "game_pk",
+    "pitcher",
+    "pitcher_name",
+    "p_throws",
+    "stand",
+    "at_bat_number",
+    "pitch_name",
+    "events",
+    "bb_type",
+    "strikes",
+    "balls",
+    "is_batted_ball",
+    "is_tracked_bbe",
+    "is_barrel",
+    "is_pulled_barrel",
+    "is_ground_ball",
+    "is_fly_ball",
+    "is_ball",
+    "is_called_strike",
+    "is_swinging_strike",
+    "is_hard_hit",
+    "launch_angle_value",
+    "xwoba_value",
+    "release_speed_value",
+    "spin_rate_value",
+]
+
 
 def _csv_glob(csv_dir: Path) -> list[str]:
     return [str(path) for path in sorted(csv_dir.glob("statcast_*.csv")) if path.is_file()]
@@ -362,7 +391,7 @@ def _aggregate_zone_profiles(frame: pd.DataFrame, zone_year_weights: dict[int, f
 
 
 def _aggregate_pitcher_metrics(frame: pd.DataFrame, weighted_mode: str, year_weights: dict[int, float]) -> pd.DataFrame:
-    work = frame.copy()
+    work = frame.copy(deep=False)
     work["metric_weight"] = apply_year_weights(work, year_weights) if weighted_mode == "weighted" else 1.0
     rows: list[dict] = []
     for (pitcher_id, throws), group in work.groupby(["pitcher", "p_throws"], sort=False):
@@ -473,7 +502,7 @@ def _aggregate_pitcher_summary_by_hand(frame: pd.DataFrame, weighted_mode: str, 
 
 
 def _aggregate_pitcher_arsenal(frame: pd.DataFrame, weighted_mode: str, year_weights: dict[int, float]) -> pd.DataFrame:
-    work = frame.copy()
+    work = frame.copy(deep=False)
     work["metric_weight"] = apply_year_weights(work, year_weights) if weighted_mode == "weighted" else 1.0
     rows: list[dict] = []
     for (pitcher_id, pitch_name), group in work.groupby(["pitcher", "pitch_name"], sort=False):
@@ -519,7 +548,7 @@ def _aggregate_pitcher_arsenal_by_hand(frame: pd.DataFrame, weighted_mode: str, 
 
 
 def _aggregate_pitcher_usage_by_count(frame: pd.DataFrame, weighted_mode: str, year_weights: dict[int, float]) -> pd.DataFrame:
-    work = frame.copy()
+    work = frame.copy(deep=False)
     work["metric_weight"] = apply_year_weights(work, year_weights) if weighted_mode == "weighted" else 1.0
     balls = pd.to_numeric(work["balls"], errors="coerce").fillna(0).astype(int)
     strikes = pd.to_numeric(work["strikes"], errors="coerce").fillna(0).astype(int)
@@ -1065,6 +1094,7 @@ def build_metric_tables(raw_statcast: pd.DataFrame, config: AppConfig) -> tuple[
         window_frame = raw_statcast.loc[raw_statcast["game_date"] >= recent_cutoff]
         for split_key in DEFAULT_SPLITS:
             split_frame = window_frame.loc[_split_mask(window_frame, split_key)]
+            pitcher_split_frame = split_frame.loc[:, [column for column in PITCHER_METRIC_INPUT_COLUMNS if column in split_frame.columns]].copy(deep=False)
             for weighted_mode in ("weighted", "unweighted"):
                 hitters_frame = _aggregate_hitter_metrics(split_frame, weighted_mode, config.year_weights)
                 if not hitters_frame.empty:
@@ -1073,19 +1103,19 @@ def build_metric_tables(raw_statcast: pd.DataFrame, config: AppConfig) -> tuple[
                     hitters_frame["batter"] = hitters_frame["batter"].astype(int)
                     hitters_frame = hitters_frame.merge(starter_scores, on=["batter"], how="left")
                 hitters.append(_append_split_metadata(hitters_frame, split_key, recent_window, weighted_mode))
-                pitchers.append(_append_split_metadata(_aggregate_pitcher_metrics(split_frame, weighted_mode, config.year_weights), split_key, recent_window, weighted_mode))
+                pitchers.append(_append_split_metadata(_aggregate_pitcher_metrics(pitcher_split_frame, weighted_mode, config.year_weights), split_key, recent_window, weighted_mode))
                 pitcher_summaries_by_hand.append(
                     _append_split_metadata(
-                        _aggregate_pitcher_summary_by_hand(split_frame, weighted_mode, config.year_weights),
+                        _aggregate_pitcher_summary_by_hand(pitcher_split_frame, weighted_mode, config.year_weights),
                         split_key,
                         recent_window,
                         weighted_mode,
                     )
                 )
-                arsenals.append(_append_split_metadata(_aggregate_pitcher_arsenal(split_frame, weighted_mode, config.year_weights), split_key, recent_window, weighted_mode))
+                arsenals.append(_append_split_metadata(_aggregate_pitcher_arsenal(pitcher_split_frame, weighted_mode, config.year_weights), split_key, recent_window, weighted_mode))
                 arsenals_by_hand.append(
                     _append_split_metadata(
-                        _aggregate_pitcher_arsenal_by_hand(split_frame, weighted_mode, config.year_weights),
+                        _aggregate_pitcher_arsenal_by_hand(pitcher_split_frame, weighted_mode, config.year_weights),
                         split_key,
                         recent_window,
                         weighted_mode,
@@ -1093,7 +1123,7 @@ def build_metric_tables(raw_statcast: pd.DataFrame, config: AppConfig) -> tuple[
                 )
                 usages_by_count.append(
                     _append_split_metadata(
-                        _aggregate_pitcher_usage_by_count(split_frame, weighted_mode, config.year_weights),
+                        _aggregate_pitcher_usage_by_count(pitcher_split_frame, weighted_mode, config.year_weights),
                         split_key,
                         recent_window,
                         weighted_mode,
