@@ -876,11 +876,32 @@ def read_hitter_exit_velo_events(
         frame = _read_frame(
             conn,
             f"""
-            SELECT game_date, game_pk, away_team, home_team, inning_topbot, batter, player_name,
-                   at_bat_number, pitch_number, bb_type, events, launch_speed, launch_angle
-            FROM {config.cockroach_pitcher_baseline_event_table}
-            WHERE {where_sql}
-            ORDER BY game_date DESC, game_pk DESC, at_bat_number DESC, pitch_number DESC
+            WITH base AS (
+                SELECT game_date, game_pk, away_team, home_team, inning_topbot, batter, player_name,
+                       at_bat_number, pitch_number, bb_type, events, launch_speed, launch_angle
+                FROM {config.cockroach_pitcher_baseline_event_table}
+                WHERE {where_sql}
+            ),
+            ranked_games AS (
+                SELECT batter, game_date, game_pk,
+                       DENSE_RANK() OVER (
+                           PARTITION BY batter
+                           ORDER BY CAST(game_date AS DATE) DESC, game_pk DESC
+                       ) AS recent_game_rank
+                FROM (
+                    SELECT DISTINCT batter, game_date, game_pk
+                    FROM base
+                )
+            )
+            SELECT b.game_date, b.game_pk, b.away_team, b.home_team, b.inning_topbot, b.batter, b.player_name,
+                   b.at_bat_number, b.pitch_number, b.bb_type, b.events, b.launch_speed, b.launch_angle
+            FROM base b
+            JOIN ranked_games g
+              ON b.batter = g.batter
+             AND b.game_date = g.game_date
+             AND b.game_pk = g.game_pk
+            WHERE g.recent_game_rank <= 25
+            ORDER BY b.game_date DESC, b.game_pk DESC, b.at_bat_number DESC, b.pitch_number DESC
             """,
             params,
         )

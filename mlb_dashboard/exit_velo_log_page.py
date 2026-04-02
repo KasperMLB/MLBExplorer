@@ -33,17 +33,11 @@ def _format_event_pair(launch_speed: object, launch_angle: object) -> str:
     return f"{float(ev):.1f}/{float(la):.1f}"
 
 
-def _window_cell(frame: pd.DataFrame) -> str:
-    if frame.empty:
-        return "-"
-    ordered = frame.sort_values(
-        ["game_date", "game_pk", "at_bat_number", "pitch_number"],
-        ascending=[False, False, False, False],
-        na_position="last",
-    )
-    parts = [_format_event_pair(row.launch_speed, row.launch_angle) for row in ordered.itertuples(index=False)]
-    parts = [part for part in parts if part]
-    return " | ".join(parts) if parts else "-"
+@st.cache_data(show_spinner=False, ttl=300)
+def _load_exit_velo_events_cached(end_date_value: str | None) -> pd.DataFrame:
+    config = AppConfig()
+    parsed_end_date = date.fromisoformat(end_date_value) if end_date_value else None
+    return read_hitter_exit_velo_events(config, end_date=parsed_end_date)
 
 
 def _prepare_events(events: pd.DataFrame) -> pd.DataFrame:
@@ -58,9 +52,15 @@ def _prepare_events(events: pd.DataFrame) -> pd.DataFrame:
     games["recent_game_rank"] = games.groupby("batter").cumcount() + 1
     work = work.merge(games, on=["batter", "game_pk", "game_date"], how="left")
     work["player_label"] = work["player_name"].fillna("").astype(str)
+    work["event_pair"] = (
+        pd.to_numeric(work["launch_speed"], errors="coerce").round(1).map(lambda value: "" if pd.isna(value) else f"{float(value):.1f}")
+        + "/"
+        + pd.to_numeric(work["launch_angle"], errors="coerce").round(1).map(lambda value: "" if pd.isna(value) else f"{float(value):.1f}")
+    )
     return work
 
 
+@st.cache_data(show_spinner=False, ttl=300)
 def _load_rosters(config: AppConfig, end_date: date | None) -> pd.DataFrame:
     target_date = end_date or latest_built_date(config.daily_dir) or date.today()
     local_path = config.daily_dir / target_date.isoformat() / "rosters.parquet"
@@ -119,23 +119,45 @@ def _build_sort_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _build_window_strings(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(columns=["batter", "window", "window_value"])
+    ordered = frame.sort_values(
+        ["batter", "game_date", "game_pk", "at_bat_number", "pitch_number"],
+        ascending=[True, False, False, False, False],
+        na_position="last",
+    ).copy()
+    outputs: list[pd.DataFrame] = []
+    for window in WINDOWS:
+        subset = ordered.loc[ordered["recent_game_rank"] <= window, ["batter", "event_pair"]].copy()
+        grouped = subset.groupby("batter", sort=False)["event_pair"].agg(lambda values: " | ".join(part for part in values if part)).reset_index()
+        grouped["window"] = f"Last {window}"
+        grouped["window_value"] = grouped["event_pair"].replace("", "-").fillna("-")
+        outputs.append(grouped[["batter", "window", "window_value"]])
+    return pd.concat(outputs, ignore_index=True) if outputs else pd.DataFrame(columns=["batter", "window", "window_value"])
+
+
+@st.cache_data(show_spinner=False, ttl=300)
 def _build_leaderboard(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return _empty_board()
-    rows: list[dict[str, object]] = []
     player_base = (
         frame.sort_values(["game_date", "game_pk"], ascending=[False, False], na_position="last")
         .groupby("batter", as_index=False)
         .first()[["batter", "player_name", "team"]]
+        .rename(columns={"player_name": "Player", "team": "Team"})
     )
-    for row in player_base.itertuples(index=False):
-        player_events = frame.loc[frame["batter"] == row.batter].copy()
-        board_row: dict[str, object] = {"batter": row.batter, "Player": row.player_name, "Team": row.team}
-        for window in WINDOWS:
-            window_frame = player_events.loc[player_events["recent_game_rank"] <= window].copy()
-            board_row[f"Last {window}"] = _window_cell(window_frame)
-        rows.append(board_row)
-    board = pd.DataFrame(rows)
+    window_strings = _build_window_strings(frame)
+    board = player_base.copy()
+    if not window_strings.empty:
+        pivoted = window_strings.pivot(index="batter", columns="window", values="window_value").reset_index()
+        board = board.merge(pivoted, on="batter", how="left")
+    for window in WINDOWS:
+        column = f"Last {window}"
+        if column not in board.columns:
+            board[column] = "-"
+        else:
+            board[column] = board[column].fillna("-")
     sort_frame = _build_sort_columns(frame)
     if not sort_frame.empty:
         board = board.merge(sort_frame, on="batter", how="left")
@@ -195,7 +217,7 @@ def main() -> None:
     use_end_date = st.sidebar.checkbox("Use end-date override", value=False)
     end_date = st.sidebar.date_input("End date", value=date.today(), disabled=not use_end_date)
     try:
-        raw = read_hitter_exit_velo_events(config, end_date=end_date if use_end_date else None)
+        raw = _load_exit_velo_events_cached(end_date.isoformat() if use_end_date else None)
     except Exception as exc:
         st.error(f"Unable to load hitter exit velocity results from Cockroach: {exc}")
         return
