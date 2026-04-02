@@ -32,6 +32,7 @@ from .dashboard_views import (
     add_hitter_matchup_score,
     add_pitcher_rank_score,
     apply_roster_names,
+    build_pitcher_matchup_key,
     build_zone_overlay_map,
     build_best_matchups,
     build_full_slate_export_bundles,
@@ -1174,7 +1175,7 @@ def _render_top_sections(
     st.header("Top Slate Hitters")
     all_hitters = pd.concat(hitter_rows, ignore_index=True, sort=False) if hitter_rows else pd.DataFrame()
     all_pitchers = pd.concat(pitcher_rows, ignore_index=True, sort=False) if pitcher_rows else pd.DataFrame()
-    ranked_pitchers = add_pitcher_rank_score(all_pitchers) if not all_pitchers.empty else pd.DataFrame()
+    ranked_pitchers = all_pitchers.sort_values(["pitcher_score", "xwoba"], ascending=[False, True], na_position="last") if not all_pitchers.empty else pd.DataFrame()
     if all_hitters.empty:
         st.info("No hitter data available for this slate.")
     else:
@@ -1440,6 +1441,22 @@ def main() -> None:
             pitcher_zone_profiles=pitcher_zone_profiles,
             opposing_pitcher_id=game.get("away_probable_pitcher_id"),
             opposing_pitcher_hand=home_hand,
+        )
+        away_pitcher = add_pitcher_rank_score(
+            away_pitcher,
+            opponent_hitters_by_key={
+                build_pitcher_matchup_key(game["game_pk"], game.get("away_probable_pitcher_id"), split, recent_window, weighted_mode): home_hitters
+            } if game.get("away_probable_pitcher_id") else None,
+            batter_family_zone_profiles=batter_family_zone_profiles,
+            pitcher_family_zone_context=pitcher_family_zone_context,
+        )
+        home_pitcher = add_pitcher_rank_score(
+            home_pitcher,
+            opponent_hitters_by_key={
+                build_pitcher_matchup_key(game["game_pk"], game.get("home_probable_pitcher_id"), split, recent_window, weighted_mode): away_hitters
+            } if game.get("home_probable_pitcher_id") else None,
+            batter_family_zone_profiles=batter_family_zone_profiles,
+            pitcher_family_zone_context=pitcher_family_zone_context,
         )
 
         hitters_by_game[game["game_pk"]] = (away_hitters, home_hitters)

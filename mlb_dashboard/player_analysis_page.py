@@ -25,6 +25,7 @@ from .dashboard_views import (
     aggregate_pitcher_zone_map,
     apply_roster_names,
     apply_projected_lineup,
+    build_pitcher_matchup_key,
     build_zone_overlay_map,
     build_family_zone_fit_detail,
     compute_family_fit_score,
@@ -78,6 +79,10 @@ PITCHER_OVERVIEW_COLUMNS = [
     "p_throws",
     "pitcher_score",
     "strikeout_score",
+    "raw_pitcher_score",
+    "raw_strikeout_score",
+    "pitcher_matchup_adjustment",
+    "strikeout_matchup_adjustment",
     "pitch_count",
     "bip",
     "xwoba",
@@ -113,6 +118,16 @@ MATCHUP_PITCHER_COLUMNS = [
     "p_throws",
     "pitcher_score",
     "strikeout_score",
+    "raw_pitcher_score",
+    "raw_strikeout_score",
+    "pitcher_matchup_adjustment",
+    "strikeout_matchup_adjustment",
+    "opponent_lineup_quality",
+    "opponent_contact_threat",
+    "opponent_whiff_tendency",
+    "opponent_family_fit_allowed",
+    "lineup_source",
+    "lineup_hitter_count",
     "xwoba",
     "csw_pct",
     "swstr_pct",
@@ -352,6 +367,8 @@ def _build_slate_lookup(
     hitter_pitcher_exclusions = daily.get("hitter_pitcher_exclusions", pd.DataFrame())
     batter_zone_profiles = daily.get("daily_batter_zone_profiles", pd.DataFrame())
     pitcher_zone_profiles = daily.get("daily_pitcher_zone_profiles", pd.DataFrame())
+    batter_family_zone_profiles = daily.get("daily_batter_family_zone_profiles", pd.DataFrame())
+    pitcher_family_zone_context = daily.get("daily_pitcher_family_zone_context", pd.DataFrame())
     if slate.empty:
         return slate_lookup, None
     valid_teams = tuple(sorted(set(slate["away_team"].dropna().astype(str)) | set(slate["home_team"].dropna().astype(str))))
@@ -367,8 +384,8 @@ def _build_slate_lookup(
     for game in slate.to_dict("records"):
         away_pitcher_id = game.get("away_probable_pitcher_id")
         home_pitcher_id = game.get("home_probable_pitcher_id")
-        away_pitcher = add_pitcher_rank_score(pitcher_frame.loc[pitcher_frame["pitcher_id"] == away_pitcher_id].copy())
-        home_pitcher = add_pitcher_rank_score(pitcher_frame.loc[pitcher_frame["pitcher_id"] == home_pitcher_id].copy())
+        away_pitcher = pitcher_frame.loc[pitcher_frame["pitcher_id"] == away_pitcher_id].copy()
+        home_pitcher = pitcher_frame.loc[pitcher_frame["pitcher_id"] == home_pitcher_id].copy()
         away_hand = home_pitcher["p_throws"].iloc[0] if not home_pitcher.empty else None
         home_hand = away_pitcher["p_throws"].iloc[0] if not away_pitcher.empty else None
 
@@ -387,6 +404,22 @@ def _build_slate_lookup(
             pitcher_zone_profiles=pitcher_zone_profiles,
             opposing_pitcher_id=away_pitcher_id,
             opposing_pitcher_hand=home_hand,
+        )
+        away_pitcher = add_pitcher_rank_score(
+            away_pitcher,
+            opponent_hitters_by_key={
+                build_pitcher_matchup_key(game.get("game_pk"), away_pitcher_id, filters.split, filters.recent_window, filters.weighted_mode): home_hitters
+            } if away_pitcher_id else None,
+            batter_family_zone_profiles=batter_family_zone_profiles,
+            pitcher_family_zone_context=pitcher_family_zone_context,
+        )
+        home_pitcher = add_pitcher_rank_score(
+            home_pitcher,
+            opponent_hitters_by_key={
+                build_pitcher_matchup_key(game.get("game_pk"), home_pitcher_id, filters.split, filters.recent_window, filters.weighted_mode): away_hitters
+            } if home_pitcher_id else None,
+            batter_family_zone_profiles=batter_family_zone_profiles,
+            pitcher_family_zone_context=pitcher_family_zone_context,
         )
         game_label = f"{game.get('away_team', '')} @ {game.get('home_team', '')}"
 
@@ -852,7 +885,7 @@ def _render_pitcher_matchup_tab(selected_row: pd.Series, slate_entry: dict[str, 
     render_metric_grid(
         current_row[[column for column in MATCHUP_PITCHER_COLUMNS if column in current_row.columns]],
         key=f"p-matchup-row-{selected_row['key']}",
-        height=120,
+        height=170,
         lower_is_better=PITCHER_LOWER_IS_BETTER,
         higher_is_better=PITCHER_HIGHER_IS_BETTER,
         use_lightweight=(source == "hosted"),
@@ -903,6 +936,22 @@ def main() -> None:
         profile_frame = add_pitcher_rank_score(_filter_pitcher_metrics(reusable.get("pitchers", pd.DataFrame()), filters))
         profile_frame = profile_frame.loc[profile_frame["pitcher_id"] == int(selected_row["player_id"])].copy()
         profile_row = profile_frame.iloc[0] if not profile_frame.empty else pd.Series(dtype="object")
+        if slate_entry is not None and not profile_row.empty:
+            for column in [
+                "pitcher_score",
+                "strikeout_score",
+                "raw_pitcher_score",
+                "raw_strikeout_score",
+                "pitcher_matchup_adjustment",
+                "strikeout_matchup_adjustment",
+                "opponent_lineup_quality",
+                "opponent_contact_threat",
+                "opponent_whiff_tendency",
+                "opponent_family_fit_allowed",
+                "lineup_source",
+                "lineup_hitter_count",
+            ]:
+                profile_row[column] = slate_entry["row"].get(column)
 
     if profile_row.empty:
         st.info("No profile row was found for the selected player under the current filters.")

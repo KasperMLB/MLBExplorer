@@ -29,6 +29,7 @@ from .dashboard_views import (
     add_hitter_matchup_score,
     add_pitcher_rank_score,
     apply_roster_names,
+    build_pitcher_matchup_key,
     build_zone_overlay_map,
     build_best_matchups,
     build_full_slate_export_bundles,
@@ -645,6 +646,23 @@ def main() -> None:
                 opposing_pitcher_hand=home_hand,
             ),
         )
+        away_scored_hitters, home_scored_hitters = hitters_by_game[game["game_pk"]]
+        away_pitcher = add_pitcher_rank_score(
+            away_pitcher,
+            opponent_hitters_by_key={
+                build_pitcher_matchup_key(game["game_pk"], game.get("away_probable_pitcher_id"), split, recent_window, weighted_mode): home_scored_hitters
+            } if game.get("away_probable_pitcher_id") else None,
+            batter_family_zone_profiles=batter_family_zone_profiles,
+            pitcher_family_zone_context=pitcher_family_zone_context,
+        )
+        home_pitcher = add_pitcher_rank_score(
+            home_pitcher,
+            opponent_hitters_by_key={
+                build_pitcher_matchup_key(game["game_pk"], game.get("home_probable_pitcher_id"), split, recent_window, weighted_mode): away_scored_hitters
+            } if game.get("home_probable_pitcher_id") else None,
+            batter_family_zone_profiles=batter_family_zone_profiles,
+            pitcher_family_zone_context=pitcher_family_zone_context,
+        )
         pitchers_by_game[game["game_pk"]] = (away_pitcher, home_pitcher)
         best_matchups_by_game[game["game_pk"]] = build_best_matchups(*hitters_by_game[game["game_pk"]])
         pitcher_summary_by_hand_map[game["game_pk"]] = (
@@ -717,7 +735,7 @@ def main() -> None:
     top_hitters_start = perf_counter()
     all_hitters = pd.concat(hitter_rows, ignore_index=True, sort=False) if hitter_rows else pd.DataFrame()
     all_pitchers = pd.concat(pitcher_rows, ignore_index=True, sort=False) if pitcher_rows else pd.DataFrame()
-    ranked_pitchers = add_pitcher_rank_score(all_pitchers) if not all_pitchers.empty else pd.DataFrame()
+    ranked_pitchers = all_pitchers.sort_values(["pitcher_score", "xwoba"], ascending=[False, True], na_position="last") if not all_pitchers.empty else pd.DataFrame()
     if all_hitters.empty:
         st.info("No hitter data available for this slate.")
     else:

@@ -6,7 +6,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import pandas as pd
 
 from .config import AppConfig
-from .metrics import add_metric_flags
+from .metrics import IN_PLAY_TYPES, add_metric_flags
 
 try:
     import certifi
@@ -357,6 +357,16 @@ def _create_tracking_tables(conn, config: AppConfig) -> None:
         "weighted_mode": "STRING NOT NULL",
         "pitcher_score": "FLOAT8",
         "strikeout_score": "FLOAT8",
+        "raw_pitcher_score": "FLOAT8",
+        "raw_strikeout_score": "FLOAT8",
+        "pitcher_matchup_adjustment": "FLOAT8",
+        "strikeout_matchup_adjustment": "FLOAT8",
+        "opponent_lineup_quality": "FLOAT8",
+        "opponent_contact_threat": "FLOAT8",
+        "opponent_whiff_tendency": "FLOAT8",
+        "opponent_family_fit_allowed": "FLOAT8",
+        "lineup_source": "STRING",
+        "lineup_hitter_count": "INT8",
         "xwoba": "FLOAT8",
         "called_strike_pct": "FLOAT8",
         "csw_pct": "FLOAT8",
@@ -827,6 +837,97 @@ def read_latest_prop_odds_snapshot(
             """,
             {"fetched_at": fetched_at, "cache_key": cache_key},
         )
+
+
+def read_hitter_exit_velo_events(
+    config: AppConfig,
+    end_date=None,
+) -> pd.DataFrame:
+    _ensure_driver()
+    columns = [
+        "game_date",
+        "game_pk",
+        "away_team",
+        "home_team",
+        "inning_topbot",
+        "batter",
+        "player_name",
+        "at_bat_number",
+        "pitch_number",
+        "bb_type",
+        "events",
+        "launch_speed",
+        "launch_angle",
+    ]
+    if not config.database_url:
+        return pd.DataFrame(columns=columns + ["team", "opponent", "game_label"])
+    database_url = _normalize_database_url(config.database_url)
+    where = [
+        "batter IS NOT NULL",
+        "player_name IS NOT NULL",
+        "launch_speed IS NOT NULL",
+        "launch_angle IS NOT NULL",
+    ]
+    params: dict[str, object] = {}
+    if end_date is not None:
+        where.append("game_date <= %(end_date)s")
+        params["end_date"] = end_date
+    where_sql = " AND ".join(where)
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        frame = _read_frame(
+            conn,
+            f"""
+            SELECT game_date, game_pk, away_team, home_team, inning_topbot, batter, player_name,
+                   at_bat_number, pitch_number, bb_type, events, launch_speed, launch_angle
+            FROM {config.cockroach_live_pitch_mix_table}
+            WHERE {where_sql}
+            ORDER BY game_date DESC, game_pk DESC, at_bat_number DESC, pitch_number DESC
+            """,
+            params,
+        )
+    if frame.empty:
+        return pd.DataFrame(columns=columns + ["team", "opponent", "game_label"])
+    work = frame.copy()
+    work["game_date"] = pd.to_datetime(work["game_date"], errors="coerce")
+    work["launch_speed"] = pd.to_numeric(work["launch_speed"], errors="coerce")
+    work["launch_angle"] = pd.to_numeric(work["launch_angle"], errors="coerce")
+    work["batter"] = pd.to_numeric(work["batter"], errors="coerce")
+    work["at_bat_number"] = pd.to_numeric(work["at_bat_number"], errors="coerce")
+    work["pitch_number"] = pd.to_numeric(work["pitch_number"], errors="coerce")
+    work["bb_type"] = work["bb_type"].fillna("").astype(str).str.lower()
+    work = work.loc[
+        work["game_date"].notna()
+        & work["launch_speed"].notna()
+        & work["launch_angle"].notna()
+        & work["batter"].notna()
+        & work["bb_type"].isin(IN_PLAY_TYPES)
+    ].copy()
+    if work.empty:
+        return pd.DataFrame(columns=columns + ["team", "opponent", "game_label"])
+    work["batter"] = work["batter"].astype(int)
+    work["team"] = work["away_team"].where(work["inning_topbot"].eq("Top"), work["home_team"])
+    work["opponent"] = work["home_team"].where(work["team"].eq(work["away_team"]), work["away_team"])
+    work["game_label"] = work["away_team"].fillna("").astype(str) + " @ " + work["home_team"].fillna("").astype(str)
+    return work[
+        [
+            "game_date",
+            "game_pk",
+            "away_team",
+            "home_team",
+            "inning_topbot",
+            "batter",
+            "player_name",
+            "team",
+            "opponent",
+            "game_label",
+            "at_bat_number",
+            "pitch_number",
+            "bb_type",
+            "events",
+            "launch_speed",
+            "launch_angle",
+        ]
+    ].reset_index(drop=True)
 
 
 def write_props_odds_snapshot(config: AppConfig, frame: pd.DataFrame) -> None:

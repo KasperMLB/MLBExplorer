@@ -67,11 +67,19 @@ RATE_COLUMNS = {
     "ceiling_score",
     "pitcher_score",
     "strikeout_score",
+    "raw_pitcher_score",
+    "raw_strikeout_score",
+    "pitcher_matchup_adjustment",
+    "strikeout_matchup_adjustment",
+    "opponent_lineup_quality",
+    "opponent_contact_threat",
+    "opponent_whiff_tendency",
+    "opponent_family_fit_allowed",
     "zone_fit_score",
     "siera",
     "fit_score",
 }
-LOWER_IS_BETTER = {"swstr_pct", "siera"}
+LOWER_IS_BETTER = {"swstr_pct", "siera", "opponent_lineup_quality", "opponent_contact_threat", "opponent_family_fit_allowed"}
 HIGHER_IS_BETTER = {
     "called_strike_pct",
     "csw_pct",
@@ -92,6 +100,11 @@ HIGHER_IS_BETTER = {
     "ceiling_score",
     "zone_fit_score",
     "strikeout_score",
+    "raw_pitcher_score",
+    "raw_strikeout_score",
+    "pitcher_matchup_adjustment",
+    "strikeout_matchup_adjustment",
+    "opponent_whiff_tendency",
     "gb_pct",
     "gb_fb_ratio",
 }
@@ -145,6 +158,16 @@ DISPLAY_LABELS = {
     "zone_fit_score": "Zone Fit",
     "pitcher_score": "Pitch Score",
     "strikeout_score": "Strikeout Score",
+    "raw_pitcher_score": "Raw Pitch Score",
+    "raw_strikeout_score": "Raw Strikeout Score",
+    "pitcher_matchup_adjustment": "Pitch Adj",
+    "strikeout_matchup_adjustment": "K Adj",
+    "opponent_lineup_quality": "Opp Quality",
+    "opponent_contact_threat": "Opp Contact",
+    "opponent_whiff_tendency": "Opp Whiff",
+    "opponent_family_fit_allowed": "Opp Fit",
+    "lineup_source": "Lineup Source",
+    "lineup_hitter_count": "Opp Hitters",
     "player_name": "Player",
     "rolling_window": "Window",
     "games_in_window": "Games",
@@ -168,9 +191,9 @@ DISPLAY_LABELS = {
     "pitcher_id": "Pitcher ID",
     "usage_rate": "Usage%",
 }
-INTEGER_COLUMNS = {"pitch_count", "bip", "likely_starter_score", "sample_size", "sample_2026", "sample_prior"}
+INTEGER_COLUMNS = {"pitch_count", "bip", "likely_starter_score", "sample_size", "sample_2026", "sample_prior", "lineup_hitter_count"}
 
-SHORT_COLUMNS = {"team", "p_throws", "bip", "pitch_count", "likely_starter_score"}
+SHORT_COLUMNS = {"team", "p_throws", "bip", "pitch_count", "likely_starter_score", "lineup_hitter_count"}
 MEDIUM_COLUMNS = {
     "split_label",
     "xwoba",
@@ -201,6 +224,14 @@ MEDIUM_COLUMNS = {
     "ceiling_score",
     "pitcher_score",
     "strikeout_score",
+    "raw_pitcher_score",
+    "raw_strikeout_score",
+    "pitcher_matchup_adjustment",
+    "strikeout_matchup_adjustment",
+    "opponent_lineup_quality",
+    "opponent_contact_threat",
+    "opponent_whiff_tendency",
+    "opponent_family_fit_allowed",
     "weighted_sample_size",
     "prior_weight_share",
     "whiff_rate",
@@ -214,6 +245,7 @@ MEDIUM_COLUMNS = {
     "damage_allowed_rate",
     "xwoba_allowed",
 }
+LONG_COLUMNS = {"hitter_name", "pitcher_name", "game", "pitch_name", "pitch_family", "lineup_source"}
 
 PITCHER_SUMMARY_TABLE_COLUMNS = [
     "split_label",
@@ -234,7 +266,6 @@ PITCHER_SUMMARY_TABLE_COLUMNS = [
     "hard_hit_pct",
     "avg_launch_angle",
 ]
-LONG_COLUMNS = {"hitter_name", "pitcher_name", "game", "pitch_name", "pitch_family"}
 
 ZONE_RECTANGLES = {
     11: (1, 0, 3, 1),

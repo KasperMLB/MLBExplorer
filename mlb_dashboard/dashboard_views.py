@@ -242,6 +242,9 @@ PITCHER_LOWER_IS_BETTER = {
     "fb_pct",
     "hard_hit_pct",
     "avg_launch_angle",
+    "opponent_lineup_quality",
+    "opponent_contact_threat",
+    "opponent_family_fit_allowed",
 }
 
 PITCHER_HIGHER_IS_BETTER = {
@@ -257,6 +260,11 @@ PITCHER_HIGHER_IS_BETTER = {
     "usage_rate",
     "pitcher_score",
     "strikeout_score",
+    "raw_pitcher_score",
+    "raw_strikeout_score",
+    "pitcher_matchup_adjustment",
+    "strikeout_matchup_adjustment",
+    "opponent_whiff_tendency",
 }
 
 ZONE_DISPLAY_ORDER = [11, 1, 2, 3, 13, 4, 5, 6, 14, 7, 8, 9, 12]
@@ -384,6 +392,16 @@ def compute_family_fit_score(
     if detail.empty:
         return None
     return _weighted_average(detail["fit_score"], detail["weighted_sample_size"])
+
+
+def build_pitcher_matchup_key(
+    game_pk: object,
+    pitcher_id: object,
+    split_key: object,
+    recent_window: object,
+    weighted_mode: object,
+) -> tuple[object, object, object, object, object]:
+    return (game_pk, pitcher_id, split_key, recent_window, weighted_mode)
 
 
 def _select_batter_zone_frame(frame: pd.DataFrame, batter_id: object, opposing_pitcher_hand: str | None) -> pd.DataFrame:
@@ -561,7 +579,102 @@ def add_hitter_matchup_score(
     return enriched.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
 
 
-def add_pitcher_rank_score(frame: pd.DataFrame) -> pd.DataFrame:
+def _projected_lineup_weights(frame: pd.DataFrame) -> tuple[pd.Series, str]:
+    slots = pd.to_numeric(frame.get("projected_lineup_slot"), errors="coerce")
+    if slots.notna().nunique() >= 7:
+        weights = (11 - slots).clip(lower=1, upper=10).fillna(1.0).astype(float)
+        return weights, "projected_lineup"
+    return pd.Series(1.0, index=frame.index, dtype="float64"), "team_pool"
+
+
+def _summarize_pitcher_matchup_context(
+    opponent_hitters: pd.DataFrame,
+    pitcher_id: int | None,
+    batter_family_zone_profiles: pd.DataFrame | None,
+    pitcher_family_zone_context: pd.DataFrame | None,
+) -> dict[str, object]:
+    if opponent_hitters.empty:
+        return {
+            "opponent_lineup_quality": 50.0,
+            "opponent_contact_threat": 50.0,
+            "opponent_whiff_tendency": 50.0,
+            "opponent_family_fit_allowed": 50.0,
+            "lineup_source": "team_pool",
+            "lineup_hitter_count": 0,
+            "_pitcher_matchup_signal": 0.5,
+            "_strikeout_matchup_signal": 0.5,
+        }
+
+    weights, lineup_source = _projected_lineup_weights(opponent_hitters)
+    xwoba = _weighted_average(opponent_hitters.get("xwoba", pd.Series(index=opponent_hitters.index, dtype="float64")), weights)
+    hard_hit = _weighted_average(opponent_hitters.get("hard_hit_pct", pd.Series(index=opponent_hitters.index, dtype="float64")), weights)
+    pulled_barrel = _weighted_average(opponent_hitters.get("pulled_barrel_pct", pd.Series(index=opponent_hitters.index, dtype="float64")), weights)
+    barrel_bip = _weighted_average(opponent_hitters.get("barrel_bip_pct", pd.Series(index=opponent_hitters.index, dtype="float64")), weights)
+    swstr = _weighted_average(opponent_hitters.get("swstr_pct", pd.Series(index=opponent_hitters.index, dtype="float64")), weights)
+    avg_launch_angle = _weighted_average(opponent_hitters.get("avg_launch_angle", pd.Series(index=opponent_hitters.index, dtype="float64")), weights)
+
+    family_fit_values: list[float] = []
+    family_fit_weights: list[float] = []
+    can_score_family_fit = (
+        pitcher_id is not None
+        and batter_family_zone_profiles is not None
+        and pitcher_family_zone_context is not None
+        and not batter_family_zone_profiles.empty
+        and not pitcher_family_zone_context.empty
+    )
+    if can_score_family_fit:
+        for index, hitter_row in opponent_hitters.iterrows():
+            batter_id = pd.to_numeric(pd.Series([hitter_row.get("batter")]), errors="coerce").iloc[0]
+            if pd.isna(batter_id):
+                continue
+            fit_score = compute_family_fit_score(
+                batter_family_zone_profiles,
+                pitcher_family_zone_context,
+                int(batter_id),
+                int(pitcher_id),
+            )
+            if fit_score is None:
+                continue
+            family_fit_values.append(float(fit_score))
+            family_fit_weights.append(float(weights.loc[index]))
+    family_fit_allowed = _weighted_average(pd.Series(family_fit_values), pd.Series(family_fit_weights)) if family_fit_values else 0.5
+
+    xwoba_scale = min(max(((xwoba or 0.315) - 0.26) / 0.12, 0.0), 1.0)
+    hard_hit_scale = min(max(((hard_hit or 0.38) - 0.25) / 0.20, 0.0), 1.0)
+    pulled_barrel_scale = min(max(((pulled_barrel or 0.06) - 0.02) / 0.10, 0.0), 1.0)
+    barrel_bip_scale = min(max(((barrel_bip or 0.08) - 0.02) / 0.18, 0.0), 1.0)
+    whiff_scale = min(max(((swstr or 0.11) - 0.05) / 0.12, 0.0), 1.0)
+    launch_scale = float(launch_angle_score(pd.Series([avg_launch_angle if avg_launch_angle is not None else 15.0])).iloc[0])
+
+    contact_threat = (
+        (xwoba_scale * 0.35)
+        + (hard_hit_scale * 0.20)
+        + (pulled_barrel_scale * 0.15)
+        + (barrel_bip_scale * 0.20)
+        + (launch_scale * 0.10)
+    )
+    lineup_quality = (contact_threat * 0.75) + ((1.0 - whiff_scale) * 0.25)
+    pitcher_matchup_signal = ((1.0 - contact_threat) * 0.60) + ((1.0 - family_fit_allowed) * 0.25) + (whiff_scale * 0.15)
+    strikeout_matchup_signal = (whiff_scale * 0.55) + ((1.0 - xwoba_scale) * 0.20) + ((1.0 - family_fit_allowed) * 0.25)
+
+    return {
+        "opponent_lineup_quality": lineup_quality * 100.0,
+        "opponent_contact_threat": contact_threat * 100.0,
+        "opponent_whiff_tendency": whiff_scale * 100.0,
+        "opponent_family_fit_allowed": family_fit_allowed * 100.0,
+        "lineup_source": lineup_source,
+        "lineup_hitter_count": int(len(opponent_hitters)),
+        "_pitcher_matchup_signal": pitcher_matchup_signal,
+        "_strikeout_matchup_signal": strikeout_matchup_signal,
+    }
+
+
+def add_pitcher_rank_score(
+    frame: pd.DataFrame,
+    opponent_hitters_by_key: dict[tuple[object, object, object, object, object], pd.DataFrame] | None = None,
+    batter_family_zone_profiles: pd.DataFrame | None = None,
+    pitcher_family_zone_context: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     if frame.empty:
         return frame
     enriched = frame.copy()
@@ -576,7 +689,7 @@ def add_pitcher_rank_score(frame: pd.DataFrame) -> pd.DataFrame:
     csw_score = normalize_series(enriched["csw_pct"]) if "csw_pct" in enriched.columns else pd.Series(0.5, index=enriched.index)
     siera_score = normalize_series(enriched["siera"], inverse=True) if "siera" in enriched.columns else pd.Series(0.5, index=enriched.index)
     putaway_score = normalize_series(enriched["putaway_pct"]) if "putaway_pct" in enriched.columns else pd.Series(0.5, index=enriched.index)
-    enriched["pitcher_score"] = (
+    enriched["raw_pitcher_score"] = (
         (xwoba_score * 0.25)
         + (barrel_bbe_score * 0.18)
         + (barrel_bip_score * 0.12)
@@ -584,13 +697,61 @@ def add_pitcher_rank_score(frame: pd.DataFrame) -> pd.DataFrame:
         + (command_score * 0.18)
         + (gbfb_score * 0.12)
     ) * 100.0
-    enriched["strikeout_score"] = (
+    enriched["raw_strikeout_score"] = (
         (csw_score * 0.35)
         + (swstr_score * 0.30)
         + (ball_score * 0.20)
         + (siera_score * 0.10)
         + (putaway_score * 0.05)
     ) * 100.0
+
+    default_context = {
+        "opponent_lineup_quality": pd.NA,
+        "opponent_contact_threat": pd.NA,
+        "opponent_whiff_tendency": pd.NA,
+        "opponent_family_fit_allowed": pd.NA,
+        "lineup_source": pd.NA,
+        "lineup_hitter_count": pd.NA,
+        "_pitcher_matchup_signal": 0.5,
+        "_strikeout_matchup_signal": 0.5,
+    }
+    context_rows: list[dict[str, object]] = []
+    for _, row in enriched.iterrows():
+        context = dict(default_context)
+        if opponent_hitters_by_key:
+            matchup_key = build_pitcher_matchup_key(
+                row.get("game_pk"),
+                row.get("pitcher_id"),
+                row.get("split_key"),
+                row.get("recent_window"),
+                row.get("weighted_mode"),
+            )
+            opponent_hitters = opponent_hitters_by_key.get(matchup_key, pd.DataFrame())
+            if not opponent_hitters.empty:
+                context = _summarize_pitcher_matchup_context(
+                    opponent_hitters,
+                    int(row["pitcher_id"]) if pd.notna(row.get("pitcher_id")) else None,
+                    batter_family_zone_profiles,
+                    pitcher_family_zone_context,
+                )
+        context_rows.append(context)
+
+    context_frame = pd.DataFrame(context_rows, index=enriched.index)
+    pitch_adjustment = ((pd.to_numeric(context_frame["_pitcher_matchup_signal"], errors="coerce").fillna(0.5) - 0.5) * 16.0).clip(-8.0, 8.0)
+    strikeout_adjustment = ((pd.to_numeric(context_frame["_strikeout_matchup_signal"], errors="coerce").fillna(0.5) - 0.5) * 24.0).clip(-12.0, 12.0)
+    enriched["pitcher_matchup_adjustment"] = pitch_adjustment
+    enriched["strikeout_matchup_adjustment"] = strikeout_adjustment
+    enriched["pitcher_score"] = (pd.to_numeric(enriched["raw_pitcher_score"], errors="coerce").fillna(0) + pitch_adjustment).clip(lower=0.0, upper=100.0)
+    enriched["strikeout_score"] = (pd.to_numeric(enriched["raw_strikeout_score"], errors="coerce").fillna(0) + strikeout_adjustment).clip(lower=0.0, upper=100.0)
+    for column in [
+        "opponent_lineup_quality",
+        "opponent_contact_threat",
+        "opponent_whiff_tendency",
+        "opponent_family_fit_allowed",
+        "lineup_source",
+        "lineup_hitter_count",
+    ]:
+        enriched[column] = context_frame[column]
     return enriched.sort_values(["pitcher_score", "xwoba"], ascending=[False, True], na_position="last")
 
 
