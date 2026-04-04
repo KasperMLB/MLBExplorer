@@ -20,6 +20,9 @@ EXIT_VELO_METRIC_STYLES = {
     "EV": {"mode": "high", "low": 65.0, "high": 112.0},
     "Pitch Velo": {"mode": "high", "low": 80.0, "high": 100.0},
     "LA": {"mode": "target", "low": -30.0, "ideal": 18.0, "high": 50.0},
+    "HH%": {"mode": "high", "low": 0.0, "high": 100.0},
+    "Avg EV": {"mode": "high", "low": 65.0, "high": 112.0},
+    "Max EV": {"mode": "high", "low": 65.0, "high": 112.0},
 }
 
 
@@ -71,6 +74,8 @@ def _prepare_events(events: pd.DataFrame) -> pd.DataFrame:
         + pd.to_numeric(work["launch_angle"], errors="coerce").round(1).map(lambda value: "" if pd.isna(value) else f"{float(value):.1f}")
     )
     work["pa_number"] = pd.to_numeric(work["at_bat_number"], errors="coerce")
+    work["is_hard_hit"] = pd.to_numeric(work["launch_speed"], errors="coerce").ge(95.0)
+    work["barrel_count"] = pd.to_numeric(work.get("barrel"), errors="coerce").fillna(0).round().astype(int)
     work["inning_number"] = pd.NA
     if "inning" in work.columns:
         work["inning_number"] = pd.to_numeric(work["inning"], errors="coerce")
@@ -319,13 +324,22 @@ def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
                 avg_ev=("launch_speed", lambda s: pd.to_numeric(s, errors="coerce").mean()),
                 max_ev=("launch_speed", lambda s: pd.to_numeric(s, errors="coerce").max()),
                 avg_la=("launch_angle", lambda s: pd.to_numeric(s, errors="coerce").mean()),
-                bbe=("launch_speed", lambda s: pd.to_numeric(s, errors="coerce").notna().sum()),
+                tracked_bbe=("launch_speed", lambda s: pd.to_numeric(s, errors="coerce").notna().sum()),
+                hard_hits=("is_hard_hit", lambda s: pd.Series(s).fillna(False).astype(bool).sum()),
+                barrel_count=("barrel_count", lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum()),
             )
         )
+        grouped["hard_hit_pct"] = grouped["hard_hits"] / grouped["tracked_bbe"].replace(0, pd.NA)
         grouped[f"Last {window}"] = grouped.apply(
             lambda row: "-"
             if pd.isna(row["avg_ev"])
-            else f"{float(row['avg_ev']):.1f} avg | {float(row['max_ev']):.1f} max | {float(row['avg_la']):.1f} LA | {int(row['bbe'])} BBE",
+            else (
+                f"{float(row['avg_ev']):.1f} avg | "
+                f"{float(row['max_ev']):.1f} max | "
+                f"{float(row['avg_la']):.1f} LA | "
+                f"{float(row['hard_hit_pct']) * 100.0:.0f} HH% | "
+                f"{int(row['barrel_count'])} Brl"
+            ),
             axis=1,
         )
         summaries.append(grouped[["batter", f"Last {window}"]])
@@ -346,7 +360,7 @@ def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
 
 def _format_detail_table(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
-        return pd.DataFrame(columns=["Date", "Game", "PA", "In.", "Result", "EV", "LA", "Pitch Velo"])
+        return pd.DataFrame(columns=["Date", "Game", "PA", "In.", "Result", "EV", "LA", "Pitch Velo", "Brl"])
     detail = frame.sort_values(
         ["game_date", "game_pk", "at_bat_number", "pitch_number"],
         ascending=[False, False, False, False],
@@ -363,7 +377,34 @@ def _format_detail_table(frame: pd.DataFrame) -> pd.DataFrame:
     detail["EV"] = pd.to_numeric(detail["launch_speed"], errors="coerce").round(1)
     detail["LA"] = pd.to_numeric(detail["launch_angle"], errors="coerce").round(1)
     detail["Pitch Velo"] = pd.to_numeric(detail["release_speed"], errors="coerce").round(1)
-    return detail[["Date", "Game", "PA", "In.", "Result", "EV", "LA", "Pitch Velo"]].reset_index(drop=True)
+    detail["Brl"] = pd.to_numeric(detail.get("barrel_count"), errors="coerce").fillna(0).astype(int)
+    return detail[["Date", "Game", "PA", "In.", "Result", "EV", "LA", "Pitch Velo", "Brl"]].reset_index(drop=True)
+
+
+def _build_detail_rollup(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(columns=["Date", "Game", "BBE", "Avg EV", "Max EV", "HH%", "Brl"])
+    grouped = (
+        frame.groupby(["game_date", "game_pk", "game_label"], as_index=False)
+        .agg(
+            bbe=("launch_speed", lambda s: pd.to_numeric(s, errors="coerce").notna().sum()),
+            avg_ev=("launch_speed", lambda s: pd.to_numeric(s, errors="coerce").mean()),
+            max_ev=("launch_speed", lambda s: pd.to_numeric(s, errors="coerce").max()),
+            hard_hits=("is_hard_hit", lambda s: pd.Series(s).fillna(False).astype(bool).sum()),
+            barrel_count=("barrel_count", lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum()),
+        )
+    )
+    grouped = grouped.sort_values(["game_date", "game_pk"], ascending=[False, False], na_position="last").copy()
+    grouped["Date"] = pd.to_datetime(grouped["game_date"], errors="coerce").dt.date.astype(str)
+    grouped["Game"] = grouped["game_label"].fillna("")
+    grouped["BBE"] = pd.to_numeric(grouped["bbe"], errors="coerce").fillna(0).astype(int)
+    grouped["Avg EV"] = pd.to_numeric(grouped["avg_ev"], errors="coerce").round(1)
+    grouped["Max EV"] = pd.to_numeric(grouped["max_ev"], errors="coerce").round(1)
+    grouped["HH%"] = (
+        (pd.to_numeric(grouped["hard_hits"], errors="coerce").fillna(0) / grouped["BBE"].replace(0, pd.NA)) * 100.0
+    ).round(0)
+    grouped["Brl"] = pd.to_numeric(grouped["barrel_count"], errors="coerce").fillna(0).astype(int)
+    return grouped[["Date", "Game", "BBE", "Avg EV", "Max EV", "HH%", "Brl"]].reset_index(drop=True)
 
 
 def _render_side_detail(frame: pd.DataFrame, board: pd.DataFrame) -> None:
@@ -384,6 +425,14 @@ def _render_side_detail(frame: pd.DataFrame, board: pd.DataFrame) -> None:
             window_frame = player_frame.loc[player_frame["recent_game_rank"] <= window].copy()
             games = int(window_frame["game_pk"].nunique()) if not window_frame.empty else 0
             st.caption(f"{games} tracked game(s)")
+            rollup = _build_detail_rollup(window_frame)
+            if not rollup.empty:
+                render_custom_metric_table(
+                    rollup,
+                    key=f"exit-velo-rollup-{int(selected['batter'])}-{window}",
+                    height=min(220, 70 + len(rollup) * 35),
+                    metric_styles=EXIT_VELO_METRIC_STYLES,
+                )
             detail = _format_detail_table(window_frame)
             if detail.empty:
                 st.info("No tracked batted-ball events in this window.")

@@ -63,8 +63,6 @@ def _normalize_database_url(database_url: str) -> str:
     if sslmode in {"verify-ca", "verify-full", "require", "prefer"} and "sslrootcert" not in query:
         query["sslrootcert"] = certifi.where() if certifi is not None else "system"
     return urlunsplit((scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
-
-
 def _normalize_live_pitch_mix(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame
@@ -1103,6 +1101,7 @@ def read_hitter_exit_velo_events(
         "launch_speed",
         "launch_angle",
         "release_speed",
+        "barrel",
     ]
     if not config.database_url:
         raise RuntimeError("DATABASE_URL must be set to load exit velocity results from Cockroach.")
@@ -1124,7 +1123,7 @@ def read_hitter_exit_velo_events(
             f"""
             WITH base AS (
                 SELECT game_date, game_pk, away_team, home_team, inning_topbot, batter, batter_name, pitcher_name, player_name,
-                       at_bat_number, pitch_number, bb_type, events, launch_speed, launch_angle, release_speed
+                       at_bat_number, pitch_number, bb_type, events, launch_speed, launch_angle, release_speed, barrel
                 FROM {config.cockroach_pitcher_baseline_event_table}
                 WHERE {where_sql}
             ),
@@ -1140,7 +1139,7 @@ def read_hitter_exit_velo_events(
                 )
             )
             SELECT b.game_date, b.game_pk, b.away_team, b.home_team, b.inning_topbot, b.batter, b.batter_name, b.pitcher_name, b.player_name,
-                   b.at_bat_number, b.pitch_number, b.bb_type, b.events, b.launch_speed, b.launch_angle, b.release_speed
+                   b.at_bat_number, b.pitch_number, b.bb_type, b.events, b.launch_speed, b.launch_angle, b.release_speed, b.barrel
             FROM base b
             JOIN ranked_games g
               ON b.batter = g.batter
@@ -1158,6 +1157,7 @@ def read_hitter_exit_velo_events(
     work["launch_speed"] = pd.to_numeric(work["launch_speed"], errors="coerce")
     work["launch_angle"] = pd.to_numeric(work["launch_angle"], errors="coerce")
     work["release_speed"] = pd.to_numeric(work["release_speed"], errors="coerce")
+    work["barrel"] = pd.to_numeric(work.get("barrel"), errors="coerce").fillna(0)
     work["batter"] = pd.to_numeric(work["batter"], errors="coerce")
     work["at_bat_number"] = pd.to_numeric(work["at_bat_number"], errors="coerce")
     work["pitch_number"] = pd.to_numeric(work["pitch_number"], errors="coerce")
@@ -1194,6 +1194,7 @@ def read_hitter_exit_velo_events(
             "launch_speed",
             "launch_angle",
             "release_speed",
+            "barrel",
         ]
     ].reset_index(drop=True)
 
