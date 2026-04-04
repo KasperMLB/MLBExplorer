@@ -41,6 +41,18 @@ def _normalize_name(value: object) -> str:
     return " ".join(text.strip().split())
 
 
+def _is_statcast_barrel(exit_velocity: object, launch_angle: object) -> bool:
+    ev = pd.to_numeric(pd.Series([exit_velocity]), errors="coerce").iloc[0]
+    la = pd.to_numeric(pd.Series([launch_angle]), errors="coerce").iloc[0]
+    if pd.isna(ev) or pd.isna(la) or float(ev) < 98.0:
+        return False
+    ev_value = min(float(ev), 116.0)
+    half_window = min(22.0, 4.0 + ((ev_value - 98.0) * (22.0 / 18.0)))
+    lower_bound = 26.0 - half_window
+    upper_bound = 26.0 + half_window
+    return lower_bound <= float(la) <= upper_bound
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def _load_exit_velo_events_cached(end_date_value: str | None) -> pd.DataFrame:
     config = AppConfig()
@@ -75,7 +87,11 @@ def _prepare_events(events: pd.DataFrame) -> pd.DataFrame:
     )
     work["pa_number"] = pd.to_numeric(work["at_bat_number"], errors="coerce")
     work["is_hard_hit"] = pd.to_numeric(work["launch_speed"], errors="coerce").ge(95.0)
-    work["barrel_count"] = pd.to_numeric(work.get("barrel"), errors="coerce").fillna(0).round().astype(int)
+    work["is_barrel"] = [
+        _is_statcast_barrel(exit_velocity, launch_angle)
+        for exit_velocity, launch_angle in zip(work["launch_speed"], work["launch_angle"])
+    ]
+    work["barrel_count"] = pd.Series(work["is_barrel"], index=work.index).fillna(False).astype(bool).astype(int)
     work["inning_number"] = pd.NA
     if "inning" in work.columns:
         work["inning_number"] = pd.to_numeric(work["inning"], errors="coerce")
