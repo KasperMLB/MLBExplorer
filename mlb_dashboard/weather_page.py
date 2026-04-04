@@ -5,6 +5,7 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
+from .branding import page_icon_path
 from .config import AppConfig
 from .dashboard_views import latest_built_date
 from .query_engine import StatcastQueryEngine
@@ -204,7 +205,7 @@ def _display_table(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Weather", layout="wide")
+    st.set_page_config(page_title="Weather", page_icon=page_icon_path(), layout="wide")
     st.title("Weather")
     st.caption("Live weather page for slate parks only. This page stays separate from matchup scoring and the main explorer load path.")
 

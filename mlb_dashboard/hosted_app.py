@@ -7,6 +7,7 @@ from time import perf_counter
 import pandas as pd
 import streamlit as st
 
+from .branding import page_icon_path
 from .dashboard_views import (
     ARSENAL_COLUMNS,
     BATTER_SIDE_LABELS,
@@ -524,7 +525,7 @@ def _build_pitcher_export_sections(
 
 
 def main() -> None:
-    st.set_page_config(page_title="MLB Hosted Slate Companion", layout="wide")
+    st.set_page_config(page_title="MLB Hosted Slate Companion", page_icon=page_icon_path(), layout="wide")
     st.title("MLB Hosted Slate Companion")
     perf_events: list[tuple[str, float]] = []
     base_url = _base_url()
