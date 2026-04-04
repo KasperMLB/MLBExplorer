@@ -58,9 +58,13 @@ def _normalize_name(value: object) -> str:
 
 def _normalize_pitch_label(pitch_name: object, pitch_type: object) -> str:
     name = _normalize_name(pitch_name)
+    if name.casefold() == "fastball":
+        return "Four-Seam Fastball"
     if name:
         return name
     code = _normalize_name(pitch_type)
+    if code.casefold() == "ff":
+        return "Four-Seam Fastball"
     return code if code else "Unknown"
 
 
