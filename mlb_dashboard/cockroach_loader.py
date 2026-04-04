@@ -1123,7 +1123,8 @@ def read_hitter_exit_velo_events(
             f"""
             WITH base AS (
                 SELECT game_date, game_pk, away_team, home_team, inning_topbot, batter, batter_name, pitcher_name, player_name,
-                       at_bat_number, pitch_number, bb_type, events, launch_speed, launch_angle, release_speed, barrel
+                       at_bat_number, pitch_number, bb_type, events, launch_speed, launch_angle, release_speed,
+                       CAST(0 AS INT8) AS barrel
                 FROM {config.cockroach_pitcher_baseline_event_table}
                 WHERE {where_sql}
             ),
