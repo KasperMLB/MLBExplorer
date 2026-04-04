@@ -586,6 +586,21 @@ def _ensure_table_columns(conn, table_name: str, column_definitions: dict[str, s
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} {clean_definition}")
 
 
+def _list_table_columns(conn, table_name: str) -> set[str]:
+    schema_name, bare_name = _table_parts(table_name)
+    return {
+        str(row[0]).strip().lower()
+        for row in conn.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s
+            """,
+            (schema_name, bare_name),
+        ).fetchall()
+    }
+
+
 def _create_live_event_tables(conn, config: AppConfig) -> None:
     live_pitch_mix_columns = {
         "event_key": "STRING PRIMARY KEY",
@@ -1122,12 +1137,27 @@ def read_hitter_exit_velo_events(
         params["end_date"] = end_date
     where_sql = " AND ".join(where)
     with psycopg.connect(database_url, autocommit=True) as conn:
+        available_columns = _list_table_columns(conn, config.cockroach_pitcher_baseline_event_table)
+        optional_selects = {
+            "pitch_type": "pitch_type",
+            "pitch_name": "pitch_name",
+            "zone": "zone",
+        }
+        select_parts = []
+        for column_name in columns:
+            if column_name in {"pitch_type", "pitch_name", "zone"}:
+                if column_name in available_columns:
+                    select_parts.append(optional_selects[column_name])
+                else:
+                    select_parts.append(f"NULL AS {column_name}")
+            else:
+                select_parts.append(column_name)
+        select_sql = ", ".join(select_parts)
         frame = _read_frame(
             conn,
             f"""
             WITH base AS (
-                SELECT game_date, game_pk, away_team, home_team, inning_topbot, batter, batter_name, pitcher_name, player_name,
-                       at_bat_number, pitch_number, pitch_type, pitch_name, zone, stand, hc_x, bb_type, events, launch_speed, launch_angle, release_speed
+                SELECT {select_sql}
                 FROM {config.cockroach_pitcher_baseline_event_table}
                 WHERE {where_sql}
             ),
