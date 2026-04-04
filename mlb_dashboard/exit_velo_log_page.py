@@ -471,6 +471,7 @@ def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
             lambda row: "-"
             if pd.isna(row["avg_ev"])
             else (
+                f"{int(row['tracked_bbe'])} BBE | "
                 f"{float(row['avg_ev']):.1f} avg | "
                 f"{float(row['max_ev']):.1f} max | "
                 f"{float(row['pulled_flyball_pct']) * 100.0:.0f} PFB% | "
