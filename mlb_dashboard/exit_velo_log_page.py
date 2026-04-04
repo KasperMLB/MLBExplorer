@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
-from .branding import page_icon_path
+from .branding import apply_branding_head, page_icon_path
 from .cockroach_loader import read_hitter_exit_velo_events, read_recent_batter_name_lookup
 from .config import AppConfig
 from .dashboard_views import latest_built_date
@@ -605,6 +605,7 @@ def _render_side_detail(frame: pd.DataFrame, board: pd.DataFrame) -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Exit Velo Log", page_icon=page_icon_path(), layout="wide")
+    apply_branding_head()
     st.title("Exit Velo Log")
     st.caption("Recent hitter exit velocity and launch angle results from tracked batted-ball events.")
 

@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from .backtesting_view import render_backtesting_tab
-from .branding import page_icon_path
+from .branding import apply_branding_head, page_icon_path
 from .cockroach_loader import read_hitter_backtest_data, read_pitcher_backtest_data, read_prop_odds_history
 from .config import AppConfig
 from .dashboard_views import (
@@ -1341,6 +1341,7 @@ def _build_pitcher_export_sections(
 
 def main() -> None:
     st.set_page_config(page_title="MLB Local Explorer", page_icon=page_icon_path(), layout="wide")
+    apply_branding_head()
     st.title("MLB Local Explorer")
     perf_events: list[tuple[str, float]] = []
     config = AppConfig()

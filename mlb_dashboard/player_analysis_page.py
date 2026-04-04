@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from .branding import page_icon_path
+from .branding import apply_branding_head, page_icon_path
 from .config import AppConfig
 from .dashboard_views import (
     ARSENAL_COLUMNS,
@@ -947,6 +947,7 @@ def _render_pitcher_matchup_tab(selected_row: pd.Series, slate_entry: dict[str, 
 
 def main() -> None:
     st.set_page_config(page_title="Player Analysis", page_icon=page_icon_path(), layout="wide")
+    apply_branding_head()
     config = AppConfig()
     target_date, filters = _sidebar(config)
     daily, reusable, source, resolved_date = _load_context(config, target_date)

@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
-from .branding import page_icon_path
+from .branding import apply_branding_head, page_icon_path
 from .components import render_props_board
 from .config import AppConfig
 from .cockroach_loader import read_latest_prop_odds_snapshot, write_props_odds_snapshot
@@ -210,6 +210,7 @@ def _load_shared_or_live_props(config: AppConfig, target_date: date, rosters: pd
 
 def main() -> None:
     st.set_page_config(page_title="Props Board", page_icon=page_icon_path(), layout="wide")
+    apply_branding_head()
     st.title("Props Board")
     st.caption("Live odds page. This page loads separately so the main matchup workflow stays untouched.")
 
