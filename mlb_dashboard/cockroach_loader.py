@@ -810,7 +810,13 @@ def _prepare_records(frame: pd.DataFrame, columns: list[str]) -> list[tuple]:
     return [tuple(row[column] for column in columns) for _, row in work.iterrows()]
 
 
-def _upsert_frame(conn, table_name: str, frame: pd.DataFrame, conflict_columns: list[str]) -> None:
+def _batched(records: list[tuple], batch_size: int):
+    size = max(int(batch_size), 1)
+    for start in range(0, len(records), size):
+        yield records[start : start + size]
+
+
+def _upsert_frame(conn, table_name: str, frame: pd.DataFrame, conflict_columns: list[str], batch_size: int = 250) -> None:
     if frame.empty:
         return
     columns = list(frame.columns)
@@ -821,19 +827,21 @@ def _upsert_frame(conn, table_name: str, frame: pd.DataFrame, conflict_columns: 
         f"ON CONFLICT ({', '.join(conflict_columns)}) DO UPDATE SET {assignments}"
     )
     records = _prepare_records(frame, columns)
-    with conn.cursor() as cur:
-        cur.executemany(sql, records)
+    for batch in _batched(records, batch_size):
+        with conn.cursor() as cur:
+            cur.executemany(sql, batch)
 
 
-def _insert_frame(conn, table_name: str, frame: pd.DataFrame) -> None:
+def _insert_frame(conn, table_name: str, frame: pd.DataFrame, batch_size: int = 250) -> None:
     if frame.empty:
         return
     columns = list(frame.columns)
     placeholders = ", ".join(["%s"] * len(columns))
     sql = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
     records = _prepare_records(frame, columns)
-    with conn.cursor() as cur:
-        cur.executemany(sql, records)
+    for batch in _batched(records, batch_size):
+        with conn.cursor() as cur:
+            cur.executemany(sql, batch)
 
 
 def write_tracking_payload(
