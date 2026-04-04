@@ -306,7 +306,7 @@ def _checkbox_flag(series: pd.Series) -> pd.Series:
 
 def _build_event_log(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
-        return pd.DataFrame(columns=["Batter", "Team", "Date", "PA", "isHH", "isBarrel", "Result", "Exit Velo", "LA", "Pitch Velo"])
+        return pd.DataFrame(columns=["Batter", "Team", "Game", "Date", "PA", "isHH", "isBarrel", "Result", "Exit Velo", "LA", "Pitch Velo"])
     ordered = frame.sort_values(
         ["game_date", "game_pk", "at_bat_number", "pitch_number"],
         ascending=[False, False, False, False],
@@ -314,6 +314,7 @@ def _build_event_log(frame: pd.DataFrame) -> pd.DataFrame:
     ).head(EVENT_LOG_LIMIT).copy()
     ordered["Batter"] = ordered["player_name"].fillna("")
     ordered["Team"] = ordered["team"].fillna("")
+    ordered["Game"] = ordered["game_label"].fillna("")
     ordered["Date"] = ordered["game_date"].dt.date.astype(str)
     ordered["PA"] = pd.to_numeric(ordered["at_bat_number"], errors="coerce").fillna(0).astype(int)
     ordered["isHH"] = _checkbox_flag(ordered.get("is_hard_hit", pd.Series(False, index=ordered.index)))
@@ -322,7 +323,25 @@ def _build_event_log(frame: pd.DataFrame) -> pd.DataFrame:
     ordered["Exit Velo"] = pd.to_numeric(ordered["launch_speed"], errors="coerce").round(1)
     ordered["LA"] = pd.to_numeric(ordered["launch_angle"], errors="coerce").round(1)
     ordered["Pitch Velo"] = pd.to_numeric(ordered["release_speed"], errors="coerce").round(1)
-    return ordered[["Batter", "Team", "Date", "PA", "isHH", "isBarrel", "Result", "Exit Velo", "LA", "Pitch Velo"]].reset_index(drop=True)
+    return ordered[["Batter", "Team", "Game", "Date", "PA", "isHH", "isBarrel", "Result", "Exit Velo", "LA", "Pitch Velo"]].reset_index(drop=True)
+
+
+def _sort_event_log(frame: pd.DataFrame, sort_mode: str) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    if sort_mode == "Team":
+        return frame.sort_values(
+            ["Team", "Date", "Game", "PA"],
+            ascending=[True, False, True, False],
+            na_position="last",
+        ).reset_index(drop=True)
+    if sort_mode == "Game":
+        return frame.sort_values(
+            ["Game", "Date", "Team", "PA"],
+            ascending=[True, False, True, False],
+            na_position="last",
+        ).reset_index(drop=True)
+    return frame.reset_index(drop=True)
 
 
 def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
@@ -505,6 +524,13 @@ def main() -> None:
     left, right = st.columns([2.0, 1.1])
     with left:
         st.subheader("Recent Event Log")
+        sort_mode = st.segmented_control(
+            "Sort by",
+            options=["Default", "Team", "Game"],
+            default="Default",
+            key="exit-velo-event-log-sort",
+        )
+        event_log = _sort_event_log(event_log, str(sort_mode or "Default"))
         st.caption(f"{len(event_log):,} recent tracked batted-ball events")
         render_custom_metric_table(event_log, key="exit-velo-event-log", height=520, metric_styles=EXIT_VELO_METRIC_STYLES)
     with right:
