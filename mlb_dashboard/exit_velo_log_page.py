@@ -299,9 +299,14 @@ def _result_text(series: pd.Series) -> pd.Series:
     return series.fillna("").astype(str).str.replace("_", " ").str.title()
 
 
+def _checkbox_flag(series: pd.Series) -> pd.Series:
+    values = pd.Series(series).fillna(False).astype(bool)
+    return values.map(lambda flag: "[x]" if flag else "[ ]")
+
+
 def _build_event_log(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
-        return pd.DataFrame(columns=["Batter", "Team", "Date", "PA", "In.", "Result", "Exit Velo", "LA", "Pitch Velo"])
+        return pd.DataFrame(columns=["Batter", "Team", "Date", "PA", "isHH", "isBarrel", "Result", "Exit Velo", "LA", "Pitch Velo"])
     ordered = frame.sort_values(
         ["game_date", "game_pk", "at_bat_number", "pitch_number"],
         ascending=[False, False, False, False],
@@ -311,15 +316,13 @@ def _build_event_log(frame: pd.DataFrame) -> pd.DataFrame:
     ordered["Team"] = ordered["team"].fillna("")
     ordered["Date"] = ordered["game_date"].dt.date.astype(str)
     ordered["PA"] = pd.to_numeric(ordered["at_bat_number"], errors="coerce").fillna(0).astype(int)
-    if "inning" in ordered.columns:
-        ordered["In."] = pd.to_numeric(ordered["inning"], errors="coerce").fillna(0).astype(int)
-    else:
-        ordered["In."] = ""
+    ordered["isHH"] = _checkbox_flag(ordered.get("is_hard_hit", pd.Series(False, index=ordered.index)))
+    ordered["isBarrel"] = _checkbox_flag(ordered.get("is_barrel", pd.Series(False, index=ordered.index)))
     ordered["Result"] = _result_text(ordered["events"])
     ordered["Exit Velo"] = pd.to_numeric(ordered["launch_speed"], errors="coerce").round(1)
     ordered["LA"] = pd.to_numeric(ordered["launch_angle"], errors="coerce").round(1)
     ordered["Pitch Velo"] = pd.to_numeric(ordered["release_speed"], errors="coerce").round(1)
-    return ordered[["Batter", "Team", "Date", "PA", "In.", "Result", "Exit Velo", "LA", "Pitch Velo"]].reset_index(drop=True)
+    return ordered[["Batter", "Team", "Date", "PA", "isHH", "isBarrel", "Result", "Exit Velo", "LA", "Pitch Velo"]].reset_index(drop=True)
 
 
 def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
@@ -376,7 +379,7 @@ def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
 
 def _format_detail_table(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
-        return pd.DataFrame(columns=["Date", "Game", "PA", "In.", "Result", "EV", "LA", "Pitch Velo", "Brl"])
+        return pd.DataFrame(columns=["Date", "Game", "PA", "isHH", "isBarrel", "Result", "EV", "LA", "Pitch Velo", "Brl"])
     detail = frame.sort_values(
         ["game_date", "game_pk", "at_bat_number", "pitch_number"],
         ascending=[False, False, False, False],
@@ -385,16 +388,14 @@ def _format_detail_table(frame: pd.DataFrame) -> pd.DataFrame:
     detail["Date"] = pd.to_datetime(detail["game_date"], errors="coerce").dt.date.astype(str)
     detail["Game"] = detail["game_label"].fillna("")
     detail["PA"] = pd.to_numeric(detail["at_bat_number"], errors="coerce").fillna(0).astype(int)
-    if "inning" in detail.columns:
-        detail["In."] = pd.to_numeric(detail["inning"], errors="coerce").fillna(0).astype(int)
-    else:
-        detail["In."] = ""
+    detail["isHH"] = _checkbox_flag(detail.get("is_hard_hit", pd.Series(False, index=detail.index)))
+    detail["isBarrel"] = _checkbox_flag(detail.get("is_barrel", pd.Series(False, index=detail.index)))
     detail["Result"] = _result_text(detail["events"])
     detail["EV"] = pd.to_numeric(detail["launch_speed"], errors="coerce").round(1)
     detail["LA"] = pd.to_numeric(detail["launch_angle"], errors="coerce").round(1)
     detail["Pitch Velo"] = pd.to_numeric(detail["release_speed"], errors="coerce").round(1)
     detail["Brl"] = pd.to_numeric(detail.get("barrel_count"), errors="coerce").fillna(0).astype(int)
-    return detail[["Date", "Game", "PA", "In.", "Result", "EV", "LA", "Pitch Velo", "Brl"]].reset_index(drop=True)
+    return detail[["Date", "Game", "PA", "isHH", "isBarrel", "Result", "EV", "LA", "Pitch Velo", "Brl"]].reset_index(drop=True)
 
 
 def _build_detail_rollup(frame: pd.DataFrame) -> pd.DataFrame:
