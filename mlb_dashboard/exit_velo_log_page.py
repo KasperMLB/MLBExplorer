@@ -357,7 +357,7 @@ def _sort_event_log(frame: pd.DataFrame, sort_mode: str) -> pd.DataFrame:
     return frame.reset_index(drop=True)
 
 
-def _filter_and_sort_summary(frame: pd.DataFrame, player_search: str, sort_mode: str) -> pd.DataFrame:
+def _filter_and_sort_summary(frame: pd.DataFrame, player_search: str, team_filters: list[str]) -> pd.DataFrame:
     if frame.empty:
         return frame
     filtered = frame.copy()
@@ -366,8 +366,9 @@ def _filter_and_sort_summary(frame: pd.DataFrame, player_search: str, sort_mode:
         filtered = filtered.loc[
             filtered["Player"].fillna("").astype(str).str.casefold().str.contains(needle)
         ].copy()
-    if sort_mode == "Team":
-        filtered = filtered.sort_values(["Team", "Player"], ascending=[True, True], na_position="last")
+    if team_filters:
+        filtered = filtered.loc[filtered["Team"].fillna("").astype(str).isin(team_filters)].copy()
+    filtered = filtered.sort_values(["Team", "Player"], ascending=[True, True], na_position="last")
     return filtered.reset_index(drop=True)
 
 
@@ -569,13 +570,16 @@ def main() -> None:
     with summary_controls[0]:
         summary_player_search = st.text_input("Player search", value="", key="exit-velo-summary-search")
     with summary_controls[1]:
-        summary_sort_mode = st.segmented_control(
-            "Sort by",
-            options=["Default", "Team"],
-            default="Default",
-            key="exit-velo-summary-sort",
+        summary_team_options = sorted(
+            value for value in summary_board["Team"].dropna().astype(str).unique().tolist() if value
         )
-    display_summary_board = _filter_and_sort_summary(summary_board, summary_player_search, str(summary_sort_mode or "Default"))
+        summary_team_filters = st.multiselect(
+            "Team",
+            options=summary_team_options,
+            default=[],
+            key="exit-velo-summary-team",
+        )
+    display_summary_board = _filter_and_sort_summary(summary_board, summary_player_search, summary_team_filters)
     st.caption(f"{len(display_summary_board):,} hitters")
     st.dataframe(display_summary_board.drop(columns=["batter"], errors="ignore"), hide_index=True, use_container_width=True, height=520)
 
