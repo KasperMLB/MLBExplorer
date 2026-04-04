@@ -344,6 +344,20 @@ def _sort_event_log(frame: pd.DataFrame, sort_mode: str) -> pd.DataFrame:
     return frame.reset_index(drop=True)
 
 
+def _filter_and_sort_summary(frame: pd.DataFrame, player_search: str, sort_mode: str) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    filtered = frame.copy()
+    needle = player_search.strip().casefold()
+    if needle:
+        filtered = filtered.loc[
+            filtered["Player"].fillna("").astype(str).str.casefold().str.contains(needle)
+        ].copy()
+    if sort_mode == "Team":
+        filtered = filtered.sort_values(["Team", "Player"], ascending=[True, True], na_position="last")
+    return filtered.reset_index(drop=True)
+
+
 def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return _empty_board()
@@ -536,8 +550,19 @@ def main() -> None:
     with right:
         _render_side_detail(filtered, summary_board)
     st.subheader("Player Summary")
-    st.caption(f"{len(summary_board):,} hitters")
-    st.dataframe(summary_board.drop(columns=["batter"], errors="ignore"), hide_index=True, use_container_width=True, height=520)
+    summary_controls = st.columns([1.2, 0.8])
+    with summary_controls[0]:
+        summary_player_search = st.text_input("Player search", value="", key="exit-velo-summary-search")
+    with summary_controls[1]:
+        summary_sort_mode = st.segmented_control(
+            "Sort by",
+            options=["Default", "Team"],
+            default="Default",
+            key="exit-velo-summary-sort",
+        )
+    display_summary_board = _filter_and_sort_summary(summary_board, summary_player_search, str(summary_sort_mode or "Default"))
+    st.caption(f"{len(display_summary_board):,} hitters")
+    st.dataframe(display_summary_board.drop(columns=["batter"], errors="ignore"), hide_index=True, use_container_width=True, height=520)
 
 
 if __name__ == "__main__":
