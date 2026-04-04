@@ -396,6 +396,8 @@ def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
                 barrel_count=("barrel_count", lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum()),
             )
         )
+        grouped["fly_ball_pct"] = grouped["fly_balls"] / grouped["tracked_bbe"].replace(0, pd.NA)
+        grouped["pulled_flyball_pct"] = grouped["pulled_flyballs"] / grouped["tracked_bbe"].replace(0, pd.NA)
         grouped["hard_hit_pct"] = grouped["hard_hits"] / grouped["tracked_bbe"].replace(0, pd.NA)
         grouped[f"Last {window}"] = grouped.apply(
             lambda row: "-"
@@ -403,8 +405,8 @@ def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
             else (
                 f"{float(row['avg_ev']):.1f} avg | "
                 f"{float(row['max_ev']):.1f} max | "
-                f"{int(row['pulled_flyballs'])} PFB | "
-                f"{int(row['fly_balls'])} FB | "
+                f"{float(row['pulled_flyball_pct']) * 100.0:.0f} PFB% | "
+                f"{float(row['fly_ball_pct']) * 100.0:.0f} FB% | "
                 f"{float(row['hard_hit_pct']) * 100.0:.0f} HH% | "
                 f"{int(row['barrel_count'])} Brl"
             ),
