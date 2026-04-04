@@ -487,6 +487,7 @@ def render_exit_velo_summary_grid(
         st.dataframe(frame, hide_index=True, use_container_width=True, height=height)
         return frame
 
+    prepared = frame.copy()
     metric_order = ["BBE", "Avg EV", "Max EV", "PFB%", "FB%", "HH%", "Brl"]
     percent_formatter = JsCode(
         """
@@ -513,54 +514,55 @@ def render_exit_velo_summary_grid(
         """
     )
 
-    def _style_js(low: float, mid: float, high: float) -> JsCode:
-        return JsCode(
-            f"""
-            function(params) {{
-              if (params.value === null || params.value === undefined || params.value === "") {{ return {{}}; }}
-              const value = Number(params.value);
-              if (Number.isNaN(value)) {{ return {{}}; }}
+    def _fixed_band_hex(value: object, low: float, mid: float, high: float) -> str:
+        numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        if pd.isna(numeric):
+            return ""
+        if numeric <= mid:
+            ratio = 1.0 if abs(mid - low) < 1e-9 else max(0.0, min(1.0, (float(numeric) - low) / (mid - low)))
+            return _diverging_heatmap_hex(0.5 * ratio)
+        ratio = 1.0 if abs(high - mid) < 1e-9 else max(0.0, min(1.0, (float(numeric) - mid) / (high - mid)))
+        return _diverging_heatmap_hex(0.5 + (0.5 * ratio))
 
-              const mix = (a, b, ratio) => Math.round(a + ((b - a) * ratio));
-              const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
-              const red = [207, 76, 76];
-              const yellow = [246, 223, 106];
-              const green = [79, 166, 101];
-              let ratio = 0.5;
-              let rgb = yellow;
-
-              if (value <= {mid}) {{
-                ratio = ({mid} - {low}) === 0 ? 1.0 : clamp((value - {low}) / ({mid} - {low}), 0, 1);
-                rgb = [
-                  mix(red[0], yellow[0], ratio),
-                  mix(red[1], yellow[1], ratio),
-                  mix(red[2], yellow[2], ratio)
-                ];
-              }} else {{
-                ratio = ({high} - {mid}) === 0 ? 1.0 : clamp((value - {mid}) / ({high} - {mid}), 0, 1);
-                rgb = [
-                  mix(yellow[0], green[0], ratio),
-                  mix(yellow[1], green[1], ratio),
-                  mix(yellow[2], green[2], ratio)
-                ];
-              }}
-
-              return {{
-                backgroundColor: `rgb(${{rgb[0]}}, ${{rgb[1]}}, ${{rgb[2]}})`,
-                color: '#1f1f1f'
-              }};
-            }}
-            """
-        )
-
-    base_style_map: dict[str, JsCode] = {
-        "Avg EV": _style_js(85.0, 90.0, 95.0),
-        "Max EV": _style_js(95.0, 103.0, 110.0),
-        "PFB%": _style_js(10.0, 25.0, 40.0),
-        "FB%": _style_js(15.0, 30.0, 45.0),
-        "HH%": _style_js(20.0, 40.0, 60.0),
+    base_band_map: dict[str, tuple[float, float, float]] = {
+        "Avg EV": (85.0, 90.0, 95.0),
+        "Max EV": (95.0, 103.0, 110.0),
+        "PFB%": (10.0, 25.0, 40.0),
+        "FB%": (15.0, 30.0, 45.0),
+        "HH%": (20.0, 40.0, 60.0),
     }
     brl_high_map = {"L1": 1.0, "L3": 2.0, "L5": 3.0, "L10": 4.0, "L15": 5.0, "L25": 6.0}
+    style_lookup = JsCode(
+        """
+        function(params) {
+          if (!params.data || !params.colDef || !params.colDef.field) { return {}; }
+          const styleKey = "__style_" + params.colDef.field;
+          const color = params.data[styleKey];
+          if (!color) { return {}; }
+          return {backgroundColor: color, color: '#1f1f1f'};
+        }
+        """
+    )
+
+    for column in frame.columns:
+        if column in {"Player", "Team"} or column.endswith("BBE"):
+            continue
+        if column.endswith("Brl"):
+            window = str(column).split(" ", 1)[0]
+            high = brl_high_map.get(window, 3.0)
+            mid = max(high / 2.0, 0.5)
+            prepared[f"__style_{column}"] = [
+                _fixed_band_hex(value, 0.0, mid, high)
+                for value in frame[column]
+            ]
+            continue
+        for metric_suffix, band in base_band_map.items():
+            if column.endswith(metric_suffix):
+                prepared[f"__style_{column}"] = [
+                    _fixed_band_hex(value, band[0], band[1], band[2])
+                    for value in frame[column]
+                ]
+                break
 
     def _column_def(field: str, header_name: str, *, width: int, formatter=None, cell_style=None, pinned: str | None = None, add_divider: bool = False) -> dict[str, object]:
         column: dict[str, object] = {
@@ -610,13 +612,13 @@ def render_exit_velo_summary_grid(
             elif suffix in {"Avg EV", "Max EV"}:
                 formatter = one_decimal_formatter
                 width = 108
-                cell_style = base_style_map[suffix]
+                cell_style = style_lookup
             elif suffix in {"PFB%", "FB%", "HH%"}:
                 formatter = percent_formatter
                 width = 92
-                cell_style = base_style_map[suffix]
+                cell_style = style_lookup
             if suffix == "Brl":
-                cell_style = _style_js(0.0, max(brl_high_map.get(window, 3.0) / 2.0, 0.5), brl_high_map.get(window, 3.0))
+                cell_style = style_lookup
             children.append(
                 _column_def(
                     field,
@@ -655,7 +657,7 @@ def render_exit_velo_summary_grid(
         ".ag-header-cell-label": {"justify-content": "center"},
     }
     response = AgGrid(
-        frame,
+        prepared,
         gridOptions=grid_options,
         height=height,
         fit_columns_on_grid_load=False,
