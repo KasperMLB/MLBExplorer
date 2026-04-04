@@ -483,36 +483,9 @@ def render_exit_velo_summary_grid(
     if frame.empty:
         st.info("No data available for this selection.")
         return frame
-    if not HAS_AGGRID:
-        st.dataframe(frame, hide_index=True, use_container_width=True, height=height)
-        return frame
-
-    prepared = frame.copy()
+    display_frame = frame.copy()
     metric_order = ["BBE", "Avg EV", "Max EV", "PFB%", "FB%", "HH%", "Brl"]
-    percent_formatter = JsCode(
-        """
-        function(params) {
-          if (params.value === null || params.value === undefined || params.value === "") { return "-"; }
-          return Math.round(Number(params.value)).toLocaleString() + "%";
-        }
-        """
-    )
-    one_decimal_formatter = JsCode(
-        """
-        function(params) {
-          if (params.value === null || params.value === undefined || params.value === "") { return "-"; }
-          return Number(params.value).toFixed(1);
-        }
-        """
-    )
-    integer_formatter = JsCode(
-        """
-        function(params) {
-          if (params.value === null || params.value === undefined || params.value === "") { return "-"; }
-          return Math.round(Number(params.value)).toLocaleString();
-        }
-        """
-    )
+    style_frame = pd.DataFrame("", index=display_frame.index, columns=display_frame.columns)
 
     def _fixed_band_hex(value: object, low: float, mid: float, high: float) -> str:
         numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
@@ -532,149 +505,68 @@ def render_exit_velo_summary_grid(
         "HH%": (20.0, 40.0, 60.0),
     }
     brl_high_map = {"L1": 1.0, "L3": 2.0, "L5": 3.0, "L10": 4.0, "L15": 5.0, "L25": 6.0}
-    style_lookup = JsCode(
-        """
-        function(params) {
-          if (!params.data || !params.colDef || !params.colDef.field) { return {}; }
-          const styleKey = "__style_" + params.colDef.field;
-          const color = params.data[styleKey];
-          if (!color) { return {}; }
-          return {backgroundColor: color, color: '#1f1f1f'};
-        }
-        """
-    )
-
-    for column in frame.columns:
-        if column in {"Player", "Team"} or column.endswith("BBE"):
-            continue
-        if column.endswith("Brl"):
-            window = str(column).split(" ", 1)[0]
-            high = brl_high_map.get(window, 3.0)
-            mid = max(high / 2.0, 0.5)
-            prepared[f"__style_{column}"] = [
-                _fixed_band_hex(value, 0.0, mid, high)
-                for value in frame[column]
-            ]
-            continue
-        for metric_suffix, band in base_band_map.items():
-            if column.endswith(metric_suffix):
-                prepared[f"__style_{column}"] = [
-                    _fixed_band_hex(value, band[0], band[1], band[2])
-                    for value in frame[column]
-                ]
-                break
-
-    def _column_def(field: str, header_name: str, *, width: int, formatter=None, cell_style=None, pinned: str | None = None, add_divider: bool = False) -> dict[str, object]:
-        column: dict[str, object] = {
-            "field": field,
-            "headerName": header_name,
-            "width": width,
-            "minWidth": width,
-            "sortable": True,
-            "resizable": True,
-        }
-        if formatter is not None:
-            column["valueFormatter"] = formatter
-        if cell_style is not None:
-            column["cellStyle"] = cell_style
-        if pinned:
-            column["pinned"] = pinned
-        if add_divider:
-            column["cellClass"] = "ev-summary-group-end"
-            column["headerClass"] = "ev-summary-group-end"
-        return column
-
-    column_defs: list[dict[str, object]] = [
-        _column_def("Player", "Player", width=180, pinned="left"),
-        _column_def("Team", "Team", width=80, pinned="left"),
-    ]
-
     present_windows: list[str] = []
-    for column in frame.columns:
+    for column in display_frame.columns:
         if column in {"Player", "Team"}:
             continue
         parts = str(column).split(" ", 1)
         if len(parts) == 2 and parts[0] not in present_windows:
             present_windows.append(parts[0])
 
-    for window in present_windows:
-        children: list[dict[str, object]] = []
-        for index, suffix in enumerate(metric_order):
-            field = f"{window} {suffix}"
-            if field not in frame.columns:
-                continue
-            formatter = None
-            cell_style = None
-            width = 92
-            if suffix in {"BBE", "Brl"}:
-                formatter = integer_formatter
-                width = 78
-            elif suffix in {"Avg EV", "Max EV"}:
-                formatter = one_decimal_formatter
-                width = 108
-                cell_style = style_lookup
-            elif suffix in {"PFB%", "FB%", "HH%"}:
-                formatter = percent_formatter
-                width = 92
-                cell_style = style_lookup
-            if suffix == "Brl":
-                cell_style = style_lookup
-            children.append(
-                _column_def(
-                    field,
-                    suffix,
-                    width=width,
-                    formatter=formatter,
-                    cell_style=cell_style,
-                    add_divider=index == (len(metric_order) - 1),
-                )
-            )
-        column_defs.append(
-            {
-                "headerName": window,
-                "marryChildren": True,
-                "children": children,
-            }
-        )
+    for column in display_frame.columns:
+        if column in {"Player", "Team"}:
+            continue
+        if column.endswith("Brl"):
+            window = str(column).split(" ", 1)[0]
+            high = brl_high_map.get(window, 3.0)
+            mid = max(high / 2.0, 0.5)
+            colors = [_fixed_band_hex(value, 0.0, mid, high) for value in display_frame[column]]
+        else:
+            colors = None
+            for metric_suffix, band in base_band_map.items():
+                if column.endswith(metric_suffix):
+                    colors = [_fixed_band_hex(value, band[0], band[1], band[2]) for value in display_frame[column]]
+                    break
+        if colors is not None:
+            style_frame[column] = [
+                f"background-color: {color}; color: #1f1f1f" if color else ""
+                for color in colors
+            ]
+        if column.endswith(("%", "Brl", "BBE", "Avg EV", "Max EV")):
+            if column.endswith("%"):
+                display_frame[column] = pd.to_numeric(display_frame[column], errors="coerce").round(0)
+            elif column.endswith(("Avg EV", "Max EV")):
+                display_frame[column] = pd.to_numeric(display_frame[column], errors="coerce").round(1)
+            else:
+                display_frame[column] = pd.to_numeric(display_frame[column], errors="coerce").round(0).astype("Int64")
 
-    grid_options = {
-        "columnDefs": column_defs,
-        "defaultColDef": {
-            "sortable": True,
-            "filter": False,
-            "resizable": True,
-            "suppressMovable": True,
-        },
-        "suppressRowClickSelection": True,
-        "animateRows": False,
-        "headerHeight": 34,
-        "groupHeaderHeight": 34,
-        "rowHeight": 36,
-    }
-    custom_css = {
-        ".ev-summary-group-end": {"border-right": "3px solid rgba(61, 78, 101, 0.9) !important"},
-        ".ag-header-group-cell": {"font-weight": "700"},
-        ".ag-header-cell-label": {"justify-content": "center"},
-    }
-    response = AgGrid(
-        prepared,
-        gridOptions=grid_options,
+    for column in style_frame.columns:
+        if column in {"Player", "Team"}:
+            continue
+        parts = str(column).split(" ", 1)
+        if len(parts) == 2 and parts[1] == metric_order[-1]:
+            style_frame[column] = style_frame[column].fillna("").astype(str) + "; border-right: 3px solid rgba(61, 78, 101, 0.9)"
+
+    multi_columns: list[tuple[str, str]] = []
+    for column in display_frame.columns:
+        if column == "Player":
+            multi_columns.append(("Player", ""))
+        elif column == "Team":
+            multi_columns.append(("Team", ""))
+        else:
+            parts = str(column).split(" ", 1)
+            multi_columns.append((parts[0], parts[1] if len(parts) == 2 else column))
+    display_frame.columns = pd.MultiIndex.from_tuples(multi_columns)
+    style_frame.columns = display_frame.columns
+
+    styler = display_frame.style.apply(lambda _: style_frame, axis=None)
+    st.dataframe(
+        styler,
+        hide_index=True,
+        use_container_width=True,
         height=height,
-        fit_columns_on_grid_load=False,
-        allow_unsafe_jscode=True,
-        update_mode=GridUpdateMode.MODEL_CHANGED,
-        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-        theme="streamlit",
-        custom_css=custom_css,
-        key=key,
     )
-    returned = pd.DataFrame(response["data"])
-    if returned.empty:
-        return frame
-    available_columns = [column for column in frame.columns if column in returned.columns]
-    if not available_columns:
-        return frame
-    return returned.loc[:, available_columns]
+    return frame
 
 
 def _prepare_grid_frame(
