@@ -15,6 +15,21 @@ from .ui_components import render_custom_metric_table
 WINDOWS = [1, 3, 5, 10, 15, 25]
 SORT_DEPTH = 20
 EVENT_LOG_LIMIT = 250
+ZONE_DISPLAY_MAP = {
+    1: "Upper Inside",
+    2: "Upper Middle",
+    3: "Upper Outside",
+    4: "Middle Inside",
+    5: "Middle Middle",
+    6: "Middle Outside",
+    7: "Lower Inside",
+    8: "Lower Middle",
+    9: "Lower Outside",
+    11: "Above Zone",
+    12: "Inside Off Plate",
+    13: "Outside Off Plate",
+    14: "Below Zone",
+}
 EXIT_VELO_METRIC_STYLES = {
     "Exit Velo": {"mode": "high", "low": 65.0, "high": 112.0},
     "EV": {"mode": "high", "low": 65.0, "high": 112.0},
@@ -53,11 +68,14 @@ def _zone_filter_label(zone: object) -> str:
     zone_value = pd.to_numeric(pd.Series([zone]), errors="coerce").iloc[0]
     if pd.isna(zone_value):
         return "Unknown"
-    return str(int(zone_value))
+    return ZONE_DISPLAY_MAP.get(int(zone_value), "Unknown")
 
 
 def _zone_filter_sort_key(value: object) -> tuple[int, int | str]:
     text = _normalize_name(value)
+    reverse_map = {label: zone_id for zone_id, label in ZONE_DISPLAY_MAP.items()}
+    if text in reverse_map:
+        return (0, reverse_map[text])
     numeric = pd.to_numeric(pd.Series([text]), errors="coerce").iloc[0]
     if pd.notna(numeric):
         return (0, int(numeric))
