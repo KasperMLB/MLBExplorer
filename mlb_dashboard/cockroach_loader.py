@@ -1096,6 +1096,8 @@ def read_hitter_exit_velo_events(
         "player_name",
         "at_bat_number",
         "pitch_number",
+        "stand",
+        "hc_x",
         "bb_type",
         "events",
         "launch_speed",
@@ -1122,7 +1124,7 @@ def read_hitter_exit_velo_events(
             f"""
             WITH base AS (
                 SELECT game_date, game_pk, away_team, home_team, inning_topbot, batter, batter_name, pitcher_name, player_name,
-                       at_bat_number, pitch_number, bb_type, events, launch_speed, launch_angle, release_speed
+                       at_bat_number, pitch_number, stand, hc_x, bb_type, events, launch_speed, launch_angle, release_speed
                 FROM {config.cockroach_pitcher_baseline_event_table}
                 WHERE {where_sql}
             ),
@@ -1138,7 +1140,7 @@ def read_hitter_exit_velo_events(
                 )
             )
             SELECT b.game_date, b.game_pk, b.away_team, b.home_team, b.inning_topbot, b.batter, b.batter_name, b.pitcher_name, b.player_name,
-                   b.at_bat_number, b.pitch_number, b.bb_type, b.events, b.launch_speed, b.launch_angle, b.release_speed
+                   b.at_bat_number, b.pitch_number, b.stand, b.hc_x, b.bb_type, b.events, b.launch_speed, b.launch_angle, b.release_speed
             FROM base b
             JOIN ranked_games g
               ON b.batter = g.batter
@@ -1156,6 +1158,7 @@ def read_hitter_exit_velo_events(
     work["launch_speed"] = pd.to_numeric(work["launch_speed"], errors="coerce")
     work["launch_angle"] = pd.to_numeric(work["launch_angle"], errors="coerce")
     work["release_speed"] = pd.to_numeric(work["release_speed"], errors="coerce")
+    work["hc_x"] = pd.to_numeric(work["hc_x"], errors="coerce")
     work["batter"] = pd.to_numeric(work["batter"], errors="coerce")
     work["at_bat_number"] = pd.to_numeric(work["at_bat_number"], errors="coerce")
     work["pitch_number"] = pd.to_numeric(work["pitch_number"], errors="coerce")
@@ -1187,6 +1190,8 @@ def read_hitter_exit_velo_events(
             "game_label",
             "at_bat_number",
             "pitch_number",
+            "stand",
+            "hc_x",
             "bb_type",
             "events",
             "launch_speed",

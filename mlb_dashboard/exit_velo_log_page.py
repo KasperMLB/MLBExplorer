@@ -53,6 +53,15 @@ def _is_statcast_barrel(exit_velocity: object, launch_angle: object) -> bool:
     return lower_bound <= float(la) <= upper_bound
 
 
+def _is_pulled_fly_ball(bb_type: object, stand: object, hc_x: object) -> bool:
+    batted_ball_type = "" if bb_type is None else str(bb_type).strip().lower()
+    batter_stand = "" if stand is None else str(stand).strip().upper()
+    hit_coord_x = pd.to_numeric(pd.Series([hc_x]), errors="coerce").iloc[0]
+    if batted_ball_type != "fly_ball" or pd.isna(hit_coord_x):
+        return False
+    return (batter_stand == "R" and float(hit_coord_x) < 125.0) or (batter_stand == "L" and float(hit_coord_x) > 125.0)
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def _load_exit_velo_events_cached(end_date_value: str | None) -> pd.DataFrame:
     config = AppConfig()
@@ -90,6 +99,10 @@ def _prepare_events(events: pd.DataFrame) -> pd.DataFrame:
     work["is_barrel"] = [
         _is_statcast_barrel(exit_velocity, launch_angle)
         for exit_velocity, launch_angle in zip(work["launch_speed"], work["launch_angle"])
+    ]
+    work["is_pulled_fly_ball"] = [
+        _is_pulled_fly_ball(bb_type, stand, hc_x)
+        for bb_type, stand, hc_x in zip(work["bb_type"], work.get("stand", pd.Series(index=work.index)), work.get("hc_x", pd.Series(index=work.index)))
     ]
     work["barrel_count"] = pd.Series(work["is_barrel"], index=work.index).fillna(False).astype(bool).astype(int)
     work["inning_number"] = pd.NA
@@ -375,7 +388,8 @@ def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
             .agg(
                 avg_ev=("launch_speed", lambda s: pd.to_numeric(s, errors="coerce").mean()),
                 max_ev=("launch_speed", lambda s: pd.to_numeric(s, errors="coerce").max()),
-                avg_la=("launch_angle", lambda s: pd.to_numeric(s, errors="coerce").mean()),
+                fly_balls=("bb_type", lambda s: pd.Series(s).fillna("").astype(str).str.strip().str.lower().eq("fly_ball").sum()),
+                pulled_flyballs=("is_pulled_fly_ball", lambda s: pd.Series(s).fillna(False).astype(bool).sum()),
                 tracked_bbe=("launch_speed", lambda s: pd.to_numeric(s, errors="coerce").notna().sum()),
                 hard_hits=("is_hard_hit", lambda s: pd.Series(s).fillna(False).astype(bool).sum()),
                 barrel_count=("barrel_count", lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum()),
@@ -388,7 +402,8 @@ def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
             else (
                 f"{float(row['avg_ev']):.1f} avg | "
                 f"{float(row['max_ev']):.1f} max | "
-                f"{float(row['avg_la']):.1f} LA | "
+                f"{int(row['pulled_flyballs'])} PFB | "
+                f"{int(row['fly_balls'])} FB | "
                 f"{float(row['hard_hit_pct']) * 100.0:.0f} HH% | "
                 f"{int(row['barrel_count'])} Brl"
             ),
