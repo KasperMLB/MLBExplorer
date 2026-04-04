@@ -15,13 +15,6 @@ from .ui_components import render_custom_metric_table
 WINDOWS = [1, 3, 5, 10, 15, 25]
 SORT_DEPTH = 20
 EVENT_LOG_LIMIT = 250
-ZONE_LABEL_ORDER = [
-    "Heart",
-    "Shadow",
-    "Chase",
-    "Waste",
-    "Unknown",
-]
 EXIT_VELO_METRIC_STYLES = {
     "Exit Velo": {"mode": "high", "low": 65.0, "high": 112.0},
     "EV": {"mode": "high", "low": 65.0, "high": 112.0},
@@ -56,23 +49,19 @@ def _normalize_pitch_label(pitch_name: object, pitch_type: object) -> str:
     return code if code else "Unknown"
 
 
-def _zone_filter_label(plate_x: object, plate_z: object) -> str:
-    x_value = pd.to_numeric(pd.Series([plate_x]), errors="coerce").iloc[0]
-    z_value = pd.to_numeric(pd.Series([plate_z]), errors="coerce").iloc[0]
-    if pd.isna(x_value) or pd.isna(z_value):
+def _zone_filter_label(zone: object) -> str:
+    zone_value = pd.to_numeric(pd.Series([zone]), errors="coerce").iloc[0]
+    if pd.isna(zone_value):
         return "Unknown"
-    x_abs = abs(float(x_value))
-    z_float = float(z_value)
-    heart = x_abs <= 0.55 and 1.90 <= z_float <= 3.10
-    shadow = x_abs <= 1.10 and 1.45 <= z_float <= 3.55 and not heart
-    chase = x_abs <= 1.67 and 1.00 <= z_float <= 4.00 and not heart and not shadow
-    if heart:
-        return "Heart"
-    if shadow:
-        return "Shadow"
-    if chase:
-        return "Chase"
-    return "Waste"
+    return str(int(zone_value))
+
+
+def _zone_filter_sort_key(value: object) -> tuple[int, int | str]:
+    text = _normalize_name(value)
+    numeric = pd.to_numeric(pd.Series([text]), errors="coerce").iloc[0]
+    if pd.notna(numeric):
+        return (0, int(numeric))
+    return (1, text)
 
 
 def _is_statcast_barrel(exit_velocity: object, launch_angle: object) -> bool:
@@ -146,11 +135,8 @@ def _prepare_events(events: pd.DataFrame) -> pd.DataFrame:
         )
     ]
     work["zone_filter_label"] = [
-        _zone_filter_label(plate_x, plate_z)
-        for plate_x, plate_z in zip(
-            work.get("plate_x", pd.Series(index=work.index)),
-            work.get("plate_z", pd.Series(index=work.index)),
-        )
+        _zone_filter_label(zone)
+        for zone in work.get("zone", pd.Series(index=work.index))
     ]
     work["barrel_count"] = pd.Series(work["is_barrel"], index=work.index).fillna(False).astype(bool).astype(int)
     work["inning_number"] = pd.NA
@@ -659,7 +645,7 @@ def main() -> None:
         zone_values = {
             value for value in filtered["zone_filter_label"].dropna().astype(str).unique().tolist() if value
         }
-        summary_zone_options = [label for label in ZONE_LABEL_ORDER if label in zone_values]
+        summary_zone_options = sorted(zone_values, key=_zone_filter_sort_key)
         summary_zone_filters = st.multiselect(
             "Zone",
             options=summary_zone_options,
