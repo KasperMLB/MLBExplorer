@@ -62,6 +62,34 @@ Sync recent days and then build:
 python -m mlb_dashboard.ingest --sync-recent 3 --build-after
 ```
 
+## Automatically re-grade recent tracked dates
+
+Use the repo-owned rolling sync command to re-ingest and rebuild recent dates so
+previously incomplete tracked rows can become graded once live event data is
+available:
+
+```powershell
+python -m mlb_dashboard.tracking_sync --days 3
+```
+
+Required environment:
+
+- `DATABASE_URL`
+- `ODDS_API_KEY` if you want rebuilt dates to refresh captured odds rows too
+
+Expected CLI output:
+
+- per-date ingest counts
+- per-date hitter/pitcher snapshot, outcome, and graded-row counts
+- per-date odds row counts
+- final source freshness summary
+
+Recommended workflow:
+
+1. Run the normal build during the day for today's slate.
+2. Run `python -m mlb_dashboard.tracking_sync --days 3` on a rolling basis.
+3. Verify Backtesting diagnostics show `Graded Rows` increasing after the sync.
+
 ## Run the local explorer
 
 ```powershell
