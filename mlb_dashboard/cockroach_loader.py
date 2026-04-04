@@ -1153,13 +1153,14 @@ def read_hitter_exit_velo_events(
         optional_selects = {
             "pitch_type": "pitch_type",
             "pitch_name": "pitch_name",
+            "p_throws": "p_throws",
             "zone": "zone",
             "plate_x": "plate_x",
             "plate_z": "plate_z",
         }
         select_parts = []
         for column_name in columns:
-            if column_name in {"pitch_type", "pitch_name", "zone", "plate_x", "plate_z"}:
+            if column_name in {"pitch_type", "pitch_name", "p_throws", "zone", "plate_x", "plate_z"}:
                 if column_name in available_columns:
                     select_parts.append(optional_selects[column_name])
                 else:
@@ -1187,7 +1188,7 @@ def read_hitter_exit_velo_events(
                 )
             )
             SELECT b.game_date, b.game_pk, b.away_team, b.home_team, b.inning_topbot, b.batter, b.batter_name, b.pitcher_name, b.player_name,
-                   b.at_bat_number, b.pitch_number, b.pitch_type, b.pitch_name, b.zone, b.plate_x, b.plate_z, b.stand, b.hc_x, b.bb_type, b.events, b.launch_speed, b.launch_angle, b.release_speed
+                   b.at_bat_number, b.pitch_number, b.pitch_type, b.pitch_name, b.p_throws, b.zone, b.plate_x, b.plate_z, b.stand, b.hc_x, b.bb_type, b.events, b.launch_speed, b.launch_angle, b.release_speed
             FROM base b
             JOIN ranked_games g
               ON b.batter = g.batter
