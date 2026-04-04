@@ -1114,6 +1114,8 @@ def read_hitter_exit_velo_events(
         "pitch_type",
         "pitch_name",
         "zone",
+        "plate_x",
+        "plate_z",
         "stand",
         "hc_x",
         "bb_type",
@@ -1142,10 +1144,12 @@ def read_hitter_exit_velo_events(
             "pitch_type": "pitch_type",
             "pitch_name": "pitch_name",
             "zone": "zone",
+            "plate_x": "plate_x",
+            "plate_z": "plate_z",
         }
         select_parts = []
         for column_name in columns:
-            if column_name in {"pitch_type", "pitch_name", "zone"}:
+            if column_name in {"pitch_type", "pitch_name", "zone", "plate_x", "plate_z"}:
                 if column_name in available_columns:
                     select_parts.append(optional_selects[column_name])
                 else:
@@ -1192,6 +1196,8 @@ def read_hitter_exit_velo_events(
     work["launch_angle"] = pd.to_numeric(work["launch_angle"], errors="coerce")
     work["release_speed"] = pd.to_numeric(work["release_speed"], errors="coerce")
     work["zone"] = pd.to_numeric(work["zone"], errors="coerce")
+    work["plate_x"] = pd.to_numeric(work["plate_x"], errors="coerce")
+    work["plate_z"] = pd.to_numeric(work["plate_z"], errors="coerce")
     work["hc_x"] = pd.to_numeric(work["hc_x"], errors="coerce")
     work["batter"] = pd.to_numeric(work["batter"], errors="coerce")
     work["at_bat_number"] = pd.to_numeric(work["at_bat_number"], errors="coerce")
@@ -1227,6 +1233,8 @@ def read_hitter_exit_velo_events(
             "pitch_type",
             "pitch_name",
             "zone",
+            "plate_x",
+            "plate_z",
             "stand",
             "hc_x",
             "bb_type",

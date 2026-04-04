@@ -16,20 +16,10 @@ WINDOWS = [1, 3, 5, 10, 15, 25]
 SORT_DEPTH = 20
 EVENT_LOG_LIMIT = 250
 ZONE_LABEL_ORDER = [
-    "Upper-Left",
-    "Upper-Middle",
-    "Upper-Right",
-    "Middle-Left",
     "Heart",
-    "Middle-Right",
-    "Lower-Left",
-    "Lower-Middle",
-    "Lower-Right",
-    "Waste Up",
-    "Waste Arm-Side",
-    "Waste Glove-Side",
-    "Waste Down",
-    "Out of Zone",
+    "Shadow",
+    "Chase",
+    "Waste",
     "Unknown",
 ]
 EXIT_VELO_METRIC_STYLES = {
@@ -66,27 +56,23 @@ def _normalize_pitch_label(pitch_name: object, pitch_type: object) -> str:
     return code if code else "Unknown"
 
 
-def _zone_filter_label(zone: object) -> str:
-    zone_value = pd.to_numeric(pd.Series([zone]), errors="coerce").iloc[0]
-    if pd.isna(zone_value):
+def _zone_filter_label(plate_x: object, plate_z: object) -> str:
+    x_value = pd.to_numeric(pd.Series([plate_x]), errors="coerce").iloc[0]
+    z_value = pd.to_numeric(pd.Series([plate_z]), errors="coerce").iloc[0]
+    if pd.isna(x_value) or pd.isna(z_value):
         return "Unknown"
-    zone_id = int(zone_value)
-    zone_labels = {
-        1: "Upper-Left",
-        2: "Upper-Middle",
-        3: "Upper-Right",
-        4: "Middle-Left",
-        5: "Heart",
-        6: "Middle-Right",
-        7: "Lower-Left",
-        8: "Lower-Middle",
-        9: "Lower-Right",
-        11: "Waste Up",
-        12: "Waste Arm-Side",
-        13: "Waste Glove-Side",
-        14: "Waste Down",
-    }
-    return zone_labels.get(zone_id, "Out of Zone")
+    x_abs = abs(float(x_value))
+    z_float = float(z_value)
+    heart = x_abs <= 0.55 and 1.90 <= z_float <= 3.10
+    shadow = x_abs <= 1.10 and 1.45 <= z_float <= 3.55 and not heart
+    chase = x_abs <= 1.67 and 1.00 <= z_float <= 4.00 and not heart and not shadow
+    if heart:
+        return "Heart"
+    if shadow:
+        return "Shadow"
+    if chase:
+        return "Chase"
+    return "Waste"
 
 
 def _is_statcast_barrel(exit_velocity: object, launch_angle: object) -> bool:
@@ -159,7 +145,13 @@ def _prepare_events(events: pd.DataFrame) -> pd.DataFrame:
             work.get("pitch_type", pd.Series(index=work.index)),
         )
     ]
-    work["zone_filter_label"] = [_zone_filter_label(zone) for zone in work.get("zone", pd.Series(index=work.index))]
+    work["zone_filter_label"] = [
+        _zone_filter_label(plate_x, plate_z)
+        for plate_x, plate_z in zip(
+            work.get("plate_x", pd.Series(index=work.index)),
+            work.get("plate_z", pd.Series(index=work.index)),
+        )
+    ]
     work["barrel_count"] = pd.Series(work["is_barrel"], index=work.index).fillna(False).astype(bool).astype(int)
     work["inning_number"] = pd.NA
     if "inning" in work.columns:
