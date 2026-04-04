@@ -9,7 +9,7 @@ from .cockroach_loader import read_hitter_exit_velo_events, read_recent_batter_n
 from .config import AppConfig
 from .dashboard_views import latest_built_date
 from .query_engine import StatcastQueryEngine, load_remote_parquet
-from .ui_components import render_custom_metric_table
+from .ui_components import render_custom_metric_table, render_exit_velo_summary_grid
 
 
 WINDOWS = [1, 3, 5, 10, 15, 25]
@@ -522,26 +522,6 @@ def _select_summary_columns(frame: pd.DataFrame, selected_windows: list[str]) ->
     return frame.loc[:, [column for column in columns if column in frame.columns]].copy()
 
 
-def _summary_metric_styles(frame: pd.DataFrame) -> dict[str, dict[str, object]]:
-    styles: dict[str, dict[str, object]] = {}
-    for column in frame.columns:
-        if column.endswith("BBE"):
-            continue
-        if column.endswith("Avg EV"):
-            styles[column] = EXIT_VELO_METRIC_STYLES["Avg EV"]
-        elif column.endswith("Max EV"):
-            styles[column] = EXIT_VELO_METRIC_STYLES["Max EV"]
-        elif column.endswith("PFB%"):
-            styles[column] = EXIT_VELO_METRIC_STYLES["PFB%"]
-        elif column.endswith("FB%"):
-            styles[column] = EXIT_VELO_METRIC_STYLES["FB%"]
-        elif column.endswith("HH%"):
-            styles[column] = EXIT_VELO_METRIC_STYLES["HH%"]
-        elif column.endswith("Brl"):
-            styles[column] = EXIT_VELO_METRIC_STYLES["Brl"]
-    return styles
-
-
 def _format_detail_table(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(columns=["Date", "Game", "PA", "isHH", "isBarrel", "Result", "EV", "LA", "Pitch Velo", "Brl"])
@@ -733,11 +713,10 @@ def main() -> None:
     display_summary_board = _filter_and_sort_summary(summary_board, summary_player_search)
     display_summary_board = _select_summary_columns(display_summary_board, summary_window_filters)
     st.caption(f"{len(display_summary_board):,} hitters")
-    render_custom_metric_table(
+    render_exit_velo_summary_grid(
         display_summary_board.drop(columns=["batter"], errors="ignore"),
         key="exit-velo-summary-board",
         height=520,
-        metric_styles=_summary_metric_styles(display_summary_board),
     )
 
 

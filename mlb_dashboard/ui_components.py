@@ -474,6 +474,204 @@ def render_custom_metric_table(
     return frame
 
 
+def render_exit_velo_summary_grid(
+    frame: pd.DataFrame,
+    *,
+    key: str,
+    height: int = 520,
+) -> pd.DataFrame:
+    if frame.empty:
+        st.info("No data available for this selection.")
+        return frame
+    if not HAS_AGGRID:
+        st.dataframe(frame, hide_index=True, use_container_width=True, height=height)
+        return frame
+
+    metric_order = ["BBE", "Avg EV", "Max EV", "PFB%", "FB%", "HH%", "Brl"]
+    percent_formatter = JsCode(
+        """
+        function(params) {
+          if (params.value === null || params.value === undefined || params.value === "") { return "-"; }
+          return Math.round(Number(params.value)).toLocaleString() + "%";
+        }
+        """
+    )
+    one_decimal_formatter = JsCode(
+        """
+        function(params) {
+          if (params.value === null || params.value === undefined || params.value === "") { return "-"; }
+          return Number(params.value).toFixed(1);
+        }
+        """
+    )
+    integer_formatter = JsCode(
+        """
+        function(params) {
+          if (params.value === null || params.value === undefined || params.value === "") { return "-"; }
+          return Math.round(Number(params.value)).toLocaleString();
+        }
+        """
+    )
+
+    def _style_js(low: float, mid: float, high: float) -> JsCode:
+        return JsCode(
+            f"""
+            function(params) {{
+              if (params.value === null || params.value === undefined || params.value === "") {{ return {{}}; }}
+              const value = Number(params.value);
+              if (Number.isNaN(value)) {{ return {{}}; }}
+
+              const mix = (a, b, ratio) => Math.round(a + ((b - a) * ratio));
+              const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+              const red = [207, 76, 76];
+              const yellow = [246, 223, 106];
+              const green = [79, 166, 101];
+              let ratio = 0.5;
+              let rgb = yellow;
+
+              if (value <= {mid}) {{
+                ratio = ({mid} - {low}) === 0 ? 1.0 : clamp((value - {low}) / ({mid} - {low}), 0, 1);
+                rgb = [
+                  mix(red[0], yellow[0], ratio),
+                  mix(red[1], yellow[1], ratio),
+                  mix(red[2], yellow[2], ratio)
+                ];
+              }} else {{
+                ratio = ({high} - {mid}) === 0 ? 1.0 : clamp((value - {mid}) / ({high} - {mid}), 0, 1);
+                rgb = [
+                  mix(yellow[0], green[0], ratio),
+                  mix(yellow[1], green[1], ratio),
+                  mix(yellow[2], green[2], ratio)
+                ];
+              }}
+
+              return {{
+                backgroundColor: `rgb(${{rgb[0]}}, ${{rgb[1]}}, ${{rgb[2]}})`,
+                color: '#1f1f1f'
+              }};
+            }}
+            """
+        )
+
+    base_style_map: dict[str, JsCode] = {
+        "Avg EV": _style_js(85.0, 90.0, 95.0),
+        "Max EV": _style_js(95.0, 103.0, 110.0),
+        "PFB%": _style_js(10.0, 25.0, 40.0),
+        "FB%": _style_js(15.0, 30.0, 45.0),
+        "HH%": _style_js(20.0, 40.0, 60.0),
+    }
+    brl_high_map = {"L1": 1.0, "L3": 2.0, "L5": 3.0, "L10": 4.0, "L15": 5.0, "L25": 6.0}
+
+    def _column_def(field: str, header_name: str, *, width: int, formatter=None, cell_style=None, pinned: str | None = None, add_divider: bool = False) -> dict[str, object]:
+        column: dict[str, object] = {
+            "field": field,
+            "headerName": header_name,
+            "width": width,
+            "minWidth": width,
+            "sortable": True,
+            "resizable": True,
+        }
+        if formatter is not None:
+            column["valueFormatter"] = formatter
+        if cell_style is not None:
+            column["cellStyle"] = cell_style
+        if pinned:
+            column["pinned"] = pinned
+        if add_divider:
+            column["cellClass"] = "ev-summary-group-end"
+            column["headerClass"] = "ev-summary-group-end"
+        return column
+
+    column_defs: list[dict[str, object]] = [
+        _column_def("Player", "Player", width=180, pinned="left"),
+        _column_def("Team", "Team", width=80, pinned="left"),
+    ]
+
+    present_windows: list[str] = []
+    for column in frame.columns:
+        if column in {"Player", "Team"}:
+            continue
+        parts = str(column).split(" ", 1)
+        if len(parts) == 2 and parts[0] not in present_windows:
+            present_windows.append(parts[0])
+
+    for window in present_windows:
+        children: list[dict[str, object]] = []
+        for index, suffix in enumerate(metric_order):
+            field = f"{window} {suffix}"
+            if field not in frame.columns:
+                continue
+            formatter = None
+            cell_style = None
+            width = 92
+            if suffix in {"BBE", "Brl"}:
+                formatter = integer_formatter
+                width = 78
+            elif suffix in {"Avg EV", "Max EV"}:
+                formatter = one_decimal_formatter
+                width = 108
+                cell_style = base_style_map[suffix]
+            elif suffix in {"PFB%", "FB%", "HH%"}:
+                formatter = percent_formatter
+                width = 92
+                cell_style = base_style_map[suffix]
+            if suffix == "Brl":
+                cell_style = _style_js(0.0, max(brl_high_map.get(window, 3.0) / 2.0, 0.5), brl_high_map.get(window, 3.0))
+            children.append(
+                _column_def(
+                    field,
+                    suffix,
+                    width=width,
+                    formatter=formatter,
+                    cell_style=cell_style,
+                    add_divider=index == (len(metric_order) - 1),
+                )
+            )
+        column_defs.append(
+            {
+                "headerName": window,
+                "marryChildren": True,
+                "children": children,
+            }
+        )
+
+    grid_options = {
+        "columnDefs": column_defs,
+        "defaultColDef": {
+            "sortable": True,
+            "filter": False,
+            "resizable": True,
+            "suppressMovable": True,
+        },
+        "suppressRowClickSelection": True,
+        "animateRows": False,
+        "headerHeight": 34,
+        "groupHeaderHeight": 34,
+        "rowHeight": 36,
+    }
+    custom_css = {
+        ".ev-summary-group-end": {"border-right": "3px solid rgba(61, 78, 101, 0.9) !important"},
+        ".ag-header-group-cell": {"font-weight": "700"},
+        ".ag-header-cell-label": {"justify-content": "center"},
+    }
+    response = AgGrid(
+        frame,
+        gridOptions=grid_options,
+        height=height,
+        fit_columns_on_grid_load=False,
+        allow_unsafe_jscode=True,
+        update_mode=GridUpdateMode.MODEL_CHANGED,
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+        theme="streamlit",
+        custom_css=custom_css,
+        key=key,
+    )
+    returned = pd.DataFrame(response["data"])
+    if returned.empty:
+        return frame
+    return returned.loc[:, frame.columns]
+
+
 def _prepare_grid_frame(
     frame: pd.DataFrame,
     lower_is_better: set[str] | None = None,
