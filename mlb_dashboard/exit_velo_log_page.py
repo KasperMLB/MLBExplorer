@@ -15,6 +15,23 @@ from .ui_components import render_custom_metric_table
 WINDOWS = [1, 3, 5, 10, 15, 25]
 SORT_DEPTH = 20
 EVENT_LOG_LIMIT = 250
+ZONE_LABEL_ORDER = [
+    "Upper-Left",
+    "Upper-Middle",
+    "Upper-Right",
+    "Middle-Left",
+    "Heart",
+    "Middle-Right",
+    "Lower-Left",
+    "Lower-Middle",
+    "Lower-Right",
+    "Waste Up",
+    "Waste Arm-Side",
+    "Waste Glove-Side",
+    "Waste Down",
+    "Out of Zone",
+    "Unknown",
+]
 EXIT_VELO_METRIC_STYLES = {
     "Exit Velo": {"mode": "high", "low": 65.0, "high": 112.0},
     "EV": {"mode": "high", "low": 65.0, "high": 112.0},
@@ -39,6 +56,37 @@ def _empty_board() -> pd.DataFrame:
 def _normalize_name(value: object) -> str:
     text = "" if value is None else str(value)
     return " ".join(text.strip().split())
+
+
+def _normalize_pitch_label(pitch_name: object, pitch_type: object) -> str:
+    name = _normalize_name(pitch_name)
+    if name:
+        return name
+    code = _normalize_name(pitch_type)
+    return code if code else "Unknown"
+
+
+def _zone_filter_label(zone: object) -> str:
+    zone_value = pd.to_numeric(pd.Series([zone]), errors="coerce").iloc[0]
+    if pd.isna(zone_value):
+        return "Unknown"
+    zone_id = int(zone_value)
+    zone_labels = {
+        1: "Upper-Left",
+        2: "Upper-Middle",
+        3: "Upper-Right",
+        4: "Middle-Left",
+        5: "Heart",
+        6: "Middle-Right",
+        7: "Lower-Left",
+        8: "Lower-Middle",
+        9: "Lower-Right",
+        11: "Waste Up",
+        12: "Waste Arm-Side",
+        13: "Waste Glove-Side",
+        14: "Waste Down",
+    }
+    return zone_labels.get(zone_id, "Out of Zone")
 
 
 def _is_statcast_barrel(exit_velocity: object, launch_angle: object) -> bool:
@@ -104,6 +152,14 @@ def _prepare_events(events: pd.DataFrame) -> pd.DataFrame:
         _is_pulled_fly_ball(bb_type, stand, hc_x)
         for bb_type, stand, hc_x in zip(work["bb_type"], work.get("stand", pd.Series(index=work.index)), work.get("hc_x", pd.Series(index=work.index)))
     ]
+    work["pitch_filter_label"] = [
+        _normalize_pitch_label(pitch_name, pitch_type)
+        for pitch_name, pitch_type in zip(
+            work.get("pitch_name", pd.Series(index=work.index)),
+            work.get("pitch_type", pd.Series(index=work.index)),
+        )
+    ]
+    work["zone_filter_label"] = [_zone_filter_label(zone) for zone in work.get("zone", pd.Series(index=work.index))]
     work["barrel_count"] = pd.Series(work["is_barrel"], index=work.index).fillna(False).astype(bool).astype(int)
     work["inning_number"] = pd.NA
     if "inning" in work.columns:
@@ -357,7 +413,25 @@ def _sort_event_log(frame: pd.DataFrame, sort_mode: str) -> pd.DataFrame:
     return frame.reset_index(drop=True)
 
 
-def _filter_and_sort_summary(frame: pd.DataFrame, player_search: str, team_filters: list[str]) -> pd.DataFrame:
+def _apply_summary_event_filters(
+    frame: pd.DataFrame,
+    team_filters: list[str],
+    pitch_filters: list[str],
+    zone_filters: list[str],
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    filtered = frame.copy()
+    if team_filters:
+        filtered = filtered.loc[filtered["team"].fillna("").astype(str).isin(team_filters)].copy()
+    if pitch_filters:
+        filtered = filtered.loc[filtered["pitch_filter_label"].fillna("").astype(str).isin(pitch_filters)].copy()
+    if zone_filters:
+        filtered = filtered.loc[filtered["zone_filter_label"].fillna("").astype(str).isin(zone_filters)].copy()
+    return filtered
+
+
+def _filter_and_sort_summary(frame: pd.DataFrame, player_search: str) -> pd.DataFrame:
     if frame.empty:
         return frame
     filtered = frame.copy()
@@ -366,8 +440,6 @@ def _filter_and_sort_summary(frame: pd.DataFrame, player_search: str, team_filte
         filtered = filtered.loc[
             filtered["Player"].fillna("").astype(str).str.casefold().str.contains(needle)
         ].copy()
-    if team_filters:
-        filtered = filtered.loc[filtered["Team"].fillna("").astype(str).isin(team_filters)].copy()
     filtered = filtered.sort_values(["Team", "Player"], ascending=[True, True], na_position="last")
     return filtered.reset_index(drop=True)
 
@@ -568,12 +640,12 @@ def main() -> None:
     with right:
         _render_side_detail(filtered, summary_board)
     st.subheader("Player Summary")
-    summary_controls = st.columns([1.2, 0.8])
+    summary_controls = st.columns([1.2, 0.8, 1.0, 1.0])
     with summary_controls[0]:
         summary_player_search = st.text_input("Player search", value="", key="exit-velo-summary-search")
     with summary_controls[1]:
         summary_team_options = sorted(
-            value for value in summary_board["Team"].dropna().astype(str).unique().tolist() if value
+            value for value in filtered["team"].dropna().astype(str).unique().tolist() if value
         )
         summary_team_filters = st.multiselect(
             "Team",
@@ -581,7 +653,35 @@ def main() -> None:
             default=[],
             key="exit-velo-summary-team",
         )
-    display_summary_board = _filter_and_sort_summary(summary_board, summary_player_search, summary_team_filters)
+    with summary_controls[2]:
+        summary_pitch_options = sorted(
+            value for value in filtered["pitch_filter_label"].dropna().astype(str).unique().tolist() if value
+        )
+        summary_pitch_filters = st.multiselect(
+            "Pitch Type",
+            options=summary_pitch_options,
+            default=[],
+            key="exit-velo-summary-pitch-type",
+        )
+    with summary_controls[3]:
+        zone_values = {
+            value for value in filtered["zone_filter_label"].dropna().astype(str).unique().tolist() if value
+        }
+        summary_zone_options = [label for label in ZONE_LABEL_ORDER if label in zone_values]
+        summary_zone_filters = st.multiselect(
+            "Zone",
+            options=summary_zone_options,
+            default=[],
+            key="exit-velo-summary-zone",
+        )
+    summary_filtered_events = _apply_summary_event_filters(
+        filtered,
+        summary_team_filters,
+        summary_pitch_filters,
+        summary_zone_filters,
+    )
+    summary_board = _build_player_summary(summary_filtered_events)
+    display_summary_board = _filter_and_sort_summary(summary_board, summary_player_search)
     st.caption(f"{len(display_summary_board):,} hitters")
     st.dataframe(display_summary_board.drop(columns=["batter"], errors="ignore"), hide_index=True, use_container_width=True, height=520)
 
