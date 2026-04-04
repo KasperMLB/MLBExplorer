@@ -1177,7 +1177,7 @@ def read_hitter_exit_velo_events(
                 )
             )
             SELECT b.game_date, b.game_pk, b.away_team, b.home_team, b.inning_topbot, b.batter, b.batter_name, b.pitcher_name, b.player_name,
-                   b.at_bat_number, b.pitch_number, b.pitch_type, b.pitch_name, b.zone, b.stand, b.hc_x, b.bb_type, b.events, b.launch_speed, b.launch_angle, b.release_speed
+                   b.at_bat_number, b.pitch_number, b.pitch_type, b.pitch_name, b.zone, b.plate_x, b.plate_z, b.stand, b.hc_x, b.bb_type, b.events, b.launch_speed, b.launch_angle, b.release_speed
             FROM base b
             JOIN ranked_games g
               ON b.batter = g.batter
