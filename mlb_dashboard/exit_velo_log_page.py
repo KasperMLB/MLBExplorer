@@ -90,6 +90,15 @@ def _zone_filter_sort_key(value: object) -> tuple[int, int | str]:
     return (1, text)
 
 
+def _handedness_filter_label(p_throws: object) -> str:
+    hand = _normalize_name(p_throws).upper()
+    if hand == "L":
+        return "vs LHP"
+    if hand == "R":
+        return "vs RHP"
+    return "Unknown"
+
+
 def _is_statcast_barrel(exit_velocity: object, launch_angle: object) -> bool:
     ev = pd.to_numeric(pd.Series([exit_velocity]), errors="coerce").iloc[0]
     la = pd.to_numeric(pd.Series([launch_angle]), errors="coerce").iloc[0]
@@ -163,6 +172,10 @@ def _prepare_events(events: pd.DataFrame) -> pd.DataFrame:
     work["zone_filter_label"] = [
         _zone_filter_label(zone)
         for zone in work.get("zone", pd.Series(index=work.index))
+    ]
+    work["handedness_filter_label"] = [
+        _handedness_filter_label(p_throws)
+        for p_throws in work.get("p_throws", pd.Series(index=work.index))
     ]
     work["barrel_count"] = pd.Series(work["is_barrel"], index=work.index).fillna(False).astype(bool).astype(int)
     work["inning_number"] = pd.NA
@@ -420,6 +433,7 @@ def _sort_event_log(frame: pd.DataFrame, sort_mode: str) -> pd.DataFrame:
 def _apply_summary_event_filters(
     frame: pd.DataFrame,
     team_filters: list[str],
+    handedness_filter: str,
     pitch_filters: list[str],
     zone_filters: list[str],
 ) -> pd.DataFrame:
@@ -428,6 +442,8 @@ def _apply_summary_event_filters(
     filtered = frame.copy()
     if team_filters:
         filtered = filtered.loc[filtered["team"].fillna("").astype(str).isin(team_filters)].copy()
+    if handedness_filter in {"vs LHP", "vs RHP"}:
+        filtered = filtered.loc[filtered["handedness_filter_label"].fillna("").astype(str).eq(handedness_filter)].copy()
     if pitch_filters:
         filtered = filtered.loc[filtered["pitch_filter_label"].fillna("").astype(str).isin(pitch_filters)].copy()
     if zone_filters:
@@ -664,7 +680,7 @@ def main() -> None:
     with right:
         _render_side_detail(filtered, summary_board)
     st.subheader("Player Summary")
-    summary_controls = st.columns([1.1, 0.8, 1.0, 1.0, 0.9])
+    summary_controls = st.columns([1.1, 0.8, 0.8, 1.0, 1.0, 0.9])
     with summary_controls[0]:
         summary_player_search = st.text_input("Player search", value="", key="exit-velo-summary-search")
     with summary_controls[1]:
@@ -678,6 +694,13 @@ def main() -> None:
             key="exit-velo-summary-team",
         )
     with summary_controls[2]:
+        summary_handedness_filter = st.selectbox(
+            "Handedness",
+            options=["Both", "vs LHP", "vs RHP"],
+            index=0,
+            key="exit-velo-summary-handedness",
+        )
+    with summary_controls[3]:
         summary_pitch_options = sorted(
             value for value in filtered["pitch_filter_label"].dropna().astype(str).unique().tolist() if value
         )
@@ -687,7 +710,7 @@ def main() -> None:
             default=[],
             key="exit-velo-summary-pitch-type",
         )
-    with summary_controls[3]:
+    with summary_controls[4]:
         zone_values = {
             value for value in filtered["zone_filter_label"].dropna().astype(str).unique().tolist() if value
         }
@@ -698,7 +721,7 @@ def main() -> None:
             default=[],
             key="exit-velo-summary-zone",
         )
-    with summary_controls[4]:
+    with summary_controls[5]:
         summary_window_filters = st.multiselect(
             "Rolling",
             options=["L1", "L3", "L5", "L10", "L15", "L25"],
@@ -708,6 +731,7 @@ def main() -> None:
     summary_filtered_events = _apply_summary_event_filters(
         filtered,
         summary_team_filters,
+        summary_handedness_filter,
         summary_pitch_filters,
         summary_zone_filters,
     )
