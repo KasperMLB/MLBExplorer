@@ -485,6 +485,8 @@ def render_exit_velo_summary_grid(
         return frame
     display_frame = frame.copy()
     metric_order = ["BBE", "Avg EV", "Max EV", "PFB%", "FB%", "HH%", "Brl"]
+    divider_css = "border-right: 4px solid #20354d; box-shadow: inset -2px 0 0 #20354d"
+    divider_left_css = "border-left: 2px solid rgba(32, 53, 77, 0.55)"
     style_frame = pd.DataFrame("", index=display_frame.index, columns=display_frame.columns)
 
     def _fixed_band_hex(value: object, low: float, mid: float, high: float) -> str:
@@ -532,29 +534,25 @@ def render_exit_velo_summary_grid(
                 f"background-color: {color}; color: #1f1f1f" if color else ""
                 for color in colors
             ]
+    group_starts: list[str] = []
     group_ends: list[str] = []
     for column in style_frame.columns:
         if column in {"Player", "Team"}:
             continue
         parts = str(column).split(" ", 1)
         if len(parts) == 2:
+            if parts[1] == metric_order[0]:
+                group_starts.append(column)
             if parts[1] == metric_order[-1]:
                 group_ends.append(column)
 
-    expanded_display = pd.DataFrame(index=display_frame.index)
-    expanded_style = pd.DataFrame(index=style_frame.index)
-    divider_index = 0
-    for column in display_frame.columns:
-        expanded_display[column] = display_frame[column]
-        expanded_style[column] = style_frame[column]
-        if column in group_ends and column != group_ends[-1]:
-            divider_column = f"__divider_{divider_index}"
-            divider_index += 1
-            expanded_display[divider_column] = ""
-            expanded_style[divider_column] = "background-color: #20354d; color: #20354d"
+    for index, column in enumerate(group_starts):
+        if index == 0:
+            continue
+        style_frame[column] = style_frame[column].fillna("").astype(str) + f"; {divider_left_css}"
 
-    display_frame = expanded_display
-    style_frame = expanded_style
+    for column in group_ends:
+        style_frame[column] = style_frame[column].fillna("").astype(str) + f"; {divider_css}"
 
     multi_columns: list[tuple[str, str]] = []
     for column in display_frame.columns:
@@ -562,8 +560,6 @@ def render_exit_velo_summary_grid(
             multi_columns.append(("Player", ""))
         elif column == "Team":
             multi_columns.append(("Team", ""))
-        elif str(column).startswith("__divider_"):
-            multi_columns.append(("", ""))
         else:
             parts = str(column).split(" ", 1)
             multi_columns.append((parts[0], parts[1] if len(parts) == 2 else column))
@@ -573,9 +569,6 @@ def render_exit_velo_summary_grid(
     formatters: dict[tuple[str, str], object] = {}
     for column in display_frame.columns:
         if column[0] in {"Player", "Team"}:
-            continue
-        if column == ("", ""):
-            formatters[column] = lambda value: ""
             continue
         metric_name = column[1]
         if metric_name in {"BBE", "Brl"}:
