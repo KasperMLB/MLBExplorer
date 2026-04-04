@@ -1567,6 +1567,9 @@ def _build_hitter_game_outcomes(
             "rbi",
             "walks",
             "strikeouts",
+            "outcome_complete",
+            "outcome_status",
+            "source_max_event_date",
             "last_updated_at",
         ]
     ]
@@ -1579,6 +1582,14 @@ def _build_hitter_game_outcomes(
         full_outcomes[column] = pd.to_numeric(full_outcomes[column], errors="coerce").fillna(0).astype(int)
     full_outcomes["had_plate_appearance"] = full_outcomes["had_plate_appearance"].fillna(False)
     full_outcomes["started"] = full_outcomes["started"].fillna(False)
+    if "outcome_complete" not in full_outcomes.columns:
+        full_outcomes["outcome_complete"] = True
+    if "outcome_status" not in full_outcomes.columns:
+        full_outcomes["outcome_status"] = OUTCOME_STATUS_COMPLETE
+    if "source_max_event_date" not in full_outcomes.columns:
+        full_outcomes["source_max_event_date"] = source_max_event_date
+    if "last_updated_at" not in full_outcomes.columns:
+        full_outcomes["last_updated_at"] = datetime.now(UTC)
     full_outcomes["outcome_complete"] = full_outcomes["outcome_complete"].fillna(True)
     full_outcomes["outcome_status"] = full_outcomes["outcome_status"].fillna(OUTCOME_STATUS_COMPLETE)
     full_outcomes["source_max_event_date"] = full_outcomes["source_max_event_date"].fillna(source_max_event_date)
