@@ -669,7 +669,10 @@ def render_exit_velo_summary_grid(
     returned = pd.DataFrame(response["data"])
     if returned.empty:
         return frame
-    return returned.loc[:, frame.columns]
+    available_columns = [column for column in frame.columns if column in returned.columns]
+    if not available_columns:
+        return frame
+    return returned.loc[:, available_columns]
 
 
 def _prepare_grid_frame(
