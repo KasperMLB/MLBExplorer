@@ -36,6 +36,9 @@ EXIT_VELO_METRIC_STYLES = {
     "Pitch Velo": {"mode": "high", "low": 80.0, "high": 100.0},
     "LA": {"mode": "target", "low": -30.0, "ideal": 18.0, "high": 50.0},
     "HH%": {"mode": "high", "low": 0.0, "high": 100.0},
+    "PFB%": {"mode": "high", "low": 0.0, "high": 100.0},
+    "FB%": {"mode": "high", "low": 0.0, "high": 100.0},
+    "Brl": {"mode": "high", "low": 0.0, "high": 6.0},
     "Avg EV": {"mode": "high", "low": 65.0, "high": 112.0},
     "Max EV": {"mode": "high", "low": 65.0, "high": 112.0},
 }
@@ -48,7 +51,7 @@ def _hosted_base_url() -> str:
 
 
 def _empty_board() -> pd.DataFrame:
-    return pd.DataFrame(columns=["Player", "Team", "Last 1", "Last 3", "Last 5", "Last 10", "Last 15", "Last 25"])
+    return pd.DataFrame(columns=["Player", "Team"])
 
 
 def _normalize_name(value: object) -> str:
@@ -471,21 +474,28 @@ def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
         grouped["fly_ball_pct"] = grouped["fly_balls"] / grouped["tracked_bbe"].replace(0, pd.NA)
         grouped["pulled_flyball_pct"] = grouped["pulled_flyballs"] / grouped["tracked_bbe"].replace(0, pd.NA)
         grouped["hard_hit_pct"] = grouped["hard_hits"] / grouped["tracked_bbe"].replace(0, pd.NA)
-        grouped[f"Last {window}"] = grouped.apply(
-            lambda row: "-"
-            if pd.isna(row["avg_ev"])
-            else (
-                f"{int(row['tracked_bbe'])} BBE | "
-                f"{float(row['avg_ev']):.1f} avg | "
-                f"{float(row['max_ev']):.1f} max | "
-                f"{float(row['pulled_flyball_pct']) * 100.0:.0f} PFB% | "
-                f"{float(row['fly_ball_pct']) * 100.0:.0f} FB% | "
-                f"{float(row['hard_hit_pct']) * 100.0:.0f} HH% | "
-                f"{int(row['barrel_count'])} Brl"
-            ),
-            axis=1,
+        window_prefix = f"L{window}"
+        grouped[f"{window_prefix} BBE"] = pd.to_numeric(grouped["tracked_bbe"], errors="coerce").fillna(0).astype(int)
+        grouped[f"{window_prefix} Avg EV"] = pd.to_numeric(grouped["avg_ev"], errors="coerce").round(1)
+        grouped[f"{window_prefix} Max EV"] = pd.to_numeric(grouped["max_ev"], errors="coerce").round(1)
+        grouped[f"{window_prefix} PFB%"] = (pd.to_numeric(grouped["pulled_flyball_pct"], errors="coerce") * 100.0).round(0)
+        grouped[f"{window_prefix} FB%"] = (pd.to_numeric(grouped["fly_ball_pct"], errors="coerce") * 100.0).round(0)
+        grouped[f"{window_prefix} HH%"] = (pd.to_numeric(grouped["hard_hit_pct"], errors="coerce") * 100.0).round(0)
+        grouped[f"{window_prefix} Brl"] = pd.to_numeric(grouped["barrel_count"], errors="coerce").fillna(0).astype(int)
+        summaries.append(
+            grouped[
+                [
+                    "batter",
+                    f"{window_prefix} BBE",
+                    f"{window_prefix} Avg EV",
+                    f"{window_prefix} Max EV",
+                    f"{window_prefix} PFB%",
+                    f"{window_prefix} FB%",
+                    f"{window_prefix} HH%",
+                    f"{window_prefix} Brl",
+                ]
+            ]
         )
-        summaries.append(grouped[["batter", f"Last {window}"]])
     board = base.copy()
     for summary in summaries:
         board = board.merge(summary, on="batter", how="left")
@@ -495,10 +505,41 @@ def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
         sort_columns = [f"sort_ev_{idx}" for idx in range(1, SORT_DEPTH + 1)]
         board = board.sort_values(sort_columns, ascending=[False] * len(sort_columns), na_position="last")
         board = board.drop(columns=sort_columns, errors="ignore")
-    for window in WINDOWS:
-        column = f"Last {window}"
-        board[column] = board[column].fillna("-")
     return board.reset_index(drop=True)
+
+
+def _select_summary_columns(frame: pd.DataFrame, selected_windows: list[str]) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    selected = selected_windows or ["L1", "L5"]
+    columns = ["Player", "Team", "batter"]
+    metric_suffixes = ["BBE", "Avg EV", "Max EV", "PFB%", "FB%", "HH%", "Brl"]
+    for window in selected:
+        for suffix in metric_suffixes:
+            column_name = f"{window} {suffix}"
+            if column_name in frame.columns:
+                columns.append(column_name)
+    return frame.loc[:, [column for column in columns if column in frame.columns]].copy()
+
+
+def _summary_metric_styles(frame: pd.DataFrame) -> dict[str, dict[str, object]]:
+    styles: dict[str, dict[str, object]] = {}
+    for column in frame.columns:
+        if column.endswith("BBE"):
+            continue
+        if column.endswith("Avg EV"):
+            styles[column] = EXIT_VELO_METRIC_STYLES["Avg EV"]
+        elif column.endswith("Max EV"):
+            styles[column] = EXIT_VELO_METRIC_STYLES["Max EV"]
+        elif column.endswith("PFB%"):
+            styles[column] = EXIT_VELO_METRIC_STYLES["PFB%"]
+        elif column.endswith("FB%"):
+            styles[column] = EXIT_VELO_METRIC_STYLES["FB%"]
+        elif column.endswith("HH%"):
+            styles[column] = EXIT_VELO_METRIC_STYLES["HH%"]
+        elif column.endswith("Brl"):
+            styles[column] = EXIT_VELO_METRIC_STYLES["Brl"]
+    return styles
 
 
 def _format_detail_table(frame: pd.DataFrame) -> pd.DataFrame:
@@ -641,7 +682,7 @@ def main() -> None:
     with right:
         _render_side_detail(filtered, summary_board)
     st.subheader("Player Summary")
-    summary_controls = st.columns([1.2, 0.8, 1.0, 1.0])
+    summary_controls = st.columns([1.1, 0.8, 1.0, 1.0, 0.9])
     with summary_controls[0]:
         summary_player_search = st.text_input("Player search", value="", key="exit-velo-summary-search")
     with summary_controls[1]:
@@ -675,6 +716,13 @@ def main() -> None:
             default=[],
             key="exit-velo-summary-zone",
         )
+    with summary_controls[4]:
+        summary_window_filters = st.multiselect(
+            "Rolling",
+            options=["L1", "L3", "L5", "L10", "L15", "L25"],
+            default=["L1", "L5"],
+            key="exit-velo-summary-windows",
+        )
     summary_filtered_events = _apply_summary_event_filters(
         filtered,
         summary_team_filters,
@@ -683,8 +731,14 @@ def main() -> None:
     )
     summary_board = _build_player_summary(summary_filtered_events)
     display_summary_board = _filter_and_sort_summary(summary_board, summary_player_search)
+    display_summary_board = _select_summary_columns(display_summary_board, summary_window_filters)
     st.caption(f"{len(display_summary_board):,} hitters")
-    st.dataframe(display_summary_board.drop(columns=["batter"], errors="ignore"), hide_index=True, use_container_width=True, height=520)
+    render_custom_metric_table(
+        display_summary_board.drop(columns=["batter"], errors="ignore"),
+        key="exit-velo-summary-board",
+        height=520,
+        metric_styles=_summary_metric_styles(display_summary_board),
+    )
 
 
 if __name__ == "__main__":
