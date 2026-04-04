@@ -686,6 +686,7 @@ def _create_live_event_tables(conn, config: AppConfig) -> None:
         "inning_topbot": "STRING",
         "at_bat_number": "INT8",
         "pitch_number": "INT8",
+        "zone": "INT8",
         "plate_x": "FLOAT8",
         "plate_z": "FLOAT8",
         "release_speed": "FLOAT8",
