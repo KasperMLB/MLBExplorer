@@ -69,6 +69,26 @@ class BuildContext:
     csv_dir: Path
 
 
+@dataclass
+class PreparedBuildAssets:
+    historical_statcast: pd.DataFrame
+    live_payload: CockroachPayload
+    raw_statcast: pd.DataFrame
+    hitter_pitcher_exclusions: pd.DataFrame
+    batter_zone_profiles: pd.DataFrame
+    pitcher_zone_profiles: pd.DataFrame
+    hitter_metrics: pd.DataFrame
+    pitcher_metrics: pd.DataFrame
+    pitcher_summary_by_hand: pd.DataFrame
+    pitcher_arsenal: pd.DataFrame
+    pitcher_arsenal_by_hand: pd.DataFrame
+    pitcher_usage_by_count: pd.DataFrame
+    pitcher_family_zone_context: pd.DataFrame
+    pitcher_movement_arsenal: pd.DataFrame
+    batter_family_zone_profiles: pd.DataFrame
+    pitch_context_source: pd.DataFrame
+
+
 OUTCOME_STATUS_COMPLETE = "complete"
 OUTCOME_STATUS_SOURCE_LAG = "source_lag"
 OUTCOME_STATUS_SOURCE_EMPTY = "source_empty"
@@ -108,6 +128,65 @@ def _csv_glob(csv_dir: Path) -> list[str]:
     return [str(path) for path in sorted(csv_dir.glob("statcast_*.csv")) if path.is_file()]
 
 
+def _historical_csv_paths(csv_dir: Path) -> list[str]:
+    paths: list[str] = []
+    for path in _csv_glob(csv_dir):
+        stem = Path(path).stem.lower()
+        if "clean" in stem or "_2026" in stem:
+            continue
+        if stem.endswith("2021_2024"):
+            continue
+        paths.append(path)
+    return paths
+
+
+def _historical_cache_manifest(config: AppConfig, csv_paths: list[str]) -> dict[str, object]:
+    return {
+        "metrics_version": config.metrics_version,
+        "year_weights": config.year_weights,
+        "zone_year_weights": config.zone_year_weights,
+        "movement_year_weights": config.movement_year_weights,
+        "recent_windows": list(DEFAULT_RECENT_WINDOWS),
+        "splits": list(DEFAULT_SPLITS),
+        "csv_files": [
+            {
+                "path": str(Path(path).resolve()),
+                "size": Path(path).stat().st_size,
+                "mtime_ns": Path(path).stat().st_mtime_ns,
+            }
+            for path in csv_paths
+        ],
+    }
+
+
+def _load_historical_cache_if_valid(config: AppConfig, csv_paths: list[str]) -> pd.DataFrame | None:
+    cache_path = config.historical_statcast_cache_path
+    manifest_path = config.historical_cache_manifest_path
+    if not cache_path.exists() or not manifest_path.exists():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    expected = _historical_cache_manifest(config, csv_paths)
+    if manifest != expected:
+        return None
+    try:
+        frame = pd.read_parquet(cache_path)
+    except Exception:
+        return None
+    if frame.empty:
+        return None
+    frame["game_date"] = pd.to_datetime(frame["game_date"], errors="coerce")
+    return frame
+
+
+def _write_historical_cache(config: AppConfig, csv_paths: list[str], frame: pd.DataFrame) -> None:
+    frame.to_parquet(config.historical_statcast_cache_path, index=False)
+    manifest = _historical_cache_manifest(config, csv_paths)
+    config.historical_cache_manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
 def _load_raw_statcast(csv_paths: list[str]) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     for path in csv_paths:
@@ -129,6 +208,77 @@ def _merge_historical_and_live(history: pd.DataFrame, live_payload: CockroachPay
     historical = history.loc[pd.to_numeric(history["game_year"], errors="coerce").fillna(0) != 2026].copy()
     combined = pd.concat([historical, live_payload.live_pitch_mix], ignore_index=True, sort=False)
     return combined
+
+
+def _resolve_historical_statcast(
+    config: AppConfig,
+    csv_dir: Path,
+    *,
+    force_refresh: bool = False,
+) -> pd.DataFrame:
+    csv_paths = _historical_csv_paths(csv_dir)
+    if not csv_paths:
+        raise FileNotFoundError("No historical statcast CSV files were found for the build cache.")
+    if not force_refresh:
+        cached = _load_historical_cache_if_valid(config, csv_paths)
+        if cached is not None:
+            return cached
+    historical = _load_raw_statcast(csv_paths)
+    historical = historical.loc[pd.to_numeric(historical["game_year"], errors="coerce").fillna(0).astype(int) < 2026].copy()
+    _write_historical_cache(config, csv_paths, historical)
+    return historical
+
+
+def prepare_historical_base(
+    config: AppConfig,
+    csv_dir: Path,
+    *,
+    force_refresh: bool = False,
+) -> pd.DataFrame:
+    ensure_directories(config)
+    return _resolve_historical_statcast(config, csv_dir, force_refresh=force_refresh)
+
+
+def prepare_build_assets(
+    config: AppConfig,
+    csv_dir: Path,
+    *,
+    target_date: date,
+    force_historical_refresh: bool = False,
+    historical_statcast_override: pd.DataFrame | None = None,
+) -> PreparedBuildAssets:
+    ensure_directories(config)
+    historical_statcast = historical_statcast_override if historical_statcast_override is not None else _resolve_historical_statcast(config, csv_dir, force_refresh=force_historical_refresh)
+    live_payload = load_cockroach_payload(config, target_date=target_date)
+    raw_statcast = _merge_historical_and_live(historical_statcast, live_payload)
+    hitter_pitcher_exclusions = _build_hitter_pitcher_exclusions(raw_statcast)
+    batter_zone_profiles, pitcher_zone_profiles = _aggregate_zone_profiles(raw_statcast, config.zone_year_weights)
+    hitter_metrics, pitcher_metrics, pitcher_summary_by_hand, pitcher_arsenal, pitcher_arsenal_by_hand, pitcher_usage_by_count = build_metric_tables(
+        raw_statcast,
+        config,
+    )
+    pitcher_family_zone_context, pitcher_movement_arsenal, batter_family_zone_profiles, pitch_context_source = build_movement_context_tables(
+        live_payload,
+        config,
+    )
+    return PreparedBuildAssets(
+        historical_statcast=historical_statcast,
+        live_payload=live_payload,
+        raw_statcast=raw_statcast,
+        hitter_pitcher_exclusions=hitter_pitcher_exclusions,
+        batter_zone_profiles=batter_zone_profiles,
+        pitcher_zone_profiles=pitcher_zone_profiles,
+        hitter_metrics=hitter_metrics,
+        pitcher_metrics=pitcher_metrics,
+        pitcher_summary_by_hand=pitcher_summary_by_hand,
+        pitcher_arsenal=pitcher_arsenal,
+        pitcher_arsenal_by_hand=pitcher_arsenal_by_hand,
+        pitcher_usage_by_count=pitcher_usage_by_count,
+        pitcher_family_zone_context=pitcher_family_zone_context,
+        pitcher_movement_arsenal=pitcher_movement_arsenal,
+        batter_family_zone_profiles=batter_family_zone_profiles,
+        pitch_context_source=pitch_context_source,
+    )
 
 
 def _live_source_max_event_date(live_payload: CockroachPayload) -> date | None:
@@ -1989,50 +2139,58 @@ def _build_pitcher_game_outcomes(
     ]
 
 
-def run_build(context: BuildContext) -> None:
+def run_build(
+    context: BuildContext,
+    *,
+    prepared_assets: PreparedBuildAssets | None = None,
+    historical_statcast_override: pd.DataFrame | None = None,
+    force_historical_refresh: bool = False,
+    refresh_reusable_artifacts: bool = True,
+    capture_odds: bool = True,
+) -> None:
     ensure_directories(context.config)
-    csv_paths = _csv_glob(context.csv_dir)
-    historical_statcast = _load_raw_statcast(csv_paths)
-    live_payload = load_cockroach_payload(context.config)
-    raw_statcast = _merge_historical_and_live(historical_statcast, live_payload)
-    hitter_pitcher_exclusions = _build_hitter_pitcher_exclusions(raw_statcast)
-    batter_zone_profiles, pitcher_zone_profiles = _aggregate_zone_profiles(raw_statcast, context.config.zone_year_weights)
-    hitter_metrics, pitcher_metrics, pitcher_summary_by_hand, pitcher_arsenal, pitcher_arsenal_by_hand, pitcher_usage_by_count = build_metric_tables(raw_statcast, context.config)
-    pitcher_family_zone_context, pitcher_movement_arsenal, batter_family_zone_profiles, pitch_context_source = build_movement_context_tables(live_payload, context.config)
-    _write_duckdb(
+    prepared = prepared_assets or prepare_build_assets(
         context.config,
-        hitter_metrics,
-        pitcher_metrics,
-        pitcher_summary_by_hand,
-        pitcher_arsenal,
-        pitcher_arsenal_by_hand,
-        pitcher_usage_by_count,
-        live_payload.hitter_rolling,
-        live_payload.pitcher_rolling,
-        batter_zone_profiles,
-        pitcher_zone_profiles,
-        batter_family_zone_profiles,
-        pitcher_family_zone_context,
-        pitcher_movement_arsenal,
-        hitter_pitcher_exclusions,
+        context.csv_dir,
+        target_date=context.target_date,
+        force_historical_refresh=force_historical_refresh,
+        historical_statcast_override=historical_statcast_override,
     )
-    _write_reusable_artifacts(
-        context.config,
-        hitter_metrics,
-        pitcher_metrics,
-        pitcher_summary_by_hand,
-        pitcher_arsenal,
-        pitcher_arsenal_by_hand,
-        pitcher_usage_by_count,
-        live_payload.hitter_rolling,
-        live_payload.pitcher_rolling,
-        batter_zone_profiles,
-        pitcher_zone_profiles,
-        batter_family_zone_profiles,
-        pitcher_family_zone_context,
-        pitcher_movement_arsenal,
-        hitter_pitcher_exclusions,
-    )
+    if refresh_reusable_artifacts:
+        _write_duckdb(
+            context.config,
+            prepared.hitter_metrics,
+            prepared.pitcher_metrics,
+            prepared.pitcher_summary_by_hand,
+            prepared.pitcher_arsenal,
+            prepared.pitcher_arsenal_by_hand,
+            prepared.pitcher_usage_by_count,
+            prepared.live_payload.hitter_rolling,
+            prepared.live_payload.pitcher_rolling,
+            prepared.batter_zone_profiles,
+            prepared.pitcher_zone_profiles,
+            prepared.batter_family_zone_profiles,
+            prepared.pitcher_family_zone_context,
+            prepared.pitcher_movement_arsenal,
+            prepared.hitter_pitcher_exclusions,
+        )
+        _write_reusable_artifacts(
+            context.config,
+            prepared.hitter_metrics,
+            prepared.pitcher_metrics,
+            prepared.pitcher_summary_by_hand,
+            prepared.pitcher_arsenal,
+            prepared.pitcher_arsenal_by_hand,
+            prepared.pitcher_usage_by_count,
+            prepared.live_payload.hitter_rolling,
+            prepared.live_payload.pitcher_rolling,
+            prepared.batter_zone_profiles,
+            prepared.pitcher_zone_profiles,
+            prepared.batter_family_zone_profiles,
+            prepared.pitcher_family_zone_context,
+            prepared.pitcher_movement_arsenal,
+            prepared.hitter_pitcher_exclusions,
+        )
     schedule = fetch_schedule(context.target_date)
     rosters = fetch_team_rosters_for_schedule(schedule, context.target_date)
     valid_teams = tuple(sorted({game["away_team"] for game in schedule} | {game["home_team"] for game in schedule}))
@@ -2041,11 +2199,11 @@ def run_build(context: BuildContext) -> None:
         rotowire_lineups = resolve_rotowire_lineups(fetch_rotowire_lineups(context.target_date, valid_teams), rosters_frame)
     except Exception:
         rotowire_lineups = {}
-    source_max_event_date = _live_source_max_event_date(live_payload)
+    source_max_event_date = _live_source_max_event_date(prepared.live_payload)
     tracking_health = _build_live_tracking_health(
         context.target_date,
         schedule,
-        live_payload,
+        prepared.live_payload,
         context.config.cockroach_live_pitch_mix_table,
     )
     if source_max_event_date is None or source_max_event_date < context.target_date:
@@ -2056,10 +2214,10 @@ def run_build(context: BuildContext) -> None:
         )
     pitch_shape_diagnostics = _pitch_shape_diagnostics(
         schedule,
-        live_payload,
-        pitch_context_source,
-        pitcher_family_zone_context,
-        pitcher_movement_arsenal,
+        prepared.live_payload,
+        prepared.pitch_context_source,
+        prepared.pitcher_family_zone_context,
+        prepared.pitcher_movement_arsenal,
     )
     missing_pitch_shape = pitch_shape_diagnostics.loc[
         pitch_shape_diagnostics["movement_rows"].eq(0) | pitch_shape_diagnostics["family_rows"].eq(0)
@@ -2072,7 +2230,7 @@ def run_build(context: BuildContext) -> None:
         warnings.warn(
             "Pitch shape context gaps detected for probable starters:\n" + "\n".join(warning_lines)
         )
-    if context.config.odds_api_key:
+    if capture_odds and context.config.odds_api_key:
         try:
             props_payload = load_live_props_board(context.config, context.target_date, rosters_frame)
             if isinstance(props_payload, PropsBoardPayload) and not props_payload.raw_rows.empty:
@@ -2083,33 +2241,38 @@ def run_build(context: BuildContext) -> None:
         context.target_date,
         schedule,
         rosters_frame,
-        hitter_metrics,
-        pitcher_metrics,
-        batter_zone_profiles,
-        pitcher_zone_profiles,
+        prepared.hitter_metrics,
+        prepared.pitcher_metrics,
+        prepared.batter_zone_profiles,
+        prepared.pitcher_zone_profiles,
     )
     board_winners = _build_hitter_board_winners(snapshots)
-    outcomes = _build_hitter_game_outcomes(context.target_date, raw_statcast, snapshots, source_max_event_date)
+    outcomes = _build_hitter_game_outcomes(context.target_date, prepared.raw_statcast, snapshots, source_max_event_date)
     probable_pitchers = _build_probable_pitcher_lookup(schedule)
     pitcher_opponent_hitters = _build_pitcher_opponent_hitter_map(
         schedule,
         rosters_frame,
-        hitter_metrics,
-        pitcher_metrics,
+        prepared.hitter_metrics,
+        prepared.pitcher_metrics,
         rotowire_lineups,
     )
     pitcher_snapshots = _build_pitcher_tracking_snapshots(
         context.target_date,
         probable_pitchers,
-        pitcher_metrics,
+        prepared.pitcher_metrics,
         opponent_hitters_by_key=pitcher_opponent_hitters,
-        batter_family_zone_profiles=batter_family_zone_profiles,
-        pitcher_family_zone_context=pitcher_family_zone_context,
+        batter_family_zone_profiles=prepared.batter_family_zone_profiles,
+        pitcher_family_zone_context=prepared.pitcher_family_zone_context,
     )
-    pitcher_arsenal_snapshots = _build_pitcher_arsenal_snapshots(context.target_date, probable_pitchers, pitcher_arsenal, pitcher_arsenal_by_hand)
-    pitcher_count_snapshots = _build_pitcher_count_snapshots(context.target_date, probable_pitchers, pitcher_usage_by_count)
+    pitcher_arsenal_snapshots = _build_pitcher_arsenal_snapshots(
+        context.target_date,
+        probable_pitchers,
+        prepared.pitcher_arsenal,
+        prepared.pitcher_arsenal_by_hand,
+    )
+    pitcher_count_snapshots = _build_pitcher_count_snapshots(context.target_date, probable_pitchers, prepared.pitcher_usage_by_count)
     pitcher_board_winners = _build_pitcher_board_winners(pitcher_snapshots)
-    pitcher_outcomes = _build_pitcher_game_outcomes(context.target_date, raw_statcast, pitcher_snapshots, source_max_event_date)
+    pitcher_outcomes = _build_pitcher_game_outcomes(context.target_date, prepared.raw_statcast, pitcher_snapshots, source_max_event_date)
     write_tracking_payload(
         context.config,
         snapshots,
@@ -2125,20 +2288,20 @@ def run_build(context: BuildContext) -> None:
         context,
         schedule,
         rosters,
-        hitter_metrics,
-        pitcher_metrics,
-        pitcher_summary_by_hand,
-        pitcher_arsenal,
-        pitcher_arsenal_by_hand,
-        pitcher_usage_by_count,
-        live_payload.hitter_rolling,
-        live_payload.pitcher_rolling,
-        batter_zone_profiles,
-        pitcher_zone_profiles,
-        batter_family_zone_profiles,
-        pitcher_family_zone_context,
-        pitcher_movement_arsenal,
-        hitter_pitcher_exclusions,
+        prepared.hitter_metrics,
+        prepared.pitcher_metrics,
+        prepared.pitcher_summary_by_hand,
+        prepared.pitcher_arsenal,
+        prepared.pitcher_arsenal_by_hand,
+        prepared.pitcher_usage_by_count,
+        prepared.live_payload.hitter_rolling,
+        prepared.live_payload.pitcher_rolling,
+        prepared.batter_zone_profiles,
+        prepared.pitcher_zone_profiles,
+        prepared.batter_family_zone_profiles,
+        prepared.pitcher_family_zone_context,
+        prepared.pitcher_movement_arsenal,
+        prepared.hitter_pitcher_exclusions,
         pitch_shape_diagnostics,
         tracking_health,
     )
@@ -2149,6 +2312,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--csv-dir", type=Path, required=True)
     parser.add_argument("--db-path", type=Path, required=True)
     parser.add_argument("--artifacts-dir", type=Path, required=True)
+    parser.add_argument(
+        "--mode",
+        choices=("daily", "historical-refresh"),
+        default="daily",
+        help="daily reuses the historical cache; historical-refresh rebuilds the historical cache bundle.",
+    )
     parser.add_argument("--target-date", type=lambda value: date.fromisoformat(value), default=date.today())
     parser.add_argument(
         "--require-fresh-sources",
@@ -2167,6 +2336,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = AppConfig(csv_dir=args.csv_dir, db_path=args.db_path, artifacts_dir=args.artifacts_dir)
+    if args.mode == "historical-refresh":
+        ensure_directories(config)
+        historical = _resolve_historical_statcast(config, args.csv_dir, force_refresh=True)
+        print(
+            f"[historical-refresh] rows={len(historical)} cache={config.historical_statcast_cache_path}"
+        )
+        return
     if args.require_fresh_sources:
         _require_fresh_cockroach_sources(
             config,

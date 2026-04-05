@@ -87,8 +87,21 @@ class AppConfig:
     def daily_dir(self) -> Path:
         return self.artifacts_dir / "daily"
 
+    @property
+    def historical_cache_dir(self) -> Path:
+        return self.artifacts_dir / "historical_cache"
+
+    @property
+    def historical_statcast_cache_path(self) -> Path:
+        return self.historical_cache_dir / "historical_statcast.parquet"
+
+    @property
+    def historical_cache_manifest_path(self) -> Path:
+        return self.historical_cache_dir / "manifest.json"
+
 
 def ensure_directories(config: AppConfig) -> None:
     config.artifacts_dir.mkdir(parents=True, exist_ok=True)
     config.reusable_dir.mkdir(parents=True, exist_ok=True)
     config.daily_dir.mkdir(parents=True, exist_ok=True)
+    config.historical_cache_dir.mkdir(parents=True, exist_ok=True)

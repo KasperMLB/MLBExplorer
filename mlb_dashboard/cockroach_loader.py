@@ -1493,14 +1493,33 @@ def replace_live_event_payload(
         conn.commit()
 
 
-def load_cockroach_payload(config: AppConfig) -> CockroachPayload:
+def load_cockroach_payload(
+    config: AppConfig,
+    *,
+    target_date: date | None = None,
+) -> CockroachPayload:
     _ensure_driver()
     if not config.database_url:
         raise RuntimeError("DATABASE_URL must be set to pull 2026 Cockroach data.")
     database_url = _normalize_database_url(config.database_url)
+    params: dict[str, object] = {}
+    live_where_sql = ""
+    baseline_where_sql = ""
+    if target_date is not None:
+        params["target_date"] = target_date
+        live_where_sql = " WHERE CAST(game_date AS DATE) <= %(target_date)s"
+        baseline_where_sql = " WHERE CAST(game_date AS DATE) <= %(target_date)s"
     with psycopg.connect(database_url, autocommit=True) as conn:
-        live_pitch_mix = _read_query(conn, f"SELECT * FROM {config.cockroach_live_pitch_mix_table}")
-        pitcher_baseline_event_rows = _read_query(conn, f"SELECT * FROM {config.cockroach_pitcher_baseline_event_table}")
+        live_pitch_mix = _read_frame(
+            conn,
+            f"SELECT * FROM {config.cockroach_live_pitch_mix_table}{live_where_sql}",
+            params,
+        )
+        pitcher_baseline_event_rows = _read_frame(
+            conn,
+            f"SELECT * FROM {config.cockroach_pitcher_baseline_event_table}{baseline_where_sql}",
+            params,
+        )
         hitter_rolling = _read_query(conn, f"SELECT * FROM {config.cockroach_hitter_rolling_table}")
         pitcher_rolling = _read_query(conn, f"SELECT * FROM {config.cockroach_pitcher_rolling_table}")
         batter_zone_profiles = _read_query(conn, f"SELECT * FROM {config.cockroach_batter_zone_table}")

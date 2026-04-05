@@ -7,7 +7,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from .build import BuildContext, run_build
+from .build import BuildContext, prepare_historical_base, run_build
 from .cockroach_loader import _ensure_driver, _normalize_database_url, read_source_freshness_report
 from .config import AppConfig
 from .ingest import ingest_date
@@ -118,10 +118,22 @@ def main() -> None:
             f"games={ingest_summary.processed_games}/{ingest_summary.scheduled_games} "
             f"live_rows={ingest_summary.live_rows} baseline_rows={ingest_summary.baseline_rows}"
         )
+    latest_target_date = max(target_dates)
+    historical_base = _run_with_retry(
+        "prepare",
+        latest_target_date,
+        lambda: prepare_historical_base(config, config.csv_dir),
+    )
+    for target_date in target_dates:
         _run_with_retry(
             "build",
             target_date,
-            lambda: run_build(BuildContext(config=config, target_date=target_date, csv_dir=config.csv_dir)),
+            lambda target_date=target_date: run_build(
+                BuildContext(config=config, target_date=target_date, csv_dir=config.csv_dir),
+                historical_statcast_override=historical_base,
+                refresh_reusable_artifacts=target_date == latest_target_date,
+                capture_odds=target_date == latest_target_date,
+            ),
         )
         status = _status_for_date(config, target_date)
         print(
