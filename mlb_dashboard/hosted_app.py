@@ -126,7 +126,30 @@ def _hitter_table_columns(frame: pd.DataFrame, columns: list[str]) -> tuple[list
 
 
 def _render_hitter_confidence_legend() -> None:
-    st.caption("Hitter name color: green = high sample, black = medium, amber = thin, red = very thin")
+    chips = [
+        ("High", "#166534"),
+        ("Medium", "#1f2937"),
+        ("Thin", "#b45309"),
+        ("Very Thin", "#b91c1c"),
+    ]
+    chip_html = "".join(
+        (
+            "<span style='display:inline-flex;align-items:center;gap:6px;"
+            "padding:2px 8px;border-radius:12px;border:1px solid rgba(15,23,42,0.15);"
+            "background:#f8fafc;margin-right:6px;font-size:12px;'>"
+            f"<span style='width:8px;height:8px;border-radius:999px;background:{color};display:inline-block;'></span>"
+            f"{label}</span>"
+        )
+        for label, color in chips
+    )
+    st.markdown(
+        "<div style='font-size:12px;color:#475569;margin-bottom:4px;'>"
+        "<strong>Player name sample size</strong> "
+        "<span style='color:#64748b'>(legend applies to player name text color)</span>"
+        "</div>"
+        f"<div>{chip_html}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _empty_like(frame: pd.DataFrame) -> pd.DataFrame:
