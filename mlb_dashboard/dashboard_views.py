@@ -27,6 +27,7 @@ HITTER_PRESETS = {
         "hitter_name",
         "team",
         "matchup_score",
+        "test_score",
         "ceiling_score",
         "xwoba",
         "xwoba_con",
@@ -40,6 +41,7 @@ HITTER_PRESETS = {
         "hitter_name",
         "team",
         "matchup_score",
+        "test_score",
         "ceiling_score",
         "swstr_pct",
         "xwoba",
@@ -52,6 +54,7 @@ HITTER_PRESETS = {
         "hitter_name",
         "team",
         "matchup_score",
+        "test_score",
         "ceiling_score",
         "pulled_barrel_pct",
         "barrel_bip_pct",
@@ -64,6 +67,7 @@ HITTER_PRESETS = {
         "hitter_name",
         "team",
         "matchup_score",
+        "test_score",
         "ceiling_score",
         "zone_fit_score",
         "pitch_count",
@@ -85,6 +89,7 @@ BEST_MATCHUP_COLUMNS = [
     "hitter_name",
     "team",
     "matchup_score",
+    "test_score",
     "xwoba",
     "swstr_pct",
     "pulled_barrel_pct",
@@ -314,6 +319,30 @@ def shape_score(
     return (
         (la_band_score * 0.55)
         + (sweet_spot_score * 0.35)
+        + (barrel_support * 0.10)
+    ).clip(lower=0.0, upper=1.0)
+
+
+def experimental_shape_score(
+    median_launch_angle_series: pd.Series,
+    hr_window_series: pd.Series | None,
+    productive_air_series: pd.Series | None,
+    sweet_spot_series: pd.Series | None,
+    barrel_series: pd.Series | None,
+) -> pd.Series:
+    median_band_score = launch_angle_score(median_launch_angle_series, low=12.0, ideal=22.0, high=32.0)
+    hr_window_score = normalize_series(hr_window_series if hr_window_series is not None else pd.Series(0.5, index=median_band_score.index))
+    productive_air_score = normalize_series(productive_air_series if productive_air_series is not None else pd.Series(0.5, index=median_band_score.index))
+    launch_angle_shape = (
+        (median_band_score * 0.45)
+        + (hr_window_score * 0.30)
+        + (productive_air_score * 0.25)
+    )
+    sweet_spot_score = normalize_series(sweet_spot_series if sweet_spot_series is not None else pd.Series(0.5, index=median_band_score.index))
+    barrel_support = normalize_series(barrel_series if barrel_series is not None else pd.Series(0.5, index=median_band_score.index))
+    return (
+        (launch_angle_shape * 0.65)
+        + (sweet_spot_score * 0.25)
         + (barrel_support * 0.10)
     ).clip(lower=0.0, upper=1.0)
 
@@ -556,8 +585,17 @@ def add_hitter_matchup_score(
         enriched["zone_fit_score"] = 0.5
     swstr_score = normalize_series(enriched["swstr_pct"], inverse=True)
     barrel_score = normalize_series(enriched["barrel_bbe_pct"])
+    if "median_launch_angle" not in enriched.columns:
+        enriched["median_launch_angle"] = enriched.get("avg_launch_angle", pd.Series(0.5, index=enriched.index))
     enriched["shape_score"] = shape_score(
         enriched["avg_launch_angle"],
+        enriched["sweet_spot_pct"] if "sweet_spot_pct" in enriched.columns else None,
+        enriched["barrel_bbe_pct"] if "barrel_bbe_pct" in enriched.columns else None,
+    )
+    enriched["test_shape_score"] = experimental_shape_score(
+        enriched["median_launch_angle"],
+        enriched["hr_window_pct"] if "hr_window_pct" in enriched.columns else None,
+        enriched["productive_air_pct"] if "productive_air_pct" in enriched.columns else None,
         enriched["sweet_spot_pct"] if "sweet_spot_pct" in enriched.columns else None,
         enriched["barrel_bbe_pct"] if "barrel_bbe_pct" in enriched.columns else None,
     )
@@ -565,6 +603,8 @@ def add_hitter_matchup_score(
     pulled_barrel_scale = normalize_series(enriched["pulled_barrel_pct"])
     pulled_barrel_bonus = ((pulled_barrel_scale - 0.5).clip(lower=0.0) / 0.5) * 0.08
     enriched["matchup_score"] = (base_score * (1.0 + pulled_barrel_bonus)).clip(lower=0.0, upper=100.0)
+    test_base_score = ((swstr_score * 0.35) + (barrel_score * 0.30) + (enriched["test_shape_score"] * 0.20) + (enriched["zone_fit_score"] * 0.15)) * 100.0
+    enriched["test_score"] = (test_base_score * (1.0 + pulled_barrel_bonus)).clip(lower=0.0, upper=100.0)
     matchup_norm = normalize_series(enriched["matchup_score"])
     barrel_bip_norm = normalize_series(enriched["barrel_bip_pct"])
     hh_norm = normalize_series(enriched["hard_hit_pct"])

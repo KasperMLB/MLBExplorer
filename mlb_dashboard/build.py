@@ -46,6 +46,7 @@ REQUIRED_COLUMNS = [
     "batter",
     "estimated_woba_using_speedangle",
     "bb_type",
+    "launch_speed_angle",
     "description",
     "events",
     "launch_angle",
@@ -146,6 +147,7 @@ def _historical_cache_manifest(config: AppConfig, csv_paths: list[str]) -> dict[
         "year_weights": config.year_weights,
         "zone_year_weights": config.zone_year_weights,
         "movement_year_weights": config.movement_year_weights,
+        "historical_cache_schema_version": "productive_launch_angle_shape_v1",
         "recent_windows": list(DEFAULT_RECENT_WINDOWS),
         "splits": list(DEFAULT_SPLITS),
         "csv_files": [
@@ -434,6 +436,17 @@ def _weighted_denominator(work: pd.DataFrame, source_column: str, value_index: p
     return float(work.loc[value_index, "metric_weight"][series.notna()].sum())
 
 
+def _weighted_median(work: pd.DataFrame, source_column: str, value_index: pd.Index) -> float:
+    values = pd.to_numeric(work.loc[value_index, source_column], errors="coerce")
+    weights = pd.to_numeric(work.loc[value_index, "metric_weight"], errors="coerce").fillna(0.0)
+    valid = values.notna() & weights.gt(0)
+    if not valid.any():
+        return float("nan")
+    ordered = pd.DataFrame({"value": values.loc[valid], "weight": weights.loc[valid]}).sort_values("value")
+    cutoff = float(ordered["weight"].sum()) / 2.0
+    return float(ordered.loc[ordered["weight"].cumsum().ge(cutoff), "value"].iloc[0])
+
+
 def _aggregate_hitter_metrics(frame: pd.DataFrame, weighted_mode: str, year_weights: dict[int, float]) -> pd.DataFrame:
     work = frame.copy()
     work["batter"] = pd.to_numeric(work["batter"], errors="coerce")
@@ -457,6 +470,9 @@ def _aggregate_hitter_metrics(frame: pd.DataFrame, weighted_mode: str, year_weig
         barrel_weight_sum = float((group["is_barrel"].astype(int) * group["metric_weight"]).sum())
         pulled_barrel_weight_sum = float((group["is_pulled_barrel"].astype(int) * group["metric_weight"]).sum())
         sweet_spot_weight_sum = float((((group["is_sweet_spot"] & group["is_tracked_bbe"]).astype(int)) * group["metric_weight"]).sum())
+        hr_window_weight_sum = float((((group["is_hr_window"] & group["is_tracked_bbe"]).astype(int)) * group["metric_weight"]).sum())
+        productive_air_weight_sum = float((((group["is_productive_air"] & group["is_tracked_bbe"]).astype(int)) * group["metric_weight"]).sum())
+        tracked_bbe_index = group.index[group["is_tracked_bbe"]]
         rows.append(
             {
                 "team": latest_team,
@@ -472,9 +488,12 @@ def _aggregate_hitter_metrics(frame: pd.DataFrame, weighted_mode: str, year_weig
                 "barrel_bip_pct": barrel_weight_sum / max(bip_weight_sum, 1e-9),
                 "pulled_barrel_pct": pulled_barrel_weight_sum / max(tracked_bbe_weight_sum, 1e-9),
                 "sweet_spot_pct": sweet_spot_weight_sum / max(tracked_bbe_weight_sum, 1e-9),
+                "hr_window_pct": hr_window_weight_sum / max(tracked_bbe_weight_sum, 1e-9),
+                "productive_air_pct": productive_air_weight_sum / max(tracked_bbe_weight_sum, 1e-9),
                 "fb_pct": float((group["is_fly_ball"].astype(int) * group["metric_weight"]).sum()) / max(bip_weight_sum, 1e-9),
                 "hard_hit_pct": float((group["is_hard_hit"].astype(int) * group["metric_weight"]).sum()) / max(bip_weight_sum, 1e-9),
                 "avg_launch_angle": _weighted_sum(group, "launch_angle_value", group.index) / max(_weighted_denominator(group, "launch_angle_value", group.index), 1e-9),
+                "median_launch_angle": _weighted_median(group, "launch_angle_value", tracked_bbe_index),
             }
         )
     return pd.DataFrame(rows)
@@ -1583,6 +1602,7 @@ def _build_hitter_tracking_snapshots(
                                     "recent_window",
                                     "weighted_mode",
                                     "matchup_score",
+                                    "test_score",
                                     "ceiling_score",
                                     "zone_fit_score",
                                     "likely_starter_score",

@@ -150,6 +150,25 @@ def add_metric_flags(frame: pd.DataFrame) -> pd.DataFrame:
     enriched["is_sweet_spot"] = is_sweet_spot(enriched)
     enriched["is_pulled_batted_ball"] = is_pulled_batted_ball(enriched)
     enriched["is_pulled_barrel"] = enriched["is_barrel"] & enriched["is_pulled_batted_ball"]
+    launch_speed_angle = pd.to_numeric(
+        enriched.get("launch_speed_angle", pd.Series(pd.NA, index=enriched.index)),
+        errors="coerce",
+    )
+    bb_type = enriched["bb_type"].fillna("").astype(str).str.lower()
+    launch_angle = pd.to_numeric(enriched["launch_angle"], errors="coerce")
+    launch_speed = pd.to_numeric(enriched["launch_speed"], errors="coerce")
+    productive_air_fallback = (
+        enriched["is_tracked_bbe"]
+        & bb_type.isin({"fly_ball", "line_drive"})
+        & launch_speed.ge(95)
+        & launch_angle.between(18, 35, inclusive="both")
+    )
+    enriched["launch_speed_angle_value"] = launch_speed_angle
+    enriched["is_hr_window"] = enriched["is_tracked_bbe"] & launch_angle.between(18, 35, inclusive="both")
+    enriched["is_productive_air"] = enriched["is_tracked_bbe"] & (
+        (launch_speed_angle.notna() & launch_speed_angle.isin([5, 6]))
+        | (launch_speed_angle.isna() & productive_air_fallback)
+    )
     enriched["is_swinging_strike"] = is_swinging_strike(enriched)
     enriched["is_ball"] = is_ball(enriched)
     enriched["is_called_strike"] = is_called_strike(enriched)

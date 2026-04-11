@@ -64,6 +64,7 @@ RATE_COLUMNS = {
     "avg_spin_axis",
     "gb_fb_ratio",
     "matchup_score",
+    "test_score",
     "ceiling_score",
     "pitcher_score",
     "strikeout_score",
@@ -97,6 +98,7 @@ HIGHER_IS_BETTER = {
     "avg_release_speed",
     "avg_spin_rate",
     "matchup_score",
+    "test_score",
     "ceiling_score",
     "zone_fit_score",
     "strikeout_score",
@@ -109,6 +111,15 @@ HIGHER_IS_BETTER = {
     "gb_fb_ratio",
 }
 TARGET_COLUMNS = {"avg_launch_angle": (20.0, 27.5, 35.0)}
+HITTER_CONFIDENCE_COLOR_COLUMN = "__hitter_confidence_color"
+HITTER_CONFIDENCE_LABEL_COLUMN = "__hitter_confidence_label"
+HITTER_CONFIDENCE_HELPER_COLUMNS = {HITTER_CONFIDENCE_COLOR_COLUMN, HITTER_CONFIDENCE_LABEL_COLUMN}
+HITTER_CONFIDENCE_COLORS = {
+    "High": "#166534",
+    "Medium": "#1f2937",
+    "Thin": "#b45309",
+    "Very Thin": "#b91c1c",
+}
 DISPLAY_LABELS = {
     "game": "Game",
     "split_label": "Split",
@@ -154,6 +165,7 @@ DISPLAY_LABELS = {
     "p_throws": "Throws",
     "likely_starter_score": "Likely",
     "matchup_score": "Matchup",
+    "test_score": "Test Score",
     "ceiling_score": "Ceiling",
     "zone_fit_score": "Zone Fit",
     "pitcher_score": "Pitch Score",
@@ -221,6 +233,7 @@ MEDIUM_COLUMNS = {
     "usage_rate",
     "usage_rate_within_family",
     "matchup_score",
+    "test_score",
     "ceiling_score",
     "pitcher_score",
     "strikeout_score",
@@ -296,7 +309,7 @@ def _format_value(column: str, value: object, export_mode: bool = False) -> str:
         decimals = 0 if not export_mode else 3
         return f"{float(value):.{decimals}f}"
     if column in RATE_COLUMNS:
-        decimals = 3 if export_mode else (3 if "xwoba" in column or column in {"matchup_score", "ceiling_score", "zone_fit_score"} else 1)
+        decimals = 3 if export_mode else (3 if "xwoba" in column or column in {"matchup_score", "test_score", "ceiling_score", "zone_fit_score"} else 1)
         return f"{float(value):.{decimals}f}"
     if isinstance(value, float):
         decimals = 3 if export_mode else 2
@@ -392,33 +405,84 @@ def _display_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.rename(columns=DISPLAY_LABELS)
 
 
+def _visible_grid_columns(frame: pd.DataFrame, hidden_columns: set[str] | None = None) -> list[str]:
+    hidden = hidden_columns or set()
+    return [
+        column
+        for column in frame.columns
+        if column not in hidden and not str(column).startswith("__")
+    ]
+
+
+def _hitter_confidence_label(pitch_count: object, bip: object) -> str:
+    pitches = pd.to_numeric(pd.Series([pitch_count]), errors="coerce").iloc[0]
+    batted_balls = pd.to_numeric(pd.Series([bip]), errors="coerce").iloc[0]
+    if pd.isna(pitches) or pd.isna(batted_balls):
+        return "Medium"
+    if float(batted_balls) >= 75 and float(pitches) >= 100:
+        return "High"
+    if float(batted_balls) >= 35 and float(pitches) >= 100:
+        return "Medium"
+    if float(batted_balls) >= 15:
+        return "Thin"
+    return "Very Thin"
+
+
+def _add_hitter_confidence_payload(frame: pd.DataFrame, color_hitter_confidence: bool) -> pd.DataFrame:
+    if not color_hitter_confidence or "hitter_name" not in frame.columns:
+        return frame
+    enriched = frame.copy()
+    if HITTER_CONFIDENCE_LABEL_COLUMN in enriched.columns and HITTER_CONFIDENCE_COLOR_COLUMN in enriched.columns:
+        return enriched
+    labels = [
+        _hitter_confidence_label(row.get("pitch_count"), row.get("bip"))
+        for _, row in enriched.iterrows()
+    ]
+    enriched[HITTER_CONFIDENCE_LABEL_COLUMN] = labels
+    enriched[HITTER_CONFIDENCE_COLOR_COLUMN] = [
+        HITTER_CONFIDENCE_COLORS.get(label, HITTER_CONFIDENCE_COLORS["Medium"])
+        for label in labels
+    ]
+    return enriched
+
+
 @st.cache_data(show_spinner=False)
 def _build_lightweight_grid_payload(
     frame: pd.DataFrame,
     lower_is_better: tuple[str, ...],
     higher_is_better: tuple[str, ...],
+    hidden_columns: tuple[str, ...] = (),
+    color_hitter_confidence: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    display_frame = pd.DataFrame(index=frame.index)
-    styles = pd.DataFrame("", index=frame.index, columns=[DISPLAY_LABELS.get(column, column) for column in frame.columns])
+    hidden = set(hidden_columns) | HITTER_CONFIDENCE_HELPER_COLUMNS
+    work = _add_hitter_confidence_payload(frame, color_hitter_confidence)
+    visible_columns = _visible_grid_columns(work, hidden)
+    display_frame = pd.DataFrame(index=work.index)
+    styles = pd.DataFrame("", index=work.index, columns=[DISPLAY_LABELS.get(column, column) for column in visible_columns])
 
     lower_set = set(lower_is_better)
     higher_set = set(higher_is_better)
 
-    for column in frame.columns:
+    for column in visible_columns:
         display_column = DISPLAY_LABELS.get(column, column)
-        display_frame[display_column] = [_format_value(column, value) for value in frame[column]]
+        display_frame[display_column] = [_format_value(column, value) for value in work[column]]
         if column in PERCENT_COLUMNS or column in RATE_COLUMNS:
             column_styles: list[str] = []
-            for value in frame[column]:
+            for value in work[column]:
                 background = _background_hex(
                     column,
                     value,
-                    frame[column],
+                    work[column],
                     lower_is_better=lower_set,
                     higher_is_better=higher_set,
                 )
                 column_styles.append(f"background-color: {background}; color: #1f1f1f" if background else "")
             styles[display_column] = column_styles
+        elif column == "hitter_name" and color_hitter_confidence and HITTER_CONFIDENCE_COLOR_COLUMN in work.columns:
+            styles[display_column] = [
+                f"color: {color}; font-weight: 650" if color else ""
+                for color in work[HITTER_CONFIDENCE_COLOR_COLUMN]
+            ]
     return display_frame, styles
 
 
@@ -594,8 +658,9 @@ def _prepare_grid_frame(
     frame: pd.DataFrame,
     lower_is_better: set[str] | None = None,
     higher_is_better: set[str] | None = None,
+    color_hitter_confidence: bool = False,
 ) -> pd.DataFrame:
-    prepared = frame.copy()
+    prepared = _add_hitter_confidence_payload(frame, color_hitter_confidence)
     for column in frame.columns:
         if column in PERCENT_COLUMNS or column in RATE_COLUMNS:
             prepared[f"__style_{column}"] = [
@@ -700,15 +765,21 @@ def render_metric_grid(
     use_react: bool = False,
     title: str | None = None,
     subtitle: str | None = None,
+    hidden_columns: set[str] | None = None,
+    color_hitter_confidence: bool = False,
 ) -> pd.DataFrame:
     if frame.empty:
         st.info("No data available for this selection.")
         return frame
+    hidden = set(hidden_columns or set()) | HITTER_CONFIDENCE_HELPER_COLUMNS
+    visible_columns = _visible_grid_columns(frame, hidden)
     if use_lightweight or not HAS_AGGRID:
         display_frame, styles = _build_lightweight_grid_payload(
             frame,
             tuple(sorted(lower_is_better or LOWER_IS_BETTER)),
             tuple(sorted(higher_is_better or HIGHER_IS_BETTER)),
+            tuple(sorted(hidden)),
+            color_hitter_confidence,
         )
         st.dataframe(
             display_frame.style.apply(lambda _: styles, axis=None),
@@ -722,7 +793,12 @@ def render_metric_grid(
         st.error("Install `streamlit-aggrid` to render the matchup tables.")
         return frame
 
-    prepared = _prepare_grid_frame(frame, lower_is_better=lower_is_better, higher_is_better=higher_is_better)
+    prepared = _prepare_grid_frame(
+        frame,
+        lower_is_better=lower_is_better,
+        higher_is_better=higher_is_better,
+        color_hitter_confidence=color_hitter_confidence,
+    )
     builder = GridOptionsBuilder.from_dataframe(prepared)
     builder.configure_default_column(sortable=True, resizable=True, filter=False)
     builder.configure_grid_options(
@@ -732,6 +808,12 @@ def render_metric_grid(
     cell_style = JsCode(
         """
         function(params) {
+          if (params.colDef.field === "hitter_name") {
+            const confidenceColor = params.data ? params.data["__hitter_confidence_color"] : "";
+            if (confidenceColor) {
+              return {color: confidenceColor, fontWeight: "650"};
+            }
+          }
           const styleKey = "__style_" + params.colDef.field;
           const bg = params.data ? params.data[styleKey] : "";
           if (bg) {
@@ -774,13 +856,13 @@ def render_metric_grid(
         """
     )
 
-    for column in frame.columns:
+    for column in visible_columns:
         header_name = DISPLAY_LABELS.get(column, column)
         formatter = None
         width, min_width, max_width = _column_width(column, frame[column])
         if column in PERCENT_COLUMNS:
             formatter = percent_formatter
-        elif column in {"xwoba", "xwoba_con", "matchup_score", "ceiling_score", "pitcher_score"}:
+        elif column in {"xwoba", "xwoba_con", "matchup_score", "test_score", "ceiling_score", "pitcher_score"}:
             formatter = rate_formatter
         elif column in {"avg_launch_angle", "avg_release_speed", "gb_fb_ratio"}:
             formatter = one_decimal_formatter
@@ -789,7 +871,7 @@ def render_metric_grid(
         builder.configure_column(
             column,
             header_name=header_name,
-            cellStyle=cell_style if column in PERCENT_COLUMNS or column in RATE_COLUMNS else None,
+            cellStyle=cell_style if column in PERCENT_COLUMNS or column in RATE_COLUMNS or column == "hitter_name" else None,
             valueFormatter=formatter,
             width=width,
             minWidth=min_width,
@@ -798,6 +880,10 @@ def render_metric_grid(
         style_col = f"__style_{column}"
         if style_col in prepared.columns:
             builder.configure_column(style_col, hide=True)
+
+    for column in prepared.columns:
+        if column not in visible_columns:
+            builder.configure_column(column, hide=True)
 
     grid_options = builder.build()
     response = AgGrid(
@@ -814,7 +900,7 @@ def render_metric_grid(
     returned = pd.DataFrame(response["data"])
     if returned.empty:
         return frame
-    return returned.loc[:, frame.columns]
+    return returned.loc[:, [column for column in visible_columns if column in returned.columns]]
 
 
 def build_pitcher_summary_table(pitcher_summary_by_hand: pd.DataFrame) -> pd.DataFrame:

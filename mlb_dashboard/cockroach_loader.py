@@ -379,6 +379,7 @@ def _create_tracking_tables(conn, config: AppConfig) -> None:
         "recent_window": "STRING NOT NULL",
         "weighted_mode": "STRING NOT NULL",
         "matchup_score": "FLOAT8",
+        "test_score": "FLOAT8",
         "ceiling_score": "FLOAT8",
         "zone_fit_score": "FLOAT8",
         "likely_starter_score": "FLOAT8",

@@ -105,6 +105,7 @@ MATCHUP_HITTER_COLUMNS = [
     "hitter_name",
     "team",
     "matchup_score",
+    "test_score",
     "ceiling_score",
     "zone_fit_score",
     "likely_starter_score",
@@ -144,11 +145,27 @@ OPPONENT_HITTER_COLUMNS = [
     "hitter_name",
     "team",
     "matchup_score",
+    "test_score",
     "ceiling_score",
     "xwoba",
     "pulled_barrel_pct",
     "barrel_bip_pct",
 ]
+
+
+def _hitter_table_columns(frame: pd.DataFrame, columns: list[str]) -> tuple[list[str], set[str]]:
+    present = [column for column in columns if column in frame.columns]
+    hidden: set[str] = set()
+    if "hitter_name" in present:
+        for sample_column in ("pitch_count", "bip"):
+            if sample_column in frame.columns and sample_column not in present:
+                present.append(sample_column)
+                hidden.add(sample_column)
+    return present, hidden
+
+
+def _render_hitter_confidence_legend() -> None:
+    st.caption("Hitter name color: green = high sample, black = medium, amber = thin, red = very thin")
 
 
 def _hosted_base_url() -> str:
@@ -602,7 +619,7 @@ def _format_metric_value(value: object, column: str) -> str:
         return "--"
     if column in {"xwoba", "xwoba_con"}:
         return f"{float(value):.3f}"
-    if column in {"matchup_score", "ceiling_score", "zone_fit_score", "pitcher_score", "strikeout_score", "likely_starter_score", "gb_fb_ratio", "siera"}:
+    if column in {"matchup_score", "test_score", "ceiling_score", "zone_fit_score", "pitcher_score", "strikeout_score", "likely_starter_score", "gb_fb_ratio", "siera"}:
         return f"{float(value):.1f}"
     if column in {"pulled_barrel_pct", "barrel_bip_pct", "fb_pct", "hard_hit_pct", "swstr_pct", "called_strike_pct", "csw_pct", "putaway_pct", "ball_pct", "gb_pct"}:
         return f"{float(value) * 100:.1f}%"
@@ -631,7 +648,16 @@ def _render_overview_tab(selected_row: pd.Series, profile_row: pd.Series, source
     if selected_row["entity_type"] == "Hitter":
         _render_overview_cards(HITTER_OVERVIEW_CARDS, profile_row)
         display = pd.DataFrame([profile_row]).reindex(columns=[column for column in HITTER_OVERVIEW_COLUMNS if column in profile_row.index])
-        render_metric_grid(display, key=f"player-overview-h-{selected_row['player_id']}", height=130, use_lightweight=(source == "hosted"))
+        display_columns, display_hidden = _hitter_table_columns(display, list(display.columns))
+        _render_hitter_confidence_legend()
+        render_metric_grid(
+            display[display_columns],
+            key=f"player-overview-h-{selected_row['player_id']}",
+            height=130,
+            use_lightweight=(source == "hosted"),
+            hidden_columns=display_hidden,
+            color_hitter_confidence=True,
+        )
     else:
         _render_overview_cards(PITCHER_OVERVIEW_CARDS, profile_row)
         display = pd.DataFrame([profile_row]).reindex(columns=[column for column in PITCHER_OVERVIEW_COLUMNS if column in profile_row.index])
@@ -865,11 +891,15 @@ def _render_pitch_shape_tab(selected_row: pd.Series, reusable: dict[str, pd.Data
 def _render_hitter_matchup_tab(selected_row: pd.Series, slate_entry: dict[str, object], daily: dict[str, pd.DataFrame], source: str) -> None:
     current_row = pd.DataFrame([slate_entry["row"]])
     st.caption(f"{slate_entry['game']} | vs {slate_entry.get('opposing_pitcher_name') or 'opposing starter'}")
+    matchup_columns, matchup_hidden = _hitter_table_columns(current_row, MATCHUP_HITTER_COLUMNS)
+    _render_hitter_confidence_legend()
     render_metric_grid(
-        current_row[[column for column in MATCHUP_HITTER_COLUMNS if column in current_row.columns]],
+        current_row[matchup_columns],
         key=f"h-matchup-row-{selected_row['key']}",
         height=120,
         use_lightweight=(source == "hosted"),
+        hidden_columns=matchup_hidden,
+        color_hitter_confidence=True,
     )
     batter_frame = daily.get("daily_batter_zone_profiles", pd.DataFrame())
     pitcher_frame = daily.get("daily_pitcher_zone_profiles", pd.DataFrame())
@@ -935,11 +965,15 @@ def _render_pitcher_matchup_tab(selected_row: pd.Series, slate_entry: dict[str, 
     opponent_hitters = slate_entry.get("opponent_hitters", pd.DataFrame())
     if isinstance(opponent_hitters, pd.DataFrame) and not opponent_hitters.empty:
         st.markdown("##### Top opposing hitters")
+        opponent_columns, opponent_hidden = _hitter_table_columns(opponent_hitters, OPPONENT_HITTER_COLUMNS)
+        _render_hitter_confidence_legend()
         render_metric_grid(
-            opponent_hitters[[column for column in OPPONENT_HITTER_COLUMNS if column in opponent_hitters.columns]].head(6),
+            opponent_hitters[opponent_columns].head(6),
             key=f"p-matchup-hitters-{selected_row['key']}",
             height=220,
             use_lightweight=(source == "hosted"),
+            hidden_columns=opponent_hidden,
+            color_hitter_confidence=True,
         )
     else:
         st.info("No opposing hitter context available.")
@@ -973,7 +1007,7 @@ def main() -> None:
         profile_frame = profile_frame.loc[profile_frame["batter"] == int(selected_row["player_id"])].copy()
         profile_row = profile_frame.iloc[0] if not profile_frame.empty else pd.Series(dtype="object")
         if slate_entry is not None and not profile_row.empty:
-            for column in ["matchup_score", "ceiling_score", "zone_fit_score", "likely_starter_score"]:
+            for column in ["matchup_score", "test_score", "ceiling_score", "zone_fit_score", "likely_starter_score"]:
                 profile_row[column] = slate_entry["row"].get(column)
     else:
         profile_frame = add_pitcher_rank_score(_filter_pitcher_metrics(reusable.get("pitchers", pd.DataFrame()), filters))

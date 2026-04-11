@@ -95,6 +95,8 @@ def _render_hosted_grid(
     height: int = 320,
     lower_is_better: set[str] | None = None,
     higher_is_better: set[str] | None = None,
+    hidden_columns: set[str] | None = None,
+    color_hitter_confidence: bool = False,
 ) -> pd.DataFrame:
     return render_metric_grid(
         frame,
@@ -103,11 +105,28 @@ def _render_hosted_grid(
         lower_is_better=lower_is_better,
         higher_is_better=higher_is_better,
         use_lightweight=True,
+        hidden_columns=hidden_columns,
+        color_hitter_confidence=color_hitter_confidence,
     )
 
 
 def _present_columns(frame: pd.DataFrame, columns: list[str]) -> list[str]:
     return [column for column in columns if column in frame.columns]
+
+
+def _hitter_table_columns(frame: pd.DataFrame, columns: list[str]) -> tuple[list[str], set[str]]:
+    present = _present_columns(frame, columns)
+    hidden: set[str] = set()
+    if "hitter_name" in present:
+        for sample_column in ("pitch_count", "bip"):
+            if sample_column in frame.columns and sample_column not in present:
+                present.append(sample_column)
+                hidden.add(sample_column)
+    return present, hidden
+
+
+def _render_hitter_confidence_legend() -> None:
+    st.caption("Hitter name color: green = high sample, black = medium, amber = thin, red = very thin")
 
 
 def _empty_like(frame: pd.DataFrame) -> pd.DataFrame:
@@ -768,11 +787,18 @@ def main() -> None:
             export_options,
             full_slate_export_bundles,
         )
+        top_hitter_columns, top_hitter_hidden = _hitter_table_columns(
+            ranked_hitters,
+            ["game"] + [column for column in preset_columns if column in all_hitters.columns],
+        )
+        _render_hitter_confidence_legend()
         _render_hosted_grid(
-            ranked_hitters[["game"] + [column for column in preset_columns if column in all_hitters.columns]].head(10),
+            ranked_hitters[top_hitter_columns].head(10),
             key="top-slate-hitters-hosted",
             mobile_safe=mobile_safe,
             height=320,
+            hidden_columns=top_hitter_hidden,
+            color_hitter_confidence=True,
         )
     _record_perf(perf_events, "top hitters", top_hitters_start)
 
@@ -831,11 +857,15 @@ def main() -> None:
                 st.markdown("#### Best Matchups")
                 matchup_columns = _present_columns(best_matchups, BEST_MATCHUP_COLUMNS)
                 if matchup_columns:
+                    matchup_columns, matchup_hidden = _hitter_table_columns(best_matchups, matchup_columns)
+                    _render_hitter_confidence_legend()
                     best_matchups = _render_hosted_grid(
                         best_matchups[matchup_columns],
                         key=f"best-hosted-{game['game_pk']}",
                         mobile_safe=mobile_safe,
                         height=170,
+                        hidden_columns=matchup_hidden,
+                        color_hitter_confidence=True,
                     )
                 else:
                     st.info("No matchup rows available for this game.")
@@ -881,19 +911,25 @@ def main() -> None:
                 hitter_cols = st.columns(2)
                 with hitter_cols[0]:
                     st.caption(f"{game['away_team']} vs {game.get('home_probable_pitcher_name') or 'opposing starter'}")
+                    away_hitter_columns, away_hitter_hidden = _hitter_table_columns(away_hitters, hitter_columns)
                     away_hitters = _render_hosted_grid(
-                        away_hitters[[column for column in hitter_columns if column in away_hitters.columns]],
+                        away_hitters[away_hitter_columns],
                         key=f"away-hitters-hosted-{game['game_pk']}",
                         mobile_safe=mobile_safe,
                         height=360,
+                        hidden_columns=away_hitter_hidden,
+                        color_hitter_confidence=True,
                     )
                 with hitter_cols[1]:
                     st.caption(f"{game['home_team']} vs {game.get('away_probable_pitcher_name') or 'opposing starter'}")
+                    home_hitter_columns, home_hitter_hidden = _hitter_table_columns(home_hitters, hitter_columns)
                     home_hitters = _render_hosted_grid(
-                        home_hitters[[column for column in hitter_columns if column in home_hitters.columns]],
+                        home_hitters[home_hitter_columns],
                         key=f"home-hitters-hosted-{game['game_pk']}",
                         mobile_safe=mobile_safe,
                         height=360,
+                        hidden_columns=home_hitter_hidden,
+                        color_hitter_confidence=True,
                     )
 
             elif active_section == "Rolling":
