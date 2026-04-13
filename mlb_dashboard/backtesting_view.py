@@ -49,6 +49,33 @@ def _existing_columns(frame: pd.DataFrame, columns: list[str]) -> list[str]:
     return [column for column in columns if column in frame.columns]
 
 
+def _sort_display_frame(frame: pd.DataFrame, sort_choice: str, sort_dir: str, score_column: str, entity: str) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    ascending = sort_dir == "Low to High"
+    choice = (sort_choice or "").lower()
+    if choice == "score":
+        columns = [score_column]
+    elif choice == "slate rank":
+        columns = ["slate_rank"]
+    elif choice == "home runs":
+        columns = ["home_runs", score_column]
+    elif choice == "strikeouts":
+        columns = ["strikeouts", score_column]
+    elif choice == "team":
+        columns = ["team", score_column]
+    elif choice == "pitcher":
+        columns = ["pitcher_name", score_column]
+    elif choice == "hitter":
+        columns = ["hitter_name", score_column]
+    else:
+        columns = [score_column]
+    available = [column for column in columns if column in frame.columns]
+    if not available:
+        return frame
+    return frame.sort_values(available, ascending=[ascending] * len(available), na_position="last")
+
+
 def _render_simple_chart(data: pd.DataFrame, x: str, y: str, chart_type: str, title: str) -> None:
     if data.empty:
         st.info(f"No data for {title.lower()}.")
@@ -139,10 +166,14 @@ def _filters() -> dict[str, object]:
         if preset == "Custom":
             start_date = row_two[1].date_input("Start date", value=today - timedelta(days=14), key="bt-start")
             end_date = row_two[2].date_input("End date", value=today, key="bt-end")
+            if start_date < BACKTEST_RESET_CUTOFF:
+                start_date = BACKTEST_RESET_CUTOFF
         else:
             days = BACKTEST_PRESETS[preset]
             end_date = row_two[2].date_input("End date", value=today, key="bt-end-historical")
             start_date = date(2026, 1, 1) if days == "tracking_start" else season_start if days is None else end_date - timedelta(days=int(days) - 1)
+            if start_date < BACKTEST_RESET_CUTOFF:
+                start_date = BACKTEST_RESET_CUTOFF
             row_two[1].date_input("Start date", value=start_date, disabled=True, key="bt-start-fixed")
 
     row_three = st.columns(4)
@@ -150,6 +181,20 @@ def _filters() -> dict[str, object]:
     bucket_count = row_three[1].selectbox("Score Buckets", [5, 10, 20], index=1)
     min_rows = row_three[2].slider("Min Rows", 1, 100, 5)
     show_ladder = row_three[3].checkbox("Show Ladder Lens", value=(entity == "Hitters" and score_choice == "ceiling_score"))
+    row_four = st.columns([1.2, 1.0])
+    if entity == "Hitters":
+        sort_choice = row_four[0].selectbox(
+            "Sort Results",
+            ["Score", "Slate Rank", "Home Runs", "Team", "Hitter"],
+            index=0,
+        )
+    else:
+        sort_choice = row_four[0].selectbox(
+            "Sort Results",
+            ["Score", "Slate Rank", "Strikeouts", "Team", "Pitcher"],
+            index=0,
+        )
+    sort_dir = row_four[1].radio("Sort Direction", ["High to Low", "Low to High"], horizontal=True, index=0)
     return {
         "mode": mode,
         "entity": entity,
@@ -163,6 +208,8 @@ def _filters() -> dict[str, object]:
         "bucket_count": int(bucket_count),
         "min_rows": int(min_rows),
         "show_ladder": bool(show_ladder),
+        "sort_choice": sort_choice,
+        "sort_dir": sort_dir,
     }
 
 
@@ -643,6 +690,8 @@ def _render_hitter_view(frame: pd.DataFrame, score_column: str, filters: dict[st
     graded_mask = _render_outcome_status(frame, "Hitters")
     graded_frame = frame.loc[graded_mask].copy()
     top_n = int(filters["top_n"])
+    sort_choice = str(filters.get("sort_choice", "Score"))
+    sort_dir = str(filters.get("sort_dir", "High to Low"))
     winners = graded_frame["home_run_flag"].fillna(0).gt(0)
     captured = winners & graded_frame["slate_rank"].le(top_n)
     missed = winners & graded_frame["slate_rank"].gt(top_n)
@@ -690,11 +739,14 @@ def _render_hitter_view(frame: pd.DataFrame, score_column: str, filters: dict[st
 
     detail_cols = _existing_columns(frame, ["slate_date", "hitter_name", "team", "game_label", "slate_rank", score_column, "home_runs", "total_bases", "runs_rbi", "captured_price", "closing_price", "clv", "units", "fair_odds"])
     st.markdown("#### Biggest Captured HRs")
-    render_metric_grid(graded_frame.loc[captured, detail_cols].sort_values([score_column], ascending=[False], na_position="last"), key=f"bt-h-cap-{score_column}", height=240, use_lightweight=True)
+    captured_frame = _sort_display_frame(graded_frame.loc[captured, detail_cols], sort_choice, sort_dir, score_column, "Hitters")
+    render_metric_grid(captured_frame, key=f"bt-h-cap-{score_column}", height=240, use_lightweight=True)
     st.markdown("#### Biggest Missed HRs")
-    render_metric_grid(graded_frame.loc[missed, detail_cols].sort_values([score_column], ascending=[False], na_position="last"), key=f"bt-h-miss-{score_column}", height=240, use_lightweight=True)
+    missed_frame_display = _sort_display_frame(graded_frame.loc[missed, detail_cols], sort_choice, sort_dir, score_column, "Hitters")
+    render_metric_grid(missed_frame_display, key=f"bt-h-miss-{score_column}", height=240, use_lightweight=True)
     st.markdown("#### Bad High-Rank Plays")
-    render_metric_grid(graded_frame.loc[false_positive, detail_cols].sort_values(["slate_rank"]), key=f"bt-h-fp-{score_column}", height=240, use_lightweight=True)
+    false_positive_frame = _sort_display_frame(graded_frame.loc[false_positive, detail_cols], sort_choice, sort_dir, score_column, "Hitters")
+    render_metric_grid(false_positive_frame, key=f"bt-h-fp-{score_column}", height=240, use_lightweight=True)
 
     st.markdown("#### Game Top-3 HR Capture")
     game_ranked = graded_frame.sort_values(["slate_date", "game_pk", score_column], ascending=[True, True, False], na_position="last").copy()
@@ -744,13 +796,9 @@ def _render_hitter_view(frame: pd.DataFrame, score_column: str, filters: dict[st
             return " + ".join(tags) if tags else "No strong signal"
 
         missed_frame["miss_reason"] = missed_frame.apply(_miss_tag, axis=1)
-        render_metric_grid(
-            missed_frame[_existing_columns(missed_frame, ["slate_date", "game_label", "hitter_name", "team", score_column, "home_runs", "zone_fit_score", "sweet_spot_pct", "avg_launch_angle", "hard_hit_pct", "miss_reason"])]
-            .sort_values(["slate_date", score_column], ascending=[False, False], na_position="last"),
-            key=f"bt-h-miss-explain-{score_column}",
-            height=240,
-            use_lightweight=True,
-        )
+        missed_detail = missed_frame[_existing_columns(missed_frame, ["slate_date", "game_label", "hitter_name", "team", score_column, "home_runs", "zone_fit_score", "sweet_spot_pct", "avg_launch_angle", "hard_hit_pct", "miss_reason"])]
+        missed_detail = _sort_display_frame(missed_detail, sort_choice, sort_dir, score_column, "Hitters")
+        render_metric_grid(missed_detail, key=f"bt-h-miss-explain-{score_column}", height=240, use_lightweight=True)
         trend = missed_frame.groupby("miss_reason", as_index=False).size().rename(columns={"size": "miss_count"}).sort_values("miss_count", ascending=False)
         _render_simple_chart(trend, "miss_reason", "miss_count", "bar", "Missed HR Signal Tags")
 
@@ -785,6 +833,8 @@ def _render_pitcher_view(base_frame: pd.DataFrame, line_frame: pd.DataFrame, sco
     graded_keys = set(zip(graded_base["slate_date"], graded_base["name_key"]))
     graded_line = line_frame.loc[line_frame.apply(lambda row: (row.get("slate_date"), row.get("name_key")) in graded_keys, axis=1)].copy() if not line_frame.empty else line_frame
     top_n = int(filters["top_n"])
+    sort_choice = str(filters.get("sort_choice", "Score"))
+    sort_dir = str(filters.get("sort_dir", "High to Low"))
     clear_lines = graded_line["line_clear_flag"].gt(0) if not graded_line.empty else pd.Series(dtype="bool")
     captured = clear_lines & graded_line["slate_rank"].le(top_n) if not graded_line.empty else pd.Series(dtype="bool")
     missed = clear_lines & graded_line["slate_rank"].gt(top_n) if not graded_line.empty else pd.Series(dtype="bool")
@@ -823,18 +873,23 @@ def _render_pitcher_view(base_frame: pd.DataFrame, line_frame: pd.DataFrame, sco
         _render_simple_chart(_score_bucket_table(graded_base, score_column, "k5_flag", int(filters["bucket_count"])), "Score Bucket", "Realized_Rate", "bar", "Score Bucket vs 5+ K Rate")
 
     st.markdown("#### K Leaders")
-    render_metric_grid(graded_base[_existing_columns(graded_base, ["slate_date", "pitcher_name", "team", "game_label", "slate_rank", score_column, "strikeouts", "k5_flag", "pitcher_score", "strikeout_score", "csw_pct", "swstr_pct", "putaway_pct", "ball_pct", "siera"])].sort_values(["strikeouts", score_column], ascending=[False, False], na_position="last"), key=f"bt-p-leaders-{score_column}", height=240, use_lightweight=True)
+    leader_cols = _existing_columns(graded_base, ["slate_date", "pitcher_name", "team", "game_label", "slate_rank", score_column, "strikeouts", "k5_flag", "pitcher_score", "strikeout_score", "csw_pct", "swstr_pct", "putaway_pct", "ball_pct", "siera"])
+    leaders = _sort_display_frame(graded_base[leader_cols], sort_choice, sort_dir, score_column, "Pitchers")
+    render_metric_grid(leaders, key=f"bt-p-leaders-{score_column}", height=240, use_lightweight=True)
 
     if graded_line.empty:
         st.info("No captured strikeout lines were stored for this view yet.")
         return
     line_cols = _existing_columns(graded_line, ["slate_date", "pitcher_name", "team", "game_label", "slate_rank", score_column, "line", "strikeouts", "line_clear_flag", "captured_price", "closing_price", "clv", "units", "fair_odds"])
     st.markdown("#### Biggest Captured K Props")
-    render_metric_grid(graded_line.loc[captured, line_cols].sort_values([score_column, "line"], ascending=[False, True], na_position="last"), key=f"bt-p-cap-{score_column}", height=240, use_lightweight=True)
+    captured_line = _sort_display_frame(graded_line.loc[captured, line_cols], sort_choice, sort_dir, score_column, "Pitchers")
+    render_metric_grid(captured_line, key=f"bt-p-cap-{score_column}", height=240, use_lightweight=True)
     st.markdown("#### Biggest Missed K Props")
-    render_metric_grid(graded_line.loc[missed, line_cols].sort_values([score_column, "line"], ascending=[False, True], na_position="last"), key=f"bt-p-miss-{score_column}", height=240, use_lightweight=True)
+    missed_line = _sort_display_frame(graded_line.loc[missed, line_cols], sort_choice, sort_dir, score_column, "Pitchers")
+    render_metric_grid(missed_line, key=f"bt-p-miss-{score_column}", height=240, use_lightweight=True)
     st.markdown("#### Bad High-Rank K Props")
-    render_metric_grid(graded_line.loc[false_positive, line_cols].sort_values(["slate_rank", "line"]), key=f"bt-p-fp-{score_column}", height=240, use_lightweight=True)
+    false_positive_line = _sort_display_frame(graded_line.loc[false_positive, line_cols], sort_choice, sort_dir, score_column, "Pitchers")
+    render_metric_grid(false_positive_line, key=f"bt-p-fp-{score_column}", height=240, use_lightweight=True)
 
     threshold = graded_line.groupby("line", as_index=False).agg(Clear_Rate=("line_clear_flag", "mean"), ROI=("units", "mean")).sort_values("line")
     cols = st.columns(2)
@@ -861,12 +916,18 @@ def render_backtesting_tab(config: AppConfig) -> None:
     if filters["start_date"] > filters["end_date"]:
         st.error("Start date must be on or before end date.")
         return
+    effective_start = max(filters["start_date"], BACKTEST_RESET_CUTOFF)
+    if effective_start > filters["end_date"]:
+        st.warning(f"Backtesting was reset on {BACKTEST_RESET_CUTOFF.isoformat()}. Select a date on or after the reset cutoff.")
+        return
+    if effective_start != filters["start_date"]:
+        st.info(f"Backtesting reset cutoff applied: using {effective_start.isoformat()} as the earliest start date.")
 
     try:
         snapshots, outcomes, odds = _load_data(
             config,
             str(filters["entity"]),
-            filters["start_date"],
+            effective_start,
             filters["end_date"],
             str(filters["split_key"]),
             str(filters["recent_window"]),
