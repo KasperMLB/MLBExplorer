@@ -1464,7 +1464,7 @@ def _draw_kasper_export_header(
     subtitle: str,
 ) -> int:
     header_box = (20, 20, width - 20, 190)
-    _panel(draw, header_box, fill="#f5f7fa", radius=30)
+    _panel(draw, header_box, fill=REPORT_PANEL, radius=30)
     draw.rounded_rectangle((40, 38, 252, 76), radius=16, fill=REPORT_ACCENT)
     _text(draw, (58, 46), "KASPER", _load_font(22, bold=True), "#ffffff")
     _text(draw, (48, 86), "KASPER SCOUTING REPORT", _load_font(44, bold=True), REPORT_TEXT)
@@ -2351,7 +2351,7 @@ def build_branded_report_image(title: str, subtitle: str, sections: list[dict]) 
         total_height += _export_section_height_estimate(section["title"], section["frame"], str(section.get("subtitle", "")))
     image = _new_export_canvas(width, total_height)
     draw = ImageDraw.Draw(image)
-    _panel(draw, (20, 20, width - 20, branding_height), fill="#f5f7fa", radius=24)
+    _panel(draw, (20, 20, width - 20, branding_height), fill=REPORT_PANEL, radius=24)
     _text(draw, (42, 34), "KASPER SCOUTING REPORT", body_font, REPORT_ACCENT)
     _text(draw, (42, 58), title, font, REPORT_TEXT)
     _text(draw, (42, 82), subtitle, body_font, REPORT_TEXT)
