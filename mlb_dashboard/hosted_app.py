@@ -114,6 +114,133 @@ def _present_columns(frame: pd.DataFrame, columns: list[str]) -> list[str]:
     return [column for column in columns if column in frame.columns]
 
 
+def _sorted_unique(values: list[str]) -> list[str]:
+    return sorted({value for value in values if value})
+
+
+HITTER_REQUIRED_COLUMNS = _sorted_unique(
+    [
+        *[col for preset in HITTER_PRESETS.values() for col in preset],
+        *BEST_MATCHUP_COLUMNS,
+        "batter",
+        "batter_id",
+        "game",
+        "game_pk",
+        "hitter_name",
+        "split_key",
+        "recent_window",
+        "weighted_mode",
+        "team",
+        "pitch_count",
+        "bip",
+        "likely_starter_score",
+        "zone_fit_score",
+    ]
+)
+
+PITCHER_REQUIRED_COLUMNS = _sorted_unique(
+    [
+        *TOP_PITCHER_COLUMNS,
+        *PITCHER_SUMMARY_COLUMNS,
+        "pitcher_id",
+        "game_pk",
+        "split_key",
+        "recent_window",
+        "weighted_mode",
+        "team",
+        "game",
+    ]
+)
+
+PITCHER_SUMMARY_REQUIRED_COLUMNS = _sorted_unique(
+    [
+        *PITCHER_SUMMARY_COLUMNS,
+        "pitcher_id",
+        "game_pk",
+        "team",
+        "batter_side_key",
+    ]
+)
+
+ARSENAL_REQUIRED_COLUMNS = _sorted_unique(
+    [
+        *ARSENAL_COLUMNS,
+        "pitcher_id",
+        "game_pk",
+        "team",
+        "batter_side_key",
+    ]
+)
+
+COUNT_USAGE_REQUIRED_COLUMNS = _sorted_unique(
+    [
+        *COUNT_USAGE_COLUMNS,
+        "pitcher_id",
+        "game_pk",
+        "team",
+        "batter_side_key",
+    ]
+)
+
+BATTER_ZONE_REQUIRED_COLUMNS = _sorted_unique(
+    [
+        *BATTER_ZONE_COLUMNS,
+        "batter_id",
+        "pitcher_hand_key",
+    ]
+)
+
+PITCHER_ZONE_REQUIRED_COLUMNS = _sorted_unique(
+    [
+        *PITCHER_ZONE_COLUMNS,
+        "pitcher_id",
+        "batter_side_key",
+    ]
+)
+
+BATTER_FAMILY_REQUIRED_COLUMNS = _sorted_unique(
+    [
+        "batter_id",
+        "pitch_family",
+        "zone_bucket",
+        "weighted_sample_size",
+        "prior_weight_share",
+        "usage_rate_overall",
+        "damage_rate",
+        "xwoba",
+    ]
+)
+
+PITCHER_FAMILY_REQUIRED_COLUMNS = _sorted_unique(
+    [
+        *FAMILY_ZONE_CONTEXT_COLUMNS,
+        "pitcher_id",
+    ]
+)
+
+MOVEMENT_REQUIRED_COLUMNS = _sorted_unique(
+    [
+        *MOVEMENT_ARSENAL_COLUMNS,
+        "pitcher_id",
+    ]
+)
+
+HITTER_ROLLING_REQUIRED_COLUMNS = _sorted_unique(
+    [
+        *HITTER_ROLLING_COLUMNS,
+        "player_name",
+        "rolling_window",
+    ]
+)
+
+PITCHER_ROLLING_REQUIRED_COLUMNS = _sorted_unique(
+    [
+        *PITCHER_ROLLING_COLUMNS,
+        "player_name",
+        "rolling_window",
+    ]
+)
+
 def _hitter_table_columns(frame: pd.DataFrame, columns: list[str]) -> tuple[list[str], set[str]]:
     present = _present_columns(frame, columns)
     hidden: set[str] = set()
@@ -253,18 +380,38 @@ def _load_core_artifacts(
     target_date: date,
 ) -> tuple[pd.DataFrame, ...]:
     day = target_date.isoformat()
-    slate = pd.read_parquet(f"{base_url}/daily/{day}/slate.parquet")
-    rosters = pd.read_parquet(f"{base_url}/daily/{day}/rosters.parquet")
-    hitters = pd.read_parquet(f"{base_url}/daily/{day}/daily_hitter_metrics.parquet")
-    pitchers = pd.read_parquet(f"{base_url}/daily/{day}/daily_pitcher_metrics.parquet")
-    pitcher_summary_by_hand = pd.read_parquet(f"{base_url}/daily/{day}/daily_pitcher_summary_by_hand.parquet")
-    arsenal = pd.read_parquet(f"{base_url}/daily/{day}/daily_pitcher_arsenal.parquet")
-    arsenal_by_hand = pd.read_parquet(f"{base_url}/daily/{day}/daily_pitcher_arsenal_by_hand.parquet")
-    usage_by_count = pd.read_parquet(f"{base_url}/daily/{day}/daily_pitcher_usage_by_count.parquet")
-    batter_zone_profiles = pd.read_parquet(f"{base_url}/daily/{day}/daily_batter_zone_profiles.parquet")
-    pitcher_zone_profiles = pd.read_parquet(f"{base_url}/daily/{day}/daily_pitcher_zone_profiles.parquet")
+    slate = load_remote_parquet(f"{base_url}/daily/{day}", "slate.parquet")
+    rosters = load_remote_parquet(f"{base_url}/daily/{day}", "rosters.parquet")
+    hitters = load_remote_parquet(f"{base_url}/daily/{day}", "daily_hitter_metrics.parquet", columns=HITTER_REQUIRED_COLUMNS)
+    pitchers = load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_metrics.parquet", columns=PITCHER_REQUIRED_COLUMNS)
+    pitcher_summary_by_hand = load_remote_parquet(
+        f"{base_url}/daily/{day}",
+        "daily_pitcher_summary_by_hand.parquet",
+        columns=PITCHER_SUMMARY_REQUIRED_COLUMNS,
+    )
+    arsenal = load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_arsenal.parquet", columns=ARSENAL_REQUIRED_COLUMNS)
+    arsenal_by_hand = load_remote_parquet(
+        f"{base_url}/daily/{day}",
+        "daily_pitcher_arsenal_by_hand.parquet",
+        columns=ARSENAL_REQUIRED_COLUMNS,
+    )
+    usage_by_count = load_remote_parquet(
+        f"{base_url}/daily/{day}",
+        "daily_pitcher_usage_by_count.parquet",
+        columns=COUNT_USAGE_REQUIRED_COLUMNS,
+    )
+    batter_zone_profiles = load_remote_parquet(
+        f"{base_url}/daily/{day}",
+        "daily_batter_zone_profiles.parquet",
+        columns=BATTER_ZONE_REQUIRED_COLUMNS,
+    )
+    pitcher_zone_profiles = load_remote_parquet(
+        f"{base_url}/daily/{day}",
+        "daily_pitcher_zone_profiles.parquet",
+        columns=PITCHER_ZONE_REQUIRED_COLUMNS,
+    )
     try:
-        hitter_pitcher_exclusions = pd.read_parquet(f"{base_url}/daily/{day}/hitter_pitcher_exclusions.parquet")
+        hitter_pitcher_exclusions = load_remote_parquet(f"{base_url}/daily/{day}", "hitter_pitcher_exclusions.parquet")
     except Exception:
         hitter_pitcher_exclusions = pd.DataFrame(columns=["player_id", "exclude_from_hitter_tables"])
     return slate, rosters, hitters, pitchers, pitcher_summary_by_hand, arsenal, arsenal_by_hand, usage_by_count, batter_zone_profiles, pitcher_zone_profiles, hitter_pitcher_exclusions
@@ -273,17 +420,37 @@ def _load_core_artifacts(
 @st.cache_data(show_spinner=False)
 def _load_rolling_artifacts(base_url: str, target_date: date) -> tuple[pd.DataFrame, pd.DataFrame]:
     day = target_date.isoformat()
-    hitter_rolling = pd.read_parquet(f"{base_url}/daily/{day}/daily_hitter_rolling.parquet")
-    pitcher_rolling = pd.read_parquet(f"{base_url}/daily/{day}/daily_pitcher_rolling.parquet")
+    hitter_rolling = load_remote_parquet(
+        f"{base_url}/daily/{day}",
+        "daily_hitter_rolling.parquet",
+        columns=HITTER_ROLLING_REQUIRED_COLUMNS,
+    )
+    pitcher_rolling = load_remote_parquet(
+        f"{base_url}/daily/{day}",
+        "daily_pitcher_rolling.parquet",
+        columns=PITCHER_ROLLING_REQUIRED_COLUMNS,
+    )
     return hitter_rolling, pitcher_rolling
 
 
 @st.cache_data(show_spinner=False)
 def _load_pitch_shape_artifacts(base_url: str, target_date: date) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     day = target_date.isoformat()
-    batter_family_zone_profiles = pd.read_parquet(f"{base_url}/daily/{day}/daily_batter_family_zone_profiles.parquet")
-    pitcher_family_zone_context = pd.read_parquet(f"{base_url}/daily/{day}/daily_pitcher_family_zone_context.parquet")
-    pitcher_movement_arsenal = pd.read_parquet(f"{base_url}/daily/{day}/daily_pitcher_movement_arsenal.parquet")
+    batter_family_zone_profiles = load_remote_parquet(
+        f"{base_url}/daily/{day}",
+        "daily_batter_family_zone_profiles.parquet",
+        columns=BATTER_FAMILY_REQUIRED_COLUMNS,
+    )
+    pitcher_family_zone_context = load_remote_parquet(
+        f"{base_url}/daily/{day}",
+        "daily_pitcher_family_zone_context.parquet",
+        columns=PITCHER_FAMILY_REQUIRED_COLUMNS,
+    )
+    pitcher_movement_arsenal = load_remote_parquet(
+        f"{base_url}/daily/{day}",
+        "daily_pitcher_movement_arsenal.parquet",
+        columns=MOVEMENT_REQUIRED_COLUMNS,
+    )
     return batter_family_zone_profiles, pitcher_family_zone_context, pitcher_movement_arsenal
 
 

@@ -288,5 +288,20 @@ class StatcastQueryEngine:
         ).df()
 
 
-def load_remote_parquet(base_path: str, filename: str) -> pd.DataFrame:
-    return pd.read_parquet(f"{base_path.rstrip('/')}/{filename}")
+def load_remote_parquet(base_path: str, filename: str, columns: list[str] | None = None) -> pd.DataFrame:
+    path = f"{base_path.rstrip('/')}/{filename}"
+    requested = [col for col in (columns or []) if col]
+    if requested and duckdb is not None:
+        try:
+            conn = duckdb.connect()
+            try:
+                select_cols = ", ".join(f'"{col}"' for col in requested)
+                return conn.execute(f"SELECT {select_cols} FROM read_parquet('{path}')").df()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+    try:
+        return pd.read_parquet(path, columns=requested or None)
+    except TypeError:
+        return pd.read_parquet(path)
