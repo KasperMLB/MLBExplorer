@@ -1515,7 +1515,7 @@ def _draw_report_header(
     body_font: ImageFont.ImageFont,
 ) -> int:
     hero_box = (24, 24, width - 24, 166)
-    _panel(draw, hero_box, fill="#f5f7fa", radius=24)
+    _panel(draw, hero_box, fill=REPORT_PANEL, radius=24)
     _text(draw, (46, 42), "KASPER SCOUTING REPORT", body_font, REPORT_ACCENT)
     _text(draw, (46, 68), title, title_font, REPORT_TEXT)
     _text(draw, (46, 110), subtitle, body_font, REPORT_TEXT)
