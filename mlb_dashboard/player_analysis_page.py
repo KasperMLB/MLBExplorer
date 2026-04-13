@@ -164,6 +164,21 @@ def _hitter_table_columns(frame: pd.DataFrame, columns: list[str]) -> tuple[list
     return present, hidden
 
 
+def _require_admin_password() -> bool:
+    required = st.secrets.get("ADMIN_PASSWORD")
+    if not required:
+        st.error("Player Analysis is locked. Add ADMIN_PASSWORD to Streamlit secrets to enable this page.")
+        return False
+    entry = st.text_input("Player Analysis password", type="password")
+    if not entry:
+        st.info("Enter the Player Analysis password to view this page.")
+        return False
+    if str(entry) != str(required):
+        st.error("Incorrect password.")
+        return False
+    return True
+
+
 def _render_hitter_confidence_legend() -> None:
     chips = [
         ("High", "#166534"),
@@ -1005,6 +1020,8 @@ def _render_pitcher_matchup_tab(selected_row: pd.Series, slate_entry: dict[str, 
 def main() -> None:
     st.set_page_config(page_title="Player Analysis", page_icon=page_icon_path(), layout="wide")
     apply_branding_head()
+    if not _require_admin_password():
+        return
     config = AppConfig()
     target_date, filters = _sidebar(config)
     daily, reusable, source, resolved_date = _load_context(config, target_date)

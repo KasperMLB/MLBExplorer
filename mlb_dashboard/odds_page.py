@@ -17,6 +17,21 @@ from .query_engine import StatcastQueryEngine
 SHARED_ODDS_TTL_SECONDS = 120
 
 
+def _require_admin_password() -> bool:
+    required = st.secrets.get("ADMIN_PASSWORD")
+    if not required:
+        st.error("Props Board is locked. Add ADMIN_PASSWORD to Streamlit secrets to enable this page.")
+        return False
+    entry = st.text_input("Props Board password", type="password")
+    if not entry:
+        st.info("Enter the Props Board password to view this page.")
+        return False
+    if str(entry) != str(required):
+        st.error("Incorrect password.")
+        return False
+    return True
+
+
 def _hosted_base_url() -> str:
     import os
 
@@ -211,6 +226,8 @@ def _load_shared_or_live_props(config: AppConfig, target_date: date, rosters: pd
 def main() -> None:
     st.set_page_config(page_title="Props Board", page_icon=page_icon_path(), layout="wide")
     apply_branding_head()
+    if not _require_admin_password():
+        return
     st.title("Props Board")
     st.caption("Live odds page. This page loads separately so the main matchup workflow stays untouched.")
 
