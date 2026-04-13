@@ -1313,25 +1313,63 @@ def _draw_side_by_side_tables(
     return max(left_bottom, right_bottom)
 
 
-REPORT_BG = "#ffffff"
-REPORT_PANEL = "#ffffff"
-REPORT_PANEL_ALT = "#f6f8fb"
-REPORT_BORDER = "#cfd8e3"
-REPORT_TEXT = "#111111"
-REPORT_MUTED = "#4b5563"
-REPORT_ACCENT = "#1f4e79"
-GRAFFITI_BG = "#f4efe4"
-GRAFFITI_PANEL = "#f7f4ec"
-GRAFFITI_PANEL_ALT = "#fffaf0"
-GRAFFITI_BORDER = "#1d1d1d"
-GRAFFITI_TAG = "#0f0f10"
-GRAFFITI_PINK = "#ff5c8a"
-GRAFFITI_ORANGE = "#ff8a3d"
-GRAFFITI_TEAL = "#1cb5a3"
+REPORT_BG = "#0f1222"
+REPORT_PANEL = "#151b33"
+REPORT_PANEL_ALT = "#1a2440"
+REPORT_BORDER = "#2d3655"
+REPORT_TEXT = "#F7F8FF"
+REPORT_MUTED = "#D6DDF7"
+REPORT_ACCENT = "#9d91fb"
+EXPORT_BG_STOPS = ("#0f1222", "#151b33", "#1a2440")
+GRAFFITI_BG = REPORT_BG
+GRAFFITI_PANEL = REPORT_PANEL
+GRAFFITI_PANEL_ALT = REPORT_PANEL_ALT
+GRAFFITI_BORDER = REPORT_BORDER
+GRAFFITI_TAG = REPORT_TEXT
+GRAFFITI_PINK = "#cf6bf3"
+GRAFFITI_ORANGE = "#f59e0b"
+GRAFFITI_TEAL = "#38bdf8"
 GRAFFITI_YELLOW = "#ffd24a"
 
 
 _FONT_WARNING_EMITTED = False
+
+
+def _hex_to_rgb(value: str) -> tuple[int, int, int]:
+    text = value.lstrip("#")
+    return tuple(int(text[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _blend_rgb(left: tuple[int, int, int], right: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    return (
+        int(left[0] + (right[0] - left[0]) * t),
+        int(left[1] + (right[1] - left[1]) * t),
+        int(left[2] + (right[2] - left[2]) * t),
+    )
+
+
+def _paint_vertical_gradient(image: Image.Image, stops: tuple[str, str, str]) -> None:
+    top, mid, bottom = (_hex_to_rgb(color) for color in stops)
+    draw = ImageDraw.Draw(image)
+    height = image.height
+    for y in range(height):
+        if height <= 1:
+            t = 0.0
+        else:
+            t = y / (height - 1)
+        if t <= 0.55:
+            local_t = 0 if t == 0 else t / 0.55
+            color = _blend_rgb(top, mid, local_t)
+        else:
+            local_t = (t - 0.55) / 0.45
+            color = _blend_rgb(mid, bottom, local_t)
+        draw.line([(0, y), (image.width, y)], fill=color)
+
+
+def _new_export_canvas(width: int, height: int) -> Image.Image:
+    image = Image.new("RGB", (width, height), REPORT_BG)
+    _paint_vertical_gradient(image, EXPORT_BG_STOPS)
+    return image
 
 
 def _font_candidates(bold: bool) -> list[Path]:
@@ -1851,7 +1889,7 @@ def _build_top_matchups_report_image(title: str, subtitle: str, sections: list[d
     for section in sections:
         total_height += _export_section_height_estimate(section["title"], section["frame"], str(section.get("subtitle", "")))
 
-    image = Image.new("RGB", (width, total_height), REPORT_BG)
+    image = _new_export_canvas(width, total_height)
     draw = ImageDraw.Draw(image)
     _draw_kasper_export_header(draw, width, title, subtitle)
 
@@ -1997,7 +2035,7 @@ def _build_slate_summary_report_image(title: str, subtitle: str, sections: list[
         else:
             total_height += _export_section_height_estimate(section["title"], section["frame"], str(section.get("subtitle", ""))) + 8
 
-    image = Image.new("RGB", (width, total_height), REPORT_BG)
+    image = _new_export_canvas(width, total_height)
     draw = ImageDraw.Draw(image)
     _draw_kasper_export_header(draw, width, title, subtitle)
 
@@ -2114,7 +2152,7 @@ def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict])
     hitter_title_font = _load_font(38, bold=True)
     hitter_body_font = _load_font(28, bold=True)
     width = 1600
-    image = Image.new("RGB", (width, 4200), REPORT_BG)
+    image = _new_export_canvas(width, 4200)
     draw = ImageDraw.Draw(image)
 
     best_section = next((section for section in sections if _section_type(section["title"]) == "best"), None)
@@ -2304,7 +2342,7 @@ def build_branded_report_image(title: str, subtitle: str, sections: list[dict]) 
     total_height = branding_height + 24
     for section in sections:
         total_height += _export_section_height_estimate(section["title"], section["frame"], str(section.get("subtitle", "")))
-    image = Image.new("RGB", (width, total_height), REPORT_BG)
+    image = _new_export_canvas(width, total_height)
     draw = ImageDraw.Draw(image)
     _panel(draw, (20, 20, width - 20, branding_height), fill="#f5f7fa", radius=24)
     _text(draw, (42, 34), "KASPER SCOUTING REPORT", body_font, REPORT_ACCENT)
