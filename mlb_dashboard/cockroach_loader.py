@@ -970,6 +970,48 @@ def read_hitter_backtest_data(
     return snapshots, outcomes, boards
 
 
+def read_hitter_snapshots_for_date(config: AppConfig, slate_date: date) -> pd.DataFrame:
+    _ensure_driver()
+    if not config.database_url:
+        return pd.DataFrame()
+    database_url = _normalize_database_url(config.database_url)
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        return _read_frame(
+            conn,
+            f"""
+            SELECT *
+            FROM {config.cockroach_hitter_snapshot_table}
+            WHERE slate_date = %(slate_date)s
+            """,
+            {"slate_date": slate_date},
+        )
+
+
+def purge_backtest_outcomes_before(config: AppConfig, cutoff_date, *, include_pitchers: bool = True) -> tuple[int, int]:
+    _ensure_driver()
+    if not config.database_url:
+        return 0, 0
+    database_url = _normalize_database_url(config.database_url)
+    hitter_deleted = 0
+    pitcher_deleted = 0
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"DELETE FROM {config.cockroach_hitter_outcome_table} WHERE slate_date < %s",
+                (cutoff_date,),
+            )
+            if cur.rowcount is not None:
+                hitter_deleted = int(cur.rowcount)
+            if include_pitchers:
+                cur.execute(
+                    f"DELETE FROM {config.cockroach_pitcher_outcome_table} WHERE slate_date < %s",
+                    (cutoff_date,),
+                )
+                if cur.rowcount is not None:
+                    pitcher_deleted = int(cur.rowcount)
+    return hitter_deleted, pitcher_deleted
+
+
 def read_pitcher_backtest_data(
     config: AppConfig,
     start_date,
@@ -1026,6 +1068,23 @@ def read_pitcher_backtest_data(
             {"start_date": start_date, "end_date": end_date},
         )
     return snapshots, outcomes, boards
+
+
+def read_pitcher_snapshots_for_date(config: AppConfig, slate_date: date) -> pd.DataFrame:
+    _ensure_driver()
+    if not config.database_url:
+        return pd.DataFrame()
+    database_url = _normalize_database_url(config.database_url)
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        return _read_frame(
+            conn,
+            f"""
+            SELECT *
+            FROM {config.cockroach_pitcher_snapshot_table}
+            WHERE slate_date = %(slate_date)s
+            """,
+            {"slate_date": slate_date},
+        )
 
 
 def read_prop_odds_history(

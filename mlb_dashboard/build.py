@@ -5,7 +5,7 @@ import json
 import uuid
 import warnings
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -13,6 +13,8 @@ import pandas as pd
 from .cockroach_loader import (
     CockroachPayload,
     load_cockroach_payload,
+    read_hitter_snapshots_for_date,
+    read_pitcher_snapshots_for_date,
     read_source_freshness_report,
     write_props_odds_snapshot,
     write_tracking_payload,
@@ -2267,7 +2269,18 @@ def run_build(
         prepared.pitcher_zone_profiles,
     )
     board_winners = _build_hitter_board_winners(snapshots)
-    outcomes = _build_hitter_game_outcomes(context.target_date, prepared.raw_statcast, snapshots, source_max_event_date)
+    outcome_target_date = context.target_date - timedelta(days=1)
+    if outcome_target_date == context.target_date:
+        outcome_snapshots = snapshots
+    else:
+        outcome_snapshots = read_hitter_snapshots_for_date(context.config, outcome_target_date)
+        if outcome_snapshots.empty:
+            warnings.warn(
+                f"No hitter snapshots found for {outcome_target_date.isoformat()} while building outcomes. "
+                "Run a build for that date to enable outcome grading."
+            )
+            outcome_snapshots = pd.DataFrame()
+    outcomes = _build_hitter_game_outcomes(outcome_target_date, prepared.raw_statcast, outcome_snapshots, source_max_event_date)
     probable_pitchers = _build_probable_pitcher_lookup(schedule)
     pitcher_opponent_hitters = _build_pitcher_opponent_hitter_map(
         schedule,
@@ -2292,7 +2305,17 @@ def run_build(
     )
     pitcher_count_snapshots = _build_pitcher_count_snapshots(context.target_date, probable_pitchers, prepared.pitcher_usage_by_count)
     pitcher_board_winners = _build_pitcher_board_winners(pitcher_snapshots)
-    pitcher_outcomes = _build_pitcher_game_outcomes(context.target_date, prepared.raw_statcast, pitcher_snapshots, source_max_event_date)
+    if outcome_target_date == context.target_date:
+        pitcher_outcome_snapshots = pitcher_snapshots
+    else:
+        pitcher_outcome_snapshots = read_pitcher_snapshots_for_date(context.config, outcome_target_date)
+        if pitcher_outcome_snapshots.empty:
+            warnings.warn(
+                f"No pitcher snapshots found for {outcome_target_date.isoformat()} while building outcomes. "
+                "Run a build for that date to enable outcome grading."
+            )
+            pitcher_outcome_snapshots = pd.DataFrame()
+    pitcher_outcomes = _build_pitcher_game_outcomes(outcome_target_date, prepared.raw_statcast, pitcher_outcome_snapshots, source_max_event_date)
     write_tracking_payload(
         context.config,
         snapshots,

@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
-from .cockroach_loader import read_hitter_backtest_data, read_pitcher_backtest_data, read_prop_odds_history
+from .cockroach_loader import read_hitter_backtest_data, read_pitcher_backtest_data, read_prop_odds_history, purge_backtest_outcomes_before
 from .config import AppConfig
 from .odds_service import american_to_implied_prob
 from .ui_components import render_metric_grid
@@ -27,9 +27,11 @@ BACKTEST_PRESETS = {
     "Last 30": 30,
     "Custom": "custom",
 }
+BACKTEST_RESET_CUTOFF = date(2026, 4, 12)
 
 HITTER_SCORE_OPTIONS = {
     "Matchup Score": "matchup_score",
+    "Test Score (Launch Angle Experiment)": "test_score",
     "Ceiling Score (Ladder / 2+ HR Lens)": "ceiling_score",
 }
 
@@ -73,6 +75,42 @@ def _render_metric_cards(cards: list[tuple[str, str, str | None]]) -> None:
     cols = st.columns(len(cards))
     for col, (label, value, delta) in zip(cols, cards):
         col.metric(label, value, delta)
+
+
+def _require_backtest_password() -> bool:
+    required = st.secrets.get("ADMIN_PASSWORD")
+    if not required:
+        st.error("Backtesting is locked. Add ADMIN_PASSWORD to Streamlit secrets to enable this page.")
+        return False
+    entry = st.text_input("Backtesting password", type="password")
+    if not entry:
+        st.info("Enter the backtesting password to view this page.")
+        return False
+    if str(entry) != str(required):
+        st.error("Incorrect backtesting password.")
+        return False
+    return True
+
+
+def _render_backtest_reset_controls(config: AppConfig) -> None:
+    with st.expander("Admin: Reset Backtesting Outcomes", expanded=False):
+        st.write(
+            f"This will permanently delete hitter (and pitcher) outcomes before {BACKTEST_RESET_CUTOFF.isoformat()} "
+            "so backtesting starts fresh from that date."
+        )
+        include_pitchers = st.checkbox("Also purge pitcher outcomes", value=True)
+        confirm = st.checkbox("I understand this is destructive and cannot be undone.")
+        if st.button("Purge outcomes before reset date", disabled=not confirm):
+            hitter_deleted, pitcher_deleted = purge_backtest_outcomes_before(
+                config,
+                BACKTEST_RESET_CUTOFF,
+                include_pitchers=include_pitchers,
+            )
+            st.success(
+                f"Deleted {hitter_deleted:,} hitter outcome rows"
+                + (f" and {pitcher_deleted:,} pitcher outcome rows." if include_pitchers else ".")
+            )
+            st.info("Now run: python -m mlb_dashboard.tracking_sync --days N to regrade forward from today.")
 
 
 def _filters() -> dict[str, object]:
@@ -180,7 +218,7 @@ def _prepare_hitter_frame(snapshots: pd.DataFrame, outcomes: pd.DataFrame) -> pd
     outcome_complete = frame.get("outcome_complete")
     frame["outcome_complete"] = outcome_complete.fillna(pd.NA) if outcome_complete is not None else pd.NA
     frame["source_max_event_date"] = pd.to_datetime(frame.get("source_max_event_date"), errors="coerce")
-    for column in ["matchup_score", "ceiling_score", "zone_fit_score", "xwoba", "xwoba_con", "swstr_pct", "pulled_barrel_pct", "sweet_spot_pct", "avg_launch_angle", "hard_hit_pct", "hits", "home_runs", "total_bases", "runs", "rbi"]:
+    for column in ["matchup_score", "test_score", "ceiling_score", "zone_fit_score", "xwoba", "xwoba_con", "swstr_pct", "pulled_barrel_pct", "sweet_spot_pct", "avg_launch_angle", "hard_hit_pct", "hits", "home_runs", "total_bases", "runs", "rbi"]:
         if column in frame.columns:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
     frame["hit_flag"] = frame.get("hits", 0).fillna(0).gt(0).astype(float)
@@ -635,7 +673,8 @@ def _render_hitter_view(frame: pd.DataFrame, score_column: str, filters: dict[st
     if graded_frame.empty:
         st.info("No graded hitter rows are available for this selection after outcome filtering.")
         return
-
+    st.markdown("#### Slate Top-N HR Hit Rate")
+    render_metric_grid(_top_n_summary(graded_frame, "home_run_flag", [5, 10, 20]), key=f"bt-h-topn-fixed-{score_column}", height=160, use_lightweight=True)
     render_metric_grid(_top_n_summary(graded_frame, "home_run_flag", [1, 3, 5, top_n]), key=f"bt-h-topn-{score_column}", height=180, use_lightweight=True)
     cols = st.columns(2)
     with cols[0]:
@@ -657,9 +696,87 @@ def _render_hitter_view(frame: pd.DataFrame, score_column: str, filters: dict[st
     st.markdown("#### Bad High-Rank Plays")
     render_metric_grid(graded_frame.loc[false_positive, detail_cols].sort_values(["slate_rank"]), key=f"bt-h-fp-{score_column}", height=240, use_lightweight=True)
 
+    st.markdown("#### Game Top-3 HR Capture")
+    game_ranked = graded_frame.sort_values(["slate_date", "game_pk", score_column], ascending=[True, True, False], na_position="last").copy()
+    game_ranked["game_rank"] = game_ranked.groupby(["slate_date", "game_pk"]).cumcount() + 1
+    top3 = game_ranked.loc[game_ranked["game_rank"] <= 3].copy()
+    game_summary = (
+        top3.groupby(["slate_date", "game_label"], as_index=False)
+        .agg(
+            top3_hr_hits=("home_run_flag", "sum"),
+            top3_names=("hitter_name", lambda names: ", ".join([name for name in names if isinstance(name, str)])),
+        )
+    )
+    winners_by_game = graded_frame.loc[winners].groupby(["slate_date", "game_label"], as_index=False).agg(hr_winners_total=("home_run_flag", "sum"))
+    game_summary = game_summary.merge(winners_by_game, on=["slate_date", "game_label"], how="left")
+    game_summary["hr_winners_outside_top3"] = (pd.to_numeric(game_summary.get("hr_winners_total"), errors="coerce").fillna(0) - pd.to_numeric(game_summary.get("top3_hr_hits"), errors="coerce").fillna(0)).clip(lower=0)
+    render_metric_grid(
+        game_summary.sort_values(["slate_date", "top3_hr_hits"], ascending=[False, False], na_position="last"),
+        key=f"bt-h-game-top3-{score_column}",
+        height=220,
+        use_lightweight=True,
+    )
+
+    st.markdown("#### Missed HR Explanations")
+    slate_topn = graded_frame.loc[graded_frame["slate_rank"] <= top_n].copy()
+    top3_keys = set(zip(top3["slate_date"], top3["game_pk"], top3["batter_id"]))
+    missed_mask = winners & ~graded_frame["slate_rank"].le(top_n) & ~graded_frame.apply(
+        lambda row: (row.get("slate_date"), row.get("game_pk"), row.get("batter_id")) in top3_keys, axis=1
+    )
+    missed_frame = graded_frame.loc[missed_mask].copy()
+    if missed_frame.empty:
+        st.info("No missed HRs outside slate Top-N and game Top-3 for this view.")
+    else:
+        base = graded_frame.copy()
+        signal_cols = ["zone_fit_score", "sweet_spot_pct", "avg_launch_angle", "hard_hit_pct", "matchup_score"]
+        percentiles = {col: pd.to_numeric(base.get(col), errors="coerce").quantile(0.75) for col in signal_cols if col in base.columns}
+
+        def _miss_tag(row) -> str:
+            tags = []
+            if "zone_fit_score" in percentiles and pd.to_numeric(row.get("zone_fit_score"), errors="coerce") >= percentiles["zone_fit_score"]:
+                tags.append("Zone Fit")
+            if "sweet_spot_pct" in percentiles and pd.to_numeric(row.get("sweet_spot_pct"), errors="coerce") >= percentiles["sweet_spot_pct"]:
+                tags.append("Sweet Spot")
+            if "avg_launch_angle" in percentiles and pd.to_numeric(row.get("avg_launch_angle"), errors="coerce") >= percentiles["avg_launch_angle"]:
+                tags.append("Launch Angle")
+            if "hard_hit_pct" in percentiles and pd.to_numeric(row.get("hard_hit_pct"), errors="coerce") >= percentiles["hard_hit_pct"]:
+                tags.append("Hard Hit")
+            return " + ".join(tags) if tags else "No strong signal"
+
+        missed_frame["miss_reason"] = missed_frame.apply(_miss_tag, axis=1)
+        render_metric_grid(
+            missed_frame[_existing_columns(missed_frame, ["slate_date", "game_label", "hitter_name", "team", score_column, "home_runs", "zone_fit_score", "sweet_spot_pct", "avg_launch_angle", "hard_hit_pct", "miss_reason"])]
+            .sort_values(["slate_date", score_column], ascending=[False, False], na_position="last"),
+            key=f"bt-h-miss-explain-{score_column}",
+            height=240,
+            use_lightweight=True,
+        )
+        trend = missed_frame.groupby("miss_reason", as_index=False).size().rename(columns={"size": "miss_count"}).sort_values("miss_count", ascending=False)
+        _render_simple_chart(trend, "miss_reason", "miss_count", "bar", "Missed HR Signal Tags")
+
     signals = ["matchup_score", "ceiling_score", "zone_fit_score", "xwoba", "xwoba_con", "swstr_pct", "pulled_barrel_pct", "sweet_spot_pct", "avg_launch_angle", "hard_hit_pct"]
     st.markdown("#### Signal Attribution Summary")
     render_metric_grid(_signal_table(graded_frame, signals, captured, missed if missed.any() else false_positive), key=f"bt-h-signals-{score_column}", height=240, use_lightweight=True)
+    st.markdown("#### Tuning Suggestions")
+    suggestions = []
+    for signal in signals:
+        if signal not in graded_frame.columns:
+            continue
+        numeric = pd.to_numeric(graded_frame.get(signal), errors="coerce")
+        if numeric.notna().sum() < 10:
+            continue
+        corr = numeric.corr(graded_frame["home_run_flag"], method="spearman")
+        if pd.isna(corr):
+            continue
+        if corr >= 0.15:
+            suggestions.append(f"{signal}: strong positive signal (rho {corr:.2f}) → consider modest boost")
+        elif corr <= -0.15:
+            suggestions.append(f"{signal}: negative signal (rho {corr:.2f}) → consider down-weight")
+    if suggestions:
+        for line in suggestions:
+            st.caption(line)
+    else:
+        st.caption("No strong signal shifts detected yet. Keep monitoring as sample size grows.")
 
 
 def _render_pitcher_view(base_frame: pd.DataFrame, line_frame: pd.DataFrame, score_column: str, filters: dict[str, object]) -> None:
@@ -736,6 +853,10 @@ def render_backtesting_tab(config: AppConfig) -> None:
         st.error("DATABASE_URL is required for Backtesting because this page reads tracked model, outcome, and odds history from Cockroach.")
         return
 
+    if not _require_backtest_password():
+        return
+
+    _render_backtest_reset_controls(config)
     filters = _filters()
     if filters["start_date"] > filters["end_date"]:
         st.error("Start date must be on or before end date.")
@@ -759,11 +880,15 @@ def render_backtesting_tab(config: AppConfig) -> None:
     odds_history = _prepare_odds_history(odds)
 
     if str(filters["entity"]) == "Hitters":
-        frame = _merge_hitter_prices(_add_slate_ranks(_prepare_hitter_frame(snapshots, outcomes), str(filters["score_choice"])), odds_history)
+        score_choice = str(filters["score_choice"])
+        frame = _merge_hitter_prices(_add_slate_ranks(_prepare_hitter_frame(snapshots, outcomes), score_choice), odds_history)
         if frame.empty:
             st.info("No hitter rows matched the selected filters.")
             return
-        _render_hitter_view(frame, str(filters["score_choice"]), filters)
+        if score_choice not in frame.columns:
+            st.warning(f"{score_choice} is not available in the loaded snapshots. Falling back to matchup_score.")
+            score_choice = "matchup_score"
+        _render_hitter_view(frame, score_choice, filters)
         return
 
     base_frame = _add_slate_ranks(_prepare_pitcher_frame(snapshots, outcomes), str(filters["score_choice"]))
