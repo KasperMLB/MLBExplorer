@@ -1316,10 +1316,11 @@ def _draw_side_by_side_tables(
 REPORT_BG = "#0f1222"
 REPORT_PANEL = "#151b33"
 REPORT_PANEL_ALT = "#1a2440"
-REPORT_BORDER = "#2d3655"
+REPORT_BORDER = "#cf6bf3"
 REPORT_TEXT = "#F7F8FF"
 REPORT_MUTED = "#D6DDF7"
 REPORT_ACCENT = "#9d91fb"
+REPORT_TEXT_DARK = "#111111"
 EXPORT_BG_STOPS = ("#0f1222", "#151b33", "#1a2440")
 GRAFFITI_BG = REPORT_BG
 GRAFFITI_PANEL = REPORT_PANEL
@@ -1589,7 +1590,7 @@ def _draw_report_summary_cards(
 ) -> int:
     panel_height = _report_summary_height(frame)
     _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
-    _text(draw, (left + 18, top + 14), title, title_font, REPORT_TEXT)
+    _text(draw, (left + 18, top + 14), title, title_font, REPORT_BORDER)
     if frame.empty:
         _text(draw, (left + 18, top + 50), "No summary available", body_font, REPORT_MUTED)
         return top + panel_height
@@ -1633,7 +1634,7 @@ def _draw_dark_table(
     if frame.empty:
         panel_height = 92 if subtitle else 76
         _panel(draw, (left, top, left + width, top + panel_height))
-        _text(draw, (left + 16, top + 16), title, font, REPORT_TEXT)
+        _text(draw, (left + 16, top + 16), title, font, REPORT_BORDER)
         if subtitle:
             _text(draw, (left + 16, top + 42), subtitle, small_font, REPORT_MUTED)
             _text(draw, (left + 16, top + 62), "No data available", small_font, REPORT_MUTED)
@@ -1648,7 +1649,7 @@ def _draw_dark_table(
     title_block_height = 64 if subtitle else 46
     panel_height = title_block_height + _report_table_height(frame, row_height=row_height, header_height=header_height)
     _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
-    _text(draw, (left + 16, top + 14), title, font, REPORT_TEXT)
+    _text(draw, (left + 16, top + 14), title, font, REPORT_BORDER)
     if subtitle:
         _text(draw, (left + 16, top + 40), subtitle, small_font, REPORT_MUTED)
 
@@ -1670,10 +1671,11 @@ def _draw_dark_table(
         extra = (width - 24 - total_width) // max(len(col_widths), 1)
         col_widths = [size + extra for size in col_widths]
 
+    identity_columns = set(_identity_columns_for_section(frame, title))
     x = left + 12
     for idx, header in enumerate(headers):
         draw.rounded_rectangle((x, y, x + col_widths[idx], y + header_height), radius=8, fill="#dce6f2")
-        _text(draw, (x + padding_x, y + 7), header, small_font, REPORT_TEXT)
+        _text(draw, (x + padding_x, y + 7), header, small_font, REPORT_TEXT_DARK)
         x += col_widths[idx]
 
     for row_idx, row in enumerate(formatted_rows, start=1):
@@ -1692,7 +1694,8 @@ def _draw_dark_table(
                     higher_is_better=higher_is_better or HIGHER_IS_BETTER,
                 ) or fill
             draw.rounded_rectangle((x, current_y, x + col_widths[col_idx], current_y + row_height - 2), radius=6, fill=fill)
-            _text(draw, (x + padding_x, current_y + padding_y), value, small_font, REPORT_TEXT)
+            text_color = REPORT_TEXT_DARK if source_column in identity_columns else REPORT_TEXT
+            _text(draw, (x + padding_x, current_y + padding_y), value, small_font, text_color)
             x += col_widths[col_idx]
     return top + panel_height
 
@@ -1703,8 +1706,8 @@ def _identity_columns_for_section(frame: pd.DataFrame, title: str) -> list[str]:
         columns = ["hitter_name", "team"]
     elif "arsenal" in lowered or "count usage" in lowered:
         columns = ["pitch_name"]
-    elif "summary" in lowered:
-        columns = ["pitcher_name", "p_throws"]
+    elif "summary" in lowered or "pitcher" in lowered:
+        columns = ["pitcher_name", "team", "p_throws"]
     else:
         columns = [frame.columns[0]] if len(frame.columns) else []
     return [column for column in columns if column in frame.columns]
@@ -1742,7 +1745,7 @@ def _draw_scouting_rows_section(
     if frame.empty:
         panel_height = 82
         _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
-        _text(draw, (left + 16, top + 14), title, font, REPORT_TEXT)
+        _text(draw, (left + 16, top + 14), title, font, REPORT_BORDER)
         _text(draw, (left + 16, top + 48), "No data available", small_font, REPORT_TEXT)
         return top + panel_height
 
@@ -1751,7 +1754,7 @@ def _draw_scouting_rows_section(
     row_height = 52
     panel_height = 54 + len(frame) * (row_height + 10) + 12
     _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
-    _text(draw, (left + 16, top + 14), title, font, REPORT_TEXT)
+    _text(draw, (left + 16, top + 14), title, font, REPORT_BORDER)
 
     y = top + 52
     identity_width = max(170, min(290, int(width * 0.27)))
@@ -1770,9 +1773,9 @@ def _draw_scouting_rows_section(
             for column in identity_columns[1:]
             if str(_format_value(column, row.get(column), export_mode=True)).strip() != "-"
         ]
-        _text(draw, (left + 26, row_top + 10), primary, small_font, REPORT_TEXT)
+        _text(draw, (left + 26, row_top + 10), primary, small_font, REPORT_TEXT_DARK)
         if secondary_parts:
-            _text(draw, (left + 26, row_top + 28), " | ".join(secondary_parts), small_font, REPORT_TEXT)
+            _text(draw, (left + 26, row_top + 28), " | ".join(secondary_parts), small_font, REPORT_TEXT_DARK)
 
         for idx, column in enumerate(metric_columns):
             chip_x = chip_area_left + idx * (chip_width + chip_gap)
@@ -1828,7 +1831,7 @@ def _draw_top_matchups_game_section(
     if frame.empty:
         panel_height = 106 if subtitle else 80
     _panel(draw, (left, top, left + width, top + panel_height), fill=REPORT_PANEL)
-    _text(draw, (left + 18, top + 14), title, title_font, REPORT_TEXT)
+    _text(draw, (left + 18, top + 14), title, title_font, REPORT_BORDER)
     if subtitle:
         _text(draw, (left + 18, top + 50), subtitle, subtitle_font, REPORT_MUTED)
     if frame.empty:
@@ -1855,8 +1858,8 @@ def _draw_top_matchups_game_section(
         _panel(draw, (left + 12, row_top, left + width - 12, row_bottom), fill="#fbfcfe", radius=14)
         primary = _format_value("hitter_name", row.get("hitter_name"), export_mode=True)
         team_value = _format_value("team", row.get("team"), export_mode=True)
-        _text(draw, (left + 24, row_top + 6), primary, hitter_font, REPORT_TEXT)
-        _text(draw, (left + 24, row_top + 40), team_value, team_font, REPORT_MUTED)
+        _text(draw, (left + 24, row_top + 6), primary, hitter_font, REPORT_TEXT_DARK)
+        _text(draw, (left + 24, row_top + 40), team_value, team_font, REPORT_TEXT_DARK)
 
         for idx, column in enumerate(metric_columns):
             if column not in frame.columns:
@@ -1994,10 +1997,11 @@ def _draw_top_slate_table_section(
         extra = (width - 28 - total_width) // max(len(col_widths), 1)
         col_widths = [size + extra for size in col_widths]
 
+    identity_columns = set(_identity_columns_for_section(frame, title))
     x = left + 14
     for idx, header in enumerate(headers):
         draw.rounded_rectangle((x, y, x + col_widths[idx], y + header_height), radius=10, fill="#dbe6f3")
-        _text(draw, (x + padding_x, y + 9), header, header_font, REPORT_TEXT)
+        _text(draw, (x + padding_x, y + 9), header, header_font, REPORT_TEXT_DARK)
         x += col_widths[idx]
 
     for row_idx, row in enumerate(formatted_rows, start=1):
@@ -2016,7 +2020,8 @@ def _draw_top_slate_table_section(
                     higher_is_better=section.get("higher_is_better") or HIGHER_IS_BETTER,
                 ) or fill
             draw.rounded_rectangle((x, current_y, x + col_widths[col_idx], current_y + row_height - 3), radius=8, fill=fill)
-            _text(draw, (x + padding_x, current_y + padding_y), value, cell_font, REPORT_TEXT)
+            text_color = REPORT_TEXT_DARK if source_column in identity_columns else REPORT_TEXT
+            _text(draw, (x + padding_x, current_y + padding_y), value, cell_font, text_color)
             x += col_widths[col_idx]
     return top + panel_height
 
@@ -2185,7 +2190,7 @@ def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict])
         team_sections = arsenal_by_team.get(team, [])
         if not team_sections:
             continue
-        _text(draw, (24, y), f"{team} Pitcher", title_font, REPORT_TEXT)
+        _text(draw, (24, y), f"{team} Pitcher", title_font, REPORT_BORDER)
         y += 42
         vs_rhh, vs_lhh = _split_sections_by_hand(team_sections)
         y = _draw_report_two_column_sections(draw, y, width, vs_rhh[:1], vs_lhh[:1], section_font, small_font) + 12
@@ -2193,7 +2198,7 @@ def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict])
     if len(hitter_sections) >= 2:
         for section in hitter_sections[:2]:
             frame = _filter_section_columns(section["frame"], ["hitter_name", "matchup_score", "xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "avg_launch_angle"])
-            _text(draw, (24, y), section["title"], title_font, REPORT_TEXT)
+            _text(draw, (24, y), section["title"], title_font, REPORT_BORDER)
             y += 42
             y = _draw_export_section(
                 draw,
@@ -2278,7 +2283,7 @@ def _draw_section(
     small_font = _load_font(13)
     panel_height = 46 + _report_table_height(frame, row_height=row_height, header_height=26)
     _panel(draw, (left + 8, top, left + width - 8, top + panel_height), fill=REPORT_PANEL)
-    _text(draw, (left + 22, top + 14), title, font, REPORT_TEXT)
+    _text(draw, (left + 22, top + 14), title, font, REPORT_BORDER)
     y = top + 46
 
     display_frame = _display_frame(frame).copy()
@@ -2304,10 +2309,11 @@ def _draw_section(
         extra = (usable_width - total_width) // max(len(col_widths), 1)
         col_widths = [size + extra for size in col_widths]
 
+    identity_columns = set(_identity_columns_for_section(frame, title))
     x = left + 16
     for idx, header in enumerate(headers):
         draw.rounded_rectangle((x, y, x + col_widths[idx], y + row_height), radius=8, fill="#dce6f2")
-        _text(draw, (x + padding_x, y + padding_y), header, small_font, REPORT_TEXT)
+        _text(draw, (x + padding_x, y + padding_y), header, small_font, REPORT_TEXT_DARK)
         x += col_widths[idx]
 
     for row_idx, row in enumerate(formatted_rows, start=1):
@@ -2326,7 +2332,8 @@ def _draw_section(
                     higher_is_better=higher_is_better or HIGHER_IS_BETTER,
                 ) or fill
             draw.rounded_rectangle((x, current_y, x + col_widths[col_idx], current_y + row_height - 2), radius=6, fill=fill)
-            _text(draw, (x + padding_x, current_y + padding_y), value, small_font, REPORT_TEXT)
+            text_color = REPORT_TEXT_DARK if source_column in identity_columns else REPORT_TEXT
+            _text(draw, (x + padding_x, current_y + padding_y), value, small_font, text_color)
             x += col_widths[col_idx]
 
     return top + panel_height + 12
