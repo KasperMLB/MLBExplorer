@@ -303,5 +303,7 @@ def load_remote_parquet(base_path: str, filename: str, columns: list[str] | None
             pass
     try:
         return pd.read_parquet(path, columns=requested or None)
-    except TypeError:
-        return pd.read_parquet(path)
+    except Exception:
+        if requested:
+            return pd.read_parquet(path)
+        raise
