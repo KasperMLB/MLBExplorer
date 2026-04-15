@@ -978,6 +978,10 @@ def _selector_card_html(content_html: str, *, active: bool) -> str:
     return f"<div class='game-logo-card{active_class}'>{content_html}</div>"
 
 
+def _set_logo_game_selection(state_key: str, selection_key: str) -> None:
+    st.session_state[state_key] = selection_key
+
+
 def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[str, list[dict]]:
     if not slate:
         return "Slate Summary", []
@@ -1071,8 +1075,13 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
                     )
                 else:
                     st.markdown(card_html, unsafe_allow_html=True)
-                if st.button("Selected" if active else button_label, key=f"{key_prefix}-card-{selection_key}", use_container_width=True):
-                    st.session_state[state_key] = selection_key
+                st.button(
+                    "Selected" if active else button_label,
+                    key=f"{key_prefix}-card-{selection_key}",
+                    use_container_width=True,
+                    on_click=_set_logo_game_selection,
+                    args=(state_key, selection_key),
+                )
 
     return resolve_logo_game_selection(slate, st.session_state.get(state_key))
 
