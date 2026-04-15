@@ -379,14 +379,16 @@ def _hr_form_heatmap_hex(pct: object) -> str | None:
     if pd.isna(numeric):
         return None
     value = max(0.05, min(0.95, float(numeric)))
-    cold = "#c94b4b"
+    deep_cold = "#c94b4b"
+    cold = "#df8177"
     neutral = "#a8b0ad"
+    warm = "#8ec39e"
     hot = "#2f8f4e"
     if value < 0.40:
-        return _blend_color(cold, neutral, max(0.0, min(1.0, (value - 0.05) / 0.35)))
+        return _blend_color(deep_cold, cold, max(0.0, min(1.0, (value - 0.05) / 0.35)))
     if value <= 0.60:
         return neutral
-    return _blend_color(neutral, hot, max(0.0, min(1.0, (value - 0.60) / 0.35)))
+    return _blend_color(warm, hot, max(0.0, min(1.0, (value - 0.60) / 0.35)))
 
 
 def _two_sided_target_ratio(value: float, low: float, ideal: float, high: float) -> float:
