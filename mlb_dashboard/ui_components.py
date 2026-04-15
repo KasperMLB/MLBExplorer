@@ -982,6 +982,19 @@ def _set_logo_game_selection(state_key: str, selection_key: str) -> None:
     st.session_state[state_key] = selection_key
 
 
+def _is_mobile_request() -> bool:
+    try:
+        context = getattr(st, "context", None)
+        headers = getattr(context, "headers", None)
+        if headers is None:
+            return False
+        user_agent = headers.get("User-Agent", "") or headers.get("user-agent", "")
+        agent = str(user_agent).lower()
+        return any(token in agent for token in ("iphone", "android", "ipad", "mobile", "blackberry", "opera mini", "windows phone"))
+    except Exception:
+        return False
+
+
 def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[str, list[dict]]:
     if not slate:
         return "Slate Summary", []
@@ -991,6 +1004,8 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
     if state_key not in st.session_state or st.session_state[state_key] not in {SLATE_SUMMARY_SELECTION, *valid_keys}:
         st.session_state[state_key] = valid_keys[0] if valid_keys else SLATE_SUMMARY_SELECTION
 
+    mobile_layout = _is_mobile_request()
+    column_width = "50%" if mobile_layout else "12.5%"
     st.markdown(
         """
         <style>
@@ -1010,8 +1025,8 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             gap: 8px;
         }
         div[data-testid="stHorizontalBlock"]:has(.game-logo-card) > div[data-testid="column"] {
-            flex: 0 0 calc(12.5% - 8px) !important;
-            width: calc(12.5% - 8px) !important;
+            flex: 0 0 calc(__COLUMN_WIDTH__ - 8px) !important;
+            width: calc(__COLUMN_WIDTH__ - 8px) !important;
             min-width: 0 !important;
         }
         .game-logo-card {
@@ -1133,7 +1148,7 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             }
         }
         </style>
-        """.replace("__GAME_SELECTOR_KEY__", key_prefix),
+        """.replace("__GAME_SELECTOR_KEY__", key_prefix).replace("__COLUMN_WIDTH__", column_width),
         unsafe_allow_html=True,
     )
     st.markdown("<div class='game-logo-selector-label'>Game</div>", unsafe_allow_html=True)
@@ -1161,7 +1176,7 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             )
         )
 
-    per_row = 8
+    per_row = 2 if mobile_layout else 8
     for start in range(0, len(cards), per_row):
         columns = st.columns(min(per_row, len(cards) - start))
         for column, (selection_key, card_html, button_label) in zip(columns, cards[start : start + per_row]):
