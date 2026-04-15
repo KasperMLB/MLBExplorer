@@ -1075,7 +1075,7 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
     cards: list[str] = []
     summary_active = selected == SLATE_SUMMARY_SELECTION
     cards.append(
-        "<a class='game-logo-card summary-card{active}' href='{href}'>"
+        "<a class='game-logo-card summary-card{active}' href='{href}' target='_self'>"
         "<span>Slate Summary</span><span class='game-logo-card-status'>{status}</span></a>".format(
             active=" is-active" if summary_active else "",
             href=_href(SLATE_SUMMARY_SELECTION),
@@ -1086,7 +1086,7 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
         game_key = str(game.get("game_pk"))
         active = selected == game_key
         cards.append(
-            "<a class='game-logo-card{active}' href='{href}'>{logos}"
+            "<a class='game-logo-card{active}' href='{href}' target='_self'>{logos}"
             "<span class='game-logo-card-status'>{status}</span></a>".format(
                 active=" is-active" if active else "",
                 href=_href(game_key),
