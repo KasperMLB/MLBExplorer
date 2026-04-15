@@ -115,6 +115,8 @@ TARGET_COLUMNS = {"avg_launch_angle": (20.0, 27.5, 35.0)}
 HITTER_CONFIDENCE_COLOR_COLUMN = "__hitter_confidence_color"
 HITTER_CONFIDENCE_LABEL_COLUMN = "__hitter_confidence_label"
 HITTER_CONFIDENCE_HELPER_COLUMNS = {HITTER_CONFIDENCE_COLOR_COLUMN, HITTER_CONFIDENCE_LABEL_COLUMN}
+HR_FORM_PCT_COLUMN = "hr_form_pct"
+HR_FORM_HELPER_COLUMNS = {HR_FORM_PCT_COLUMN}
 HITTER_CONFIDENCE_COLORS = {
     "High": "#166534",
     "Medium": "#1f2937",
@@ -173,6 +175,8 @@ DISPLAY_LABELS = {
     "test_score": "Test Score",
     "ceiling_score": "Ceiling",
     "zone_fit_score": "Zone Fit",
+    "hr_form": "HR Form",
+    "hr_form_pct": "HR Form%",
     "pitcher_score": "Pitch Score",
     "strikeout_score": "Strikeout Score",
     "raw_pitcher_score": "Raw Pitch Score",
@@ -370,6 +374,21 @@ def _zone_heatmap_hex(ratio: float) -> str:
     return _blend_color(mid, hot, (curved - 0.5) / 0.5)
 
 
+def _hr_form_heatmap_hex(pct: object) -> str | None:
+    numeric = pd.to_numeric(pd.Series([pct]), errors="coerce").iloc[0]
+    if pd.isna(numeric):
+        return None
+    value = max(0.05, min(0.95, float(numeric)))
+    cold = "#c94b4b"
+    neutral = "#a8b0ad"
+    hot = "#2f8f4e"
+    if value < 0.40:
+        return _blend_color(cold, neutral, max(0.0, min(1.0, (value - 0.05) / 0.35)))
+    if value <= 0.60:
+        return neutral
+    return _blend_color(neutral, hot, max(0.0, min(1.0, (value - 0.60) / 0.35)))
+
+
 def _two_sided_target_ratio(value: float, low: float, ideal: float, high: float) -> float:
     if value <= ideal:
         return 1.0 - min(1.0, max(0.0, (ideal - value) / max(ideal - low, 1e-9)))
@@ -461,7 +480,7 @@ def _build_lightweight_grid_payload(
     hidden_columns: tuple[str, ...] = (),
     color_hitter_confidence: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    hidden = set(hidden_columns) | HITTER_CONFIDENCE_HELPER_COLUMNS
+    hidden = set(hidden_columns) | HITTER_CONFIDENCE_HELPER_COLUMNS | HR_FORM_HELPER_COLUMNS
     work = _add_hitter_confidence_payload(frame, color_hitter_confidence)
     visible_columns = _visible_grid_columns(work, hidden)
     display_frame = pd.DataFrame(index=work.index)
@@ -473,7 +492,12 @@ def _build_lightweight_grid_payload(
     for column in visible_columns:
         display_column = DISPLAY_LABELS.get(column, column)
         display_frame[display_column] = [_format_value(column, value) for value in work[column]]
-        if column in PERCENT_COLUMNS or column in RATE_COLUMNS:
+        if column == "hr_form" and HR_FORM_PCT_COLUMN in work.columns:
+            styles[display_column] = [
+                f"background-color: {background}; color: #1f1f1f" if background else ""
+                for background in [_hr_form_heatmap_hex(value) for value in work[HR_FORM_PCT_COLUMN]]
+            ]
+        elif column in PERCENT_COLUMNS or column in RATE_COLUMNS:
             column_styles: list[str] = []
             for value in work[column]:
                 background = _background_hex(
@@ -680,6 +704,11 @@ def _prepare_grid_frame(
                 ) or ""
                 for value in frame[column]
             ]
+    if "hr_form" in prepared.columns and HR_FORM_PCT_COLUMN in prepared.columns:
+        prepared["__style_hr_form"] = [
+            _hr_form_heatmap_hex(value) or ""
+            for value in prepared[HR_FORM_PCT_COLUMN]
+        ]
     return prepared
 
 
@@ -745,7 +774,9 @@ def _build_react_table_payload(
         for column in frame.columns:
             value = row[column]
             background = None
-            if column in PERCENT_COLUMNS or column in RATE_COLUMNS:
+            if column == "hr_form" and HR_FORM_PCT_COLUMN in frame.columns:
+                background = _hr_form_heatmap_hex(row.get(HR_FORM_PCT_COLUMN))
+            elif column in PERCENT_COLUMNS or column in RATE_COLUMNS:
                 background = _background_hex(
                     column,
                     value,
@@ -778,7 +809,7 @@ def render_metric_grid(
     if frame.empty:
         st.info("No data available for this selection.")
         return frame
-    hidden = set(hidden_columns or set()) | HITTER_CONFIDENCE_HELPER_COLUMNS
+    hidden = set(hidden_columns or set()) | HITTER_CONFIDENCE_HELPER_COLUMNS | HR_FORM_HELPER_COLUMNS
     visible_columns = _visible_grid_columns(frame, hidden)
     if use_lightweight or not HAS_AGGRID:
         display_frame, styles = _build_lightweight_grid_payload(
@@ -886,7 +917,7 @@ def render_metric_grid(
         builder.configure_column(
             column,
             header_name=header_name,
-            cellStyle=cell_style if column in PERCENT_COLUMNS or column in RATE_COLUMNS or column == "hitter_name" else None,
+            cellStyle=cell_style if column in PERCENT_COLUMNS or column in RATE_COLUMNS or column in {"hitter_name", "hr_form"} else None,
             valueFormatter=formatter,
             width=width,
             minWidth=min_width,

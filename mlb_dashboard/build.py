@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import uuid
 import warnings
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 from .config import AppConfig, DEFAULT_PITCH_GROUPS, DEFAULT_RECENT_WINDOWS, DEFAULT_SPLITS, ensure_directories
-from .dashboard_views import add_hitter_matchup_score, add_pitcher_rank_score, apply_projected_lineup, build_pitcher_matchup_key
+from .dashboard_views import add_hitter_matchup_score, add_pitcher_rank_score, apply_projected_lineup, build_pitcher_matchup_key, launch_angle_score
 from .local_store import (
     SourcePayload,
     load_local_source_payload,
@@ -546,6 +547,96 @@ def _aggregate_hitter_metrics(frame: pd.DataFrame, weighted_mode: str, year_weig
             }
         )
     return pd.DataFrame(rows)
+
+
+def _normal_cdf(value: float) -> float:
+    return 0.5 * (1.0 + math.erf(value / math.sqrt(2.0)))
+
+
+def _build_hitter_hr_form(raw_statcast: pd.DataFrame) -> pd.DataFrame:
+    columns = ["batter", "hr_form", "hr_form_pct"]
+    required = {"batter", "game_date", "game_pk", "is_tracked_bbe", "launch_speed", "launch_angle"}
+    if raw_statcast.empty or not required.issubset(raw_statcast.columns):
+        return pd.DataFrame(columns=columns)
+
+    work = raw_statcast.copy()
+    work["game_date"] = pd.to_datetime(work["game_date"], errors="coerce")
+    work["batter"] = pd.to_numeric(work["batter"], errors="coerce")
+    max_year = pd.to_numeric(work.get("game_year", work["game_date"].dt.year), errors="coerce").max()
+    if pd.isna(max_year):
+        return pd.DataFrame(columns=columns)
+
+    tracked = (
+        work["is_tracked_bbe"].fillna(False).astype(bool)
+        & work["game_date"].notna()
+        & work["batter"].notna()
+        & pd.to_numeric(work["launch_speed"], errors="coerce").notna()
+        & pd.to_numeric(work["launch_angle"], errors="coerce").notna()
+        & pd.to_numeric(work.get("game_year", work["game_date"].dt.year), errors="coerce").eq(int(max_year))
+    )
+    work = work.loc[tracked, ["batter", "game_date", "game_pk", "launch_speed", "launch_angle"]].copy()
+    if work.empty:
+        return pd.DataFrame(columns=columns)
+
+    work["batter"] = work["batter"].astype(int)
+    work["launch_speed"] = pd.to_numeric(work["launch_speed"], errors="coerce")
+    work["launch_angle"] = pd.to_numeric(work["launch_angle"], errors="coerce")
+    game_rows = (
+        work.groupby(["batter", "game_date", "game_pk"], as_index=False)
+        .agg(
+            ev90=("launch_speed", lambda series: float(pd.to_numeric(series, errors="coerce").quantile(0.9))),
+            avg_launch_angle=("launch_angle", "mean"),
+        )
+        .sort_values(["batter", "game_date", "game_pk"])
+    )
+    if game_rows.empty:
+        return pd.DataFrame(columns=columns)
+
+    rows: list[dict[str, object]] = []
+    for batter, group in game_rows.groupby("batter", sort=False):
+        group = group.copy()
+        ev90 = pd.to_numeric(group["ev90"], errors="coerce")
+        ev_min = ev90.min()
+        ev_max = ev90.max()
+        if pd.isna(ev_min) or pd.isna(ev_max):
+            continue
+        if abs(float(ev_max) - float(ev_min)) < 1e-9:
+            group["ev90_score"] = 0.5
+        else:
+            group["ev90_score"] = ((ev90 - ev_min) / (ev_max - ev_min)).clip(0.0, 1.0)
+        group["la_shape"] = launch_angle_score(group["avg_launch_angle"], low=12.0, ideal=22.0, high=32.0)
+        group["hr_form_composite"] = (group["ev90_score"] * 0.60) + (group["la_shape"] * 0.40)
+        composites = pd.to_numeric(group["hr_form_composite"], errors="coerce").dropna()
+        if composites.shape[0] < 5:
+            rows.append({"batter": int(batter), "hr_form": pd.NA, "hr_form_pct": pd.NA})
+            continue
+        baseline = float(composites.mean())
+        baseline_std = float(composites.std(ddof=0))
+        window_values: dict[int, float] = {}
+        for window in (5, 10, 15):
+            recent = group.tail(window)
+            recent_composite = pd.to_numeric(recent["hr_form_composite"], errors="coerce").dropna()
+            if recent_composite.shape[0] >= min(window, 5):
+                window_values[window] = float(recent_composite.mean())
+        if 5 not in window_values:
+            rows.append({"batter": int(batter), "hr_form": pd.NA, "hr_form_pct": pd.NA})
+            continue
+        rolling_composite = float(pd.Series(window_values).mean())
+        if baseline_std <= 1e-9:
+            pct = 0.50
+        else:
+            z_score = (rolling_composite - baseline) / baseline_std
+            pct = min(max(_normal_cdf(z_score), 0.05), 0.95)
+        arrow = "→"
+        if 15 in window_values:
+            diff = window_values[5] - window_values[15]
+            if diff > 0.01:
+                arrow = "↑"
+            elif diff < -0.01:
+                arrow = "↓"
+        rows.append({"batter": int(batter), "hr_form": f"{pct:.0%} {arrow}", "hr_form_pct": float(pct)})
+
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _aggregate_zone_profiles(frame: pd.DataFrame, zone_year_weights: dict[int, float]) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -1371,6 +1462,7 @@ def build_metric_tables(raw_statcast: pd.DataFrame, config: AppConfig) -> tuple[
         starter_scores["batter"] = pd.to_numeric(starter_scores["batter"], errors="coerce")
         starter_scores = starter_scores.loc[starter_scores["batter"].notna()].copy()
         starter_scores["batter"] = starter_scores["batter"].astype(int)
+    hr_form = _build_hitter_hr_form(raw_statcast)
     for recent_window in DEFAULT_RECENT_WINDOWS:
         recent_cutoff = _window_cutoff(max_date, recent_window)
         window_frame = raw_statcast.loc[raw_statcast["game_date"] >= recent_cutoff]
@@ -1412,6 +1504,12 @@ def build_metric_tables(raw_statcast: pd.DataFrame, config: AppConfig) -> tuple[
                     )
                 )
     hitter_metrics = pd.concat(hitters, ignore_index=True)
+    if not hitter_metrics.empty:
+        if hr_form.empty:
+            hitter_metrics["hr_form"] = pd.NA
+            hitter_metrics["hr_form_pct"] = pd.NA
+        else:
+            hitter_metrics = hitter_metrics.merge(hr_form, on="batter", how="left")
     if raw_statcast["batter"].notna().any() and hitter_metrics.empty:
         raise RuntimeError("Hitter metrics build produced zero rows despite non-empty batter data. Aborting build to avoid publishing empty hitter artifacts.")
     return (
@@ -1528,6 +1626,8 @@ def _build_top_slate_hitter_board(snapshots: pd.DataFrame) -> pd.DataFrame:
         "test_score",
         "ceiling_score",
         "zone_fit_score",
+        "hr_form",
+        "hr_form_pct",
         "pitch_count",
         "bip",
         "xwoba",
@@ -1914,6 +2014,8 @@ def _build_hitter_tracking_snapshots(
                                     "test_score",
                                     "ceiling_score",
                                     "zone_fit_score",
+                                    "hr_form",
+                                    "hr_form_pct",
                                     "likely_starter_score",
                                     "xwoba",
                                     "xwoba_con",

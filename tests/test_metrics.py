@@ -1,8 +1,8 @@
 import pandas as pd
 
 from mlb_dashboard.config import AppConfig, DEFAULT_RECENT_WINDOWS, DEFAULT_SPLITS
-from mlb_dashboard.build import BuildContext, _save_per_game_files, _save_top_slate_board_files
-from mlb_dashboard.dashboard_views import add_hitter_matchup_score, filter_excluded_pitchers_from_hitter_pool, normalize_series
+from mlb_dashboard.build import BuildContext, _build_hitter_hr_form, _save_per_game_files, _save_top_slate_board_files
+from mlb_dashboard.dashboard_views import BEST_MATCHUP_COLUMNS, HITTER_PRESETS, add_hitter_matchup_score, filter_excluded_pitchers_from_hitter_pool, normalize_series
 from mlb_dashboard.local_app import _game_selection as _local_game_selection
 from mlb_dashboard.local_store import (
     compute_hitter_rolling,
@@ -85,6 +85,117 @@ def test_add_metric_flags_marks_core_metrics():
     assert bool(row["is_fly_ball"])
     assert bool(row["is_hard_hit"])
     assert bool(row["is_swinging_strike"])
+
+
+def test_hitter_hr_form_uses_rolling_composite_against_baseline():
+    rows = []
+    for game_idx in range(1, 16):
+        hot = game_idx > 10
+        rows.append(
+            {
+                "game_date": pd.Timestamp("2026-04-01") + pd.Timedelta(days=game_idx),
+                "game_year": 2026,
+                "game_pk": game_idx,
+                "batter": 10,
+                "pitcher": 20,
+                "player_name": "Pitcher A",
+                "pitch_type": "FF",
+                "pitch_name": "4-Seam Fastball",
+                "stand": "R",
+                "p_throws": "R",
+                "description": "hit_into_play",
+                "events": "field_out",
+                "launch_speed": 108.0 if hot else 90.0,
+                "launch_angle": 22.0 if hot else 0.0,
+                "bb_type": "fly_ball",
+                "estimated_woba_using_speedangle": 0.4,
+                "at_bat_number": game_idx,
+                "pitch_number": 1,
+                "balls": 0,
+                "strikes": 0,
+                "hc_x": 90.0,
+                "release_speed": 95.0,
+                "release_spin_rate": 2300.0,
+            }
+        )
+    form = _build_hitter_hr_form(add_metric_flags(pd.DataFrame(rows)))
+
+    assert form.shape[0] == 1
+    assert form.loc[0, "batter"] == 10
+    assert form.loc[0, "hr_form"].endswith("↑")
+    assert 0.50 < form.loc[0, "hr_form_pct"] <= 0.95
+
+
+def test_hitter_hr_form_sparse_data_returns_blank_display():
+    rows = []
+    for game_idx in range(1, 4):
+        rows.append(
+            {
+                "game_date": pd.Timestamp("2026-04-01") + pd.Timedelta(days=game_idx),
+                "game_year": 2026,
+                "game_pk": game_idx,
+                "batter": 10,
+                "pitcher": 20,
+                "player_name": "Pitcher A",
+                "pitch_type": "FF",
+                "pitch_name": "4-Seam Fastball",
+                "stand": "R",
+                "p_throws": "R",
+                "description": "hit_into_play",
+                "events": "field_out",
+                "launch_speed": 100.0,
+                "launch_angle": 22.0,
+                "bb_type": "fly_ball",
+                "estimated_woba_using_speedangle": 0.4,
+                "at_bat_number": game_idx,
+                "pitch_number": 1,
+                "balls": 0,
+                "strikes": 0,
+                "hc_x": 90.0,
+                "release_speed": 95.0,
+                "release_spin_rate": 2300.0,
+            }
+        )
+    form = _build_hitter_hr_form(add_metric_flags(pd.DataFrame(rows)))
+
+    assert pd.isna(form.loc[0, "hr_form"])
+    assert pd.isna(form.loc[0, "hr_form_pct"])
+
+
+def test_hr_form_does_not_change_hitter_scores():
+    base = pd.DataFrame(
+        [
+            {
+                "hitter_name": "Test Hitter",
+                "team": "AAA",
+                "batter": 10,
+                "stand": "R",
+                "xwoba": 0.400,
+                "swstr_pct": 0.10,
+                "barrel_bbe_pct": 0.15,
+                "barrel_bip_pct": 0.12,
+                "pulled_barrel_pct": 0.10,
+                "sweet_spot_pct": 0.35,
+                "hard_hit_pct": 0.45,
+                "avg_launch_angle": 22.0,
+            }
+        ]
+    )
+    with_form = base.assign(hr_form="72% ↑", hr_form_pct=0.72)
+
+    scored_base = add_hitter_matchup_score(base)
+    scored_with_form = add_hitter_matchup_score(with_form)
+
+    pd.testing.assert_series_equal(scored_base["matchup_score"], scored_with_form["matchup_score"], check_names=False)
+    pd.testing.assert_series_equal(scored_base["test_score"], scored_with_form["test_score"], check_names=False)
+
+
+def test_hr_form_columns_follow_zone_fit_in_hitter_tables():
+    for preset_columns in HITTER_PRESETS.values():
+        assert "zone_fit_score" in preset_columns
+        assert "hr_form" in preset_columns
+        assert preset_columns.index("hr_form") == preset_columns.index("zone_fit_score") + 1
+    assert BEST_MATCHUP_COLUMNS.index("hr_form") == BEST_MATCHUP_COLUMNS.index("zone_fit_score") + 1
 
 
 def test_official_barrel_bands_expand_with_exit_velocity():
@@ -411,6 +522,9 @@ def test_top_slate_board_artifacts_include_all_filter_combinations(tmp_path):
                             "matchup_score": 70.0,
                             "test_score": 68.0,
                             "ceiling_score": 65.0,
+                            "zone_fit_score": 0.62,
+                            "hr_form": "72% ↑",
+                            "hr_form_pct": 0.72,
                             "xwoba": 0.4,
                             "pitch_count": 100,
                             "bip": 40,
@@ -446,5 +560,5 @@ def test_top_slate_board_artifacts_include_all_filter_combinations(tmp_path):
     assert top_pitchers[["split_key", "recent_window", "weighted_mode"]].drop_duplicates().shape[0] == expected_combos
     assert top_hitters["game_pk"].nunique() == 2
     assert top_pitchers["game_pk"].nunique() == 2
-    assert {"game", "hitter_name", "matchup_score", "test_score", "ceiling_score"}.issubset(top_hitters.columns)
+    assert {"game", "hitter_name", "matchup_score", "test_score", "ceiling_score", "hr_form", "hr_form_pct"}.issubset(top_hitters.columns)
     assert {"game", "pitcher_name", "pitcher_score", "strikeout_score"}.issubset(top_pitchers.columns)

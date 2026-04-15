@@ -161,6 +161,9 @@ def _hitter_table_columns(frame: pd.DataFrame, columns: list[str]) -> tuple[list
             if sample_column in frame.columns and sample_column not in present:
                 present.append(sample_column)
                 hidden.add(sample_column)
+    if "hr_form" in present and "hr_form_pct" in frame.columns and "hr_form_pct" not in present:
+        present.append("hr_form_pct")
+        hidden.add("hr_form_pct")
     return present, hidden
 
 

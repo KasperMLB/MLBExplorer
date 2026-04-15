@@ -1026,6 +1026,15 @@ def _matchup_display_columns(frame: pd.DataFrame) -> list[str]:
     return ["game"] if "game" in frame.columns else []
 
 
+def _hitter_table_columns(frame: pd.DataFrame, columns: list[str]) -> tuple[list[str], set[str]]:
+    present = [column for column in columns if column in frame.columns]
+    hidden: set[str] = set()
+    if "hr_form" in present and "hr_form_pct" in frame.columns and "hr_form_pct" not in present:
+        present.append("hr_form_pct")
+        hidden.add("hr_form_pct")
+    return present, hidden
+
+
 def _render_top_board_sections(top_hitters: pd.DataFrame, top_pitchers: pd.DataFrame, hitter_preset: str) -> None:
     st.header("Top Slate Hitters")
     if top_hitters.empty:
@@ -1034,9 +1043,9 @@ def _render_top_board_sections(top_hitters: pd.DataFrame, top_pitchers: pd.DataF
         preset_columns = hitter_columns_for_preset(hitter_preset)
         ranked_hitters = top_hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
         display_hitters = add_matchup_logo_columns(ranked_hitters)
-        top_hitter_columns = _matchup_display_columns(display_hitters) + [
+        top_hitter_columns, top_hitter_hidden = _hitter_table_columns(display_hitters, _matchup_display_columns(display_hitters) + [
             column for column in preset_columns if column in display_hitters.columns and column != "game"
-        ]
+        ])
         render_slate_export_controls(
             "top-matchups-export",
             "Top Slate Export",
@@ -1047,6 +1056,7 @@ def _render_top_board_sections(top_hitters: pd.DataFrame, top_pitchers: pd.DataF
             display_hitters[top_hitter_columns].head(10),
             key="top-slate-hitters",
             height=320,
+            hidden_columns=top_hitter_hidden,
             use_lightweight=True,
         )
 
@@ -1556,10 +1566,12 @@ def main() -> None:
             )
             if active_section == "Matchup":
                 st.markdown("#### Best Matchups")
+                matchup_columns, matchup_hidden = _hitter_table_columns(best_matchups, BEST_MATCHUP_COLUMNS)
                 best_matchups = render_metric_grid(
-                    best_matchups[BEST_MATCHUP_COLUMNS],
+                    best_matchups[matchup_columns],
                     key=f"best-{game['game_pk']}",
                     height=170,
+                    hidden_columns=matchup_hidden,
                     use_lightweight=True,
                 )
 
@@ -1602,18 +1614,22 @@ def main() -> None:
                 hitter_cols = st.columns(2)
                 with hitter_cols[0]:
                     st.markdown(f"{team_logo_img_html(game['away_team'], size=22)} vs {game.get('home_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
+                    away_hitter_columns, away_hitter_hidden = _hitter_table_columns(away_hitters, hitter_columns)
                     away_hitters = render_metric_grid(
-                        away_hitters[[column for column in hitter_columns if column in away_hitters.columns]],
+                        away_hitters[away_hitter_columns],
                         key=f"away-hitters-{game['game_pk']}",
                         height=360,
+                        hidden_columns=away_hitter_hidden,
                         use_lightweight=True,
                     )
                 with hitter_cols[1]:
                     st.markdown(f"{team_logo_img_html(game['home_team'], size=22)} vs {game.get('away_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
+                    home_hitter_columns, home_hitter_hidden = _hitter_table_columns(home_hitters, hitter_columns)
                     home_hitters = render_metric_grid(
-                        home_hitters[[column for column in hitter_columns if column in home_hitters.columns]],
+                        home_hitters[home_hitter_columns],
                         key=f"home-hitters-{game['game_pk']}",
                         height=360,
+                        hidden_columns=home_hitter_hidden,
                         use_lightweight=True,
                     )
 
