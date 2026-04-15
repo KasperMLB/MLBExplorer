@@ -8,8 +8,8 @@ import streamlit as st
 from .branding import apply_branding_head, page_icon_path
 from .components import render_props_board
 from .config import AppConfig
-from .cockroach_loader import read_latest_prop_odds_snapshot, write_props_odds_snapshot
 from .dashboard_views import latest_built_date
+from .local_store import read_latest_prop_odds_snapshot, write_props_odds_snapshot
 from .odds_service import PropsBoardPayload, build_props_board_payload_from_rows, load_live_props_board, odds_config_from_app
 from .query_engine import StatcastQueryEngine
 

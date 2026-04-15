@@ -10,17 +10,17 @@ from pathlib import Path
 
 import pandas as pd
 
-from .cockroach_loader import (
-    CockroachPayload,
-    load_cockroach_payload,
+from .config import AppConfig, DEFAULT_PITCH_GROUPS, DEFAULT_RECENT_WINDOWS, DEFAULT_SPLITS, ensure_directories
+from .dashboard_views import add_hitter_matchup_score, add_pitcher_rank_score, apply_projected_lineup, build_pitcher_matchup_key
+from .local_store import (
+    SourcePayload,
+    load_local_source_payload,
     read_hitter_snapshots_for_date,
     read_pitcher_snapshots_for_date,
     read_source_freshness_report,
     write_props_odds_snapshot,
     write_tracking_payload,
 )
-from .config import AppConfig, DEFAULT_PITCH_GROUPS, DEFAULT_RECENT_WINDOWS, DEFAULT_SPLITS, ensure_directories
-from .dashboard_views import add_hitter_matchup_score, add_pitcher_rank_score, apply_projected_lineup, build_pitcher_matchup_key
 from .mlb_api import fetch_schedule, fetch_team_rosters_for_schedule
 from .metrics import add_metric_flags, apply_year_weights, likely_starter_scores
 from .odds_service import PropsBoardPayload, load_live_props_board
@@ -75,7 +75,7 @@ class BuildContext:
 @dataclass
 class PreparedBuildAssets:
     historical_statcast: pd.DataFrame
-    live_payload: CockroachPayload
+    live_payload: SourcePayload
     raw_statcast: pd.DataFrame
     hitter_pitcher_exclusions: pd.DataFrame
     batter_zone_profiles: pd.DataFrame
@@ -191,6 +191,50 @@ def _write_historical_cache(config: AppConfig, csv_paths: list[str], frame: pd.D
     config.historical_cache_manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
+def _historical_aggregate_manifest_path(config: AppConfig) -> Path:
+    return config.historical_aggregate_dir / "manifest.json"
+
+
+def _historical_aggregate_manifest(config: AppConfig, csv_paths: list[str]) -> dict[str, object]:
+    manifest = _historical_cache_manifest(config, csv_paths)
+    manifest["historical_aggregate_schema_version"] = "selected_game_speed_v1"
+    return manifest
+
+
+def _write_historical_aggregate_cache(config: AppConfig, csv_paths: list[str], historical: pd.DataFrame) -> None:
+    config.historical_aggregate_dir.mkdir(parents=True, exist_ok=True)
+    aggregate_start = datetime.now(UTC)
+    batter_zone_profiles, pitcher_zone_profiles = _aggregate_zone_profiles(historical, config.zone_year_weights)
+    hitter_metrics, pitcher_metrics, pitcher_summary_by_hand, pitcher_arsenal, pitcher_arsenal_by_hand, pitcher_usage_by_count = build_metric_tables(
+        historical,
+        config,
+    )
+    pitcher_family_zone_context, pitcher_movement_arsenal, batter_family_zone_profiles, _ = build_movement_context_tables(
+        historical,
+        config,
+    )
+    outputs = {
+        "hitter_metrics": hitter_metrics,
+        "pitcher_metrics": pitcher_metrics,
+        "pitcher_summary_by_hand": pitcher_summary_by_hand,
+        "pitcher_arsenal": pitcher_arsenal,
+        "pitcher_arsenal_by_hand": pitcher_arsenal_by_hand,
+        "pitcher_usage_by_count": pitcher_usage_by_count,
+        "batter_zone_profiles": batter_zone_profiles,
+        "pitcher_zone_profiles": pitcher_zone_profiles,
+        "batter_family_zone_profiles": batter_family_zone_profiles,
+        "pitcher_family_zone_context": pitcher_family_zone_context,
+        "pitcher_movement_arsenal": pitcher_movement_arsenal,
+    }
+    for name, frame in outputs.items():
+        frame.to_parquet(config.historical_aggregate_dir / f"{name}.parquet", index=False)
+    _historical_aggregate_manifest_path(config).write_text(
+        json.dumps(_historical_aggregate_manifest(config, csv_paths), indent=2),
+        encoding="utf-8",
+    )
+    print(f"[timing] historical_aggregate_cache={(datetime.now(UTC) - aggregate_start).total_seconds():.2f}s")
+
+
 def _load_raw_statcast(csv_paths: list[str]) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     for path in csv_paths:
@@ -206,7 +250,7 @@ def _load_raw_statcast(csv_paths: list[str]) -> pd.DataFrame:
     return add_metric_flags(combined)
 
 
-def _merge_historical_and_live(history: pd.DataFrame, live_payload: CockroachPayload) -> pd.DataFrame:
+def _merge_historical_and_live(history: pd.DataFrame, live_payload: SourcePayload) -> pd.DataFrame:
     if live_payload.live_pitch_mix.empty:
         return history
     historical = history.loc[pd.to_numeric(history["game_year"], errors="coerce").fillna(0) != 2026].copy()
@@ -253,7 +297,7 @@ def prepare_build_assets(
 ) -> PreparedBuildAssets:
     ensure_directories(config)
     historical_statcast = historical_statcast_override if historical_statcast_override is not None else _resolve_historical_statcast(config, csv_dir, force_refresh=force_historical_refresh)
-    live_payload = load_cockroach_payload(config, target_date=target_date)
+    live_payload = load_local_source_payload(config, target_date=target_date)
     raw_statcast = _merge_historical_and_live(historical_statcast, live_payload)
     hitter_pitcher_exclusions = _build_hitter_pitcher_exclusions(raw_statcast)
     batter_zone_profiles, pitcher_zone_profiles = _aggregate_zone_profiles(raw_statcast, config.zone_year_weights)
@@ -262,7 +306,7 @@ def prepare_build_assets(
         config,
     )
     pitcher_family_zone_context, pitcher_movement_arsenal, batter_family_zone_profiles, pitch_context_source = build_movement_context_tables(
-        live_payload,
+        raw_statcast,
         config,
     )
     return PreparedBuildAssets(
@@ -285,7 +329,7 @@ def prepare_build_assets(
     )
 
 
-def _live_source_max_event_date(live_payload: CockroachPayload) -> date | None:
+def _live_source_max_event_date(live_payload: SourcePayload) -> date | None:
     if live_payload.live_pitch_mix.empty or "game_date" not in live_payload.live_pitch_mix.columns:
         return None
     max_date = pd.to_datetime(live_payload.live_pitch_mix["game_date"], errors="coerce").max()
@@ -295,7 +339,7 @@ def _live_source_max_event_date(live_payload: CockroachPayload) -> date | None:
 def _build_live_tracking_health(
     target_date: date,
     schedule: list[dict],
-    live_payload: CockroachPayload,
+    live_payload: SourcePayload,
     source_table: str,
 ) -> pd.DataFrame:
     columns = [
@@ -346,9 +390,7 @@ def _build_live_tracking_health(
     return pd.DataFrame(rows, columns=columns)
 
 
-def _require_fresh_cockroach_sources(config: AppConfig, target_date: date, lookback_days: int) -> None:
-    if not config.database_url:
-        raise RuntimeError("DATABASE_URL must be set when --require-fresh-sources is used.")
+def _require_fresh_local_sources(config: AppConfig, target_date: date, lookback_days: int) -> None:
     report = read_source_freshness_report(
         config,
         target_date=target_date,
@@ -364,7 +406,7 @@ def _require_fresh_cockroach_sources(config: AppConfig, target_date: date, lookb
         for summary in stale_summaries
     )
     raise RuntimeError(
-        "Cockroach event sources are stale for "
+        "Local Statcast event sources are stale for "
         f"{target_date.isoformat()} and the build was stopped by --require-fresh-sources:\n{details}"
     )
 
@@ -866,17 +908,11 @@ def _weighted_mean_from_columns(frame: pd.DataFrame, value_column: str, weight_c
     return value_weight, value_denom
 
 
-def _prepare_weighted_pitch_context_source(live_payload: CockroachPayload, config: AppConfig) -> pd.DataFrame:
-    live = live_payload.live_pitch_mix.copy()
-    baseline = live_payload.pitcher_baseline_event_rows.copy()
-
-    if not baseline.empty:
-        baseline = baseline.loc[pd.to_numeric(baseline.get("game_year"), errors="coerce").fillna(0).astype(int) < 2026].copy()
-    frames = [frame for frame in [live, baseline] if not frame.empty]
-    if not frames:
+def _prepare_weighted_pitch_context_source(raw_statcast: pd.DataFrame, config: AppConfig) -> pd.DataFrame:
+    if raw_statcast.empty:
         return pd.DataFrame()
 
-    combined = pd.concat(frames, ignore_index=True, sort=False)
+    combined = raw_statcast.copy()
     combined["game_year"] = pd.to_numeric(combined.get("game_year", combined.get("source_season")), errors="coerce")
     combined = combined.loc[combined["game_year"].notna()].copy()
     combined["game_year"] = combined["game_year"].astype(int)
@@ -892,8 +928,10 @@ def _prepare_weighted_pitch_context_source(live_payload: CockroachPayload, confi
     combined["weight_2026"] = combined["context_weight"].where(combined["game_year"].eq(2026), 0.0)
     combined["weight_prior"] = combined["context_weight"].where(combined["game_year"].lt(2026), 0.0)
     combined["pitcher_id"] = pd.to_numeric(combined.get("pitcher"), errors="coerce")
+    combined["batter_id"] = pd.to_numeric(combined.get("batter"), errors="coerce")
     combined["pitcher_name"] = combined.get("pitcher_name", combined.get("player_name", pd.Series(index=combined.index, dtype="object")))
     combined["p_throws"] = combined.get("p_throws", combined.get("pitcher_hand", pd.Series(index=combined.index, dtype="object")))
+    combined["pitcher_hand_key"] = combined["p_throws"].fillna("").map({"R": "vs_rhp", "L": "vs_lhp"}).fillna("overall")
     return combined
 
 
@@ -1121,20 +1159,87 @@ def _aggregate_weighted_pitcher_movement_arsenal(frame: pd.DataFrame) -> pd.Data
     ]
 
 
+def _aggregate_weighted_batter_family_zone_profiles(frame: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "batter_id",
+        "pitcher_hand_key",
+        "pitch_family",
+        "zone_bucket",
+        "sample_size",
+        "weighted_sample_size",
+        "sample_2026",
+        "sample_prior",
+        "weight_2026",
+        "weight_prior",
+        "prior_weight_share",
+        "ball_in_play_rate",
+        "hit_rate",
+        "hr_rate",
+        "damage_rate",
+        "avg_launch_speed",
+        "avg_launch_angle",
+        "xwoba",
+    ]
+    work = frame.loc[frame["batter_id"].notna() & frame["pitch_family"].notna() & frame["zone_bucket"].notna()].copy()
+    if work.empty:
+        return pd.DataFrame(columns=columns)
+
+    weights = pd.to_numeric(work["context_weight"], errors="coerce").fillna(0.0)
+    work["weighted_sample_size"] = weights
+    work["ball_in_play_weight"] = work["is_batted_ball"].astype(int) * weights
+    work["hit_weight"] = work["is_hit_event"].astype(int) * weights
+    work["hr_weight"] = work["is_home_run_event"].astype(int) * weights
+    work["damage_weight"] = ((work["is_hit_event"].astype(int) * 0.6) + (work["is_home_run_event"].astype(int) * 0.4)) * weights
+    work["launch_speed_weight"], work["launch_speed_denom"] = _weighted_mean_from_columns(work, "launch_speed")
+    work["launch_angle_weight"], work["launch_angle_denom"] = _weighted_mean_from_columns(work, "launch_angle")
+    work["xwoba_weight"], work["xwoba_denom"] = _weighted_mean_from_columns(work, "estimated_woba_using_speedangle")
+    grouped = (
+        work.groupby(["batter_id", "pitcher_hand_key", "pitch_family", "zone_bucket"], as_index=False)
+        .agg(
+            sample_size=("batter_id", "size"),
+            weighted_sample_size=("weighted_sample_size", "sum"),
+            sample_2026=("sample_2026", "sum"),
+            sample_prior=("sample_prior", "sum"),
+            weight_2026=("weight_2026", "sum"),
+            weight_prior=("weight_prior", "sum"),
+            ball_in_play_weight=("ball_in_play_weight", "sum"),
+            hit_weight=("hit_weight", "sum"),
+            hr_weight=("hr_weight", "sum"),
+            damage_weight=("damage_weight", "sum"),
+            launch_speed_weight=("launch_speed_weight", "sum"),
+            launch_speed_denom=("launch_speed_denom", "sum"),
+            launch_angle_weight=("launch_angle_weight", "sum"),
+            launch_angle_denom=("launch_angle_denom", "sum"),
+            xwoba_weight=("xwoba_weight", "sum"),
+            xwoba_denom=("xwoba_denom", "sum"),
+        )
+    )
+    denom = grouped["weighted_sample_size"].where(grouped["weighted_sample_size"] != 0)
+    grouped["prior_weight_share"] = grouped["weight_prior"] / denom
+    grouped["ball_in_play_rate"] = grouped["ball_in_play_weight"] / denom
+    grouped["hit_rate"] = grouped["hit_weight"] / denom
+    grouped["hr_rate"] = grouped["hr_weight"] / denom
+    grouped["damage_rate"] = grouped["damage_weight"] / denom
+    grouped["avg_launch_speed"] = grouped["launch_speed_weight"] / grouped["launch_speed_denom"].where(grouped["launch_speed_denom"] != 0)
+    grouped["avg_launch_angle"] = grouped["launch_angle_weight"] / grouped["launch_angle_denom"].where(grouped["launch_angle_denom"] != 0)
+    grouped["xwoba"] = grouped["xwoba_weight"] / grouped["xwoba_denom"].where(grouped["xwoba_denom"] != 0)
+    return grouped[columns]
+
+
 def build_movement_context_tables(
-    live_payload: CockroachPayload,
+    raw_statcast: pd.DataFrame,
     config: AppConfig,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    source = _prepare_weighted_pitch_context_source(live_payload, config)
+    source = _prepare_weighted_pitch_context_source(raw_statcast, config)
     pitcher_family_zone_context = _aggregate_weighted_pitcher_family_zone_profiles(source)
     pitcher_movement_arsenal = _aggregate_weighted_pitcher_movement_arsenal(source)
-    batter_family_zone_profiles = live_payload.batter_family_zone_profiles.copy()
+    batter_family_zone_profiles = _aggregate_weighted_batter_family_zone_profiles(source)
     return pitcher_family_zone_context, pitcher_movement_arsenal, batter_family_zone_profiles, source
 
 
 def _pitch_shape_diagnostics(
     schedule: list[dict],
-    live_payload: CockroachPayload,
+    live_payload: SourcePayload,
     source: pd.DataFrame,
     pitcher_family_zone_context: pd.DataFrame,
     pitcher_movement_arsenal: pd.DataFrame,
@@ -1380,10 +1485,129 @@ def _save_daily_files(
         "recent_windows": list(DEFAULT_RECENT_WINDOWS),
         "pitch_groups": DEFAULT_PITCH_GROUPS,
         "movement_year_weights": context.config.movement_year_weights,
-        "live_source_table": context.config.cockroach_live_pitch_mix_table,
+        "live_source_table": str(context.config.statcast_source_dir),
         "live_source_max_event_date": None if tracking_health.empty else pd.to_datetime(tracking_health["source_max_event_date"], errors="coerce").dropna().max().date().isoformat() if pd.to_datetime(tracking_health["source_max_event_date"], errors="coerce").notna().any() else None,
     }
     (target_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+
+def _tag_section(frame: pd.DataFrame, section: str) -> pd.DataFrame:
+    output = frame.copy()
+    output.insert(0, "section", section)
+    return output
+
+
+def _safe_parquet(frame: pd.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(path, index=False)
+
+
+def _save_per_game_files(
+    context: BuildContext,
+    schedule: list[dict],
+    rosters: list[dict],
+    hitter_snapshots: pd.DataFrame,
+    pitcher_snapshots: pd.DataFrame,
+    board_winners: pd.DataFrame,
+    hitter_rolling: pd.DataFrame,
+    pitcher_rolling: pd.DataFrame,
+    pitcher_summary_by_hand: pd.DataFrame,
+    pitcher_arsenal: pd.DataFrame,
+    pitcher_arsenal_by_hand: pd.DataFrame,
+    pitcher_usage_by_count: pd.DataFrame,
+    batter_zone_profiles: pd.DataFrame,
+    pitcher_zone_profiles: pd.DataFrame,
+    batter_family_zone_profiles: pd.DataFrame,
+    pitcher_family_zone_context: pd.DataFrame,
+    pitcher_movement_arsenal: pd.DataFrame,
+) -> None:
+    rosters_frame = pd.DataFrame(rosters) if rosters else pd.DataFrame(columns=["team", "player_id", "player_name"])
+    games_root = context.config.daily_dir / context.target_date.isoformat() / "games"
+    for game in schedule:
+        game_pk = game.get("game_pk")
+        if game_pk is None:
+            continue
+        game_dir = games_root / str(game_pk)
+        teams = {str(game.get("away_team") or ""), str(game.get("home_team") or "")}
+        pitcher_ids = {
+            game.get("away_probable_pitcher_id"),
+            game.get("home_probable_pitcher_id"),
+        }
+        pitcher_ids.discard(None)
+        game_hitters = hitter_snapshots.loc[hitter_snapshots.get("game_pk").eq(game_pk)].copy() if "game_pk" in hitter_snapshots else pd.DataFrame()
+        game_pitchers = pitcher_snapshots.loc[pitcher_snapshots.get("game_pk").eq(game_pk)].copy() if "game_pk" in pitcher_snapshots else pd.DataFrame()
+        game_boards = board_winners.loc[board_winners.get("game_pk").eq(game_pk)].copy() if "game_pk" in board_winners else pd.DataFrame()
+        _safe_parquet(
+            pd.concat(
+                [
+                    _tag_section(game_hitters, "hitters"),
+                    _tag_section(game_pitchers, "pitchers"),
+                    _tag_section(game_boards, "best_matchups"),
+                ],
+                ignore_index=True,
+                sort=False,
+            ),
+            game_dir / "matchup.parquet",
+        )
+
+        hitter_names = set(game_hitters.get("hitter_name", pd.Series(dtype="object")).dropna().astype(str))
+        pitcher_names = set(game_pitchers.get("pitcher_name", pd.Series(dtype="object")).dropna().astype(str))
+        _safe_parquet(
+            pd.concat(
+                [
+                    _tag_section(hitter_rolling.loc[hitter_rolling.get("player_name", pd.Series(dtype="object")).isin(hitter_names)].copy(), "hitter_rolling"),
+                    _tag_section(pitcher_rolling.loc[pitcher_rolling.get("player_name", pd.Series(dtype="object")).isin(pitcher_names)].copy(), "pitcher_rolling"),
+                ],
+                ignore_index=True,
+                sort=False,
+            ),
+            game_dir / "rolling.parquet",
+        )
+
+        _safe_parquet(
+            pd.concat(
+                [
+                    _tag_section(pitcher_summary_by_hand.loc[pitcher_summary_by_hand.get("pitcher_id", pd.Series(dtype="object")).isin(pitcher_ids)].copy(), "summary"),
+                    _tag_section(pitcher_arsenal.loc[pitcher_arsenal.get("pitcher_id", pd.Series(dtype="object")).isin(pitcher_ids)].copy(), "arsenal"),
+                    _tag_section(pitcher_arsenal_by_hand.loc[pitcher_arsenal_by_hand.get("pitcher_id", pd.Series(dtype="object")).isin(pitcher_ids)].copy(), "arsenal_by_hand"),
+                    _tag_section(pitcher_usage_by_count.loc[pitcher_usage_by_count.get("pitcher_id", pd.Series(dtype="object")).isin(pitcher_ids)].copy(), "count_usage"),
+                ],
+                ignore_index=True,
+                sort=False,
+            ),
+            game_dir / "pitcher_detail.parquet",
+        )
+
+        hitter_ids = set(pd.to_numeric(game_hitters.get("batter_id", pd.Series(dtype="object")), errors="coerce").dropna().astype(int))
+        roster_ids = set(pd.to_numeric(rosters_frame.loc[rosters_frame.get("team", pd.Series(dtype="object")).isin(teams), "player_id"], errors="coerce").dropna().astype(int)) if not rosters_frame.empty else set()
+        hitter_ids |= roster_ids
+        batter_join_col = "batter_id" if "batter_id" in batter_zone_profiles.columns else "batter"
+        pitcher_join_col = "pitcher_id" if "pitcher_id" in pitcher_zone_profiles.columns else "pitcher"
+        _safe_parquet(
+            pd.concat(
+                [
+                    _tag_section(batter_zone_profiles.loc[batter_zone_profiles.get(batter_join_col, pd.Series(dtype="object")).isin(hitter_ids)].copy(), "batter_zones"),
+                    _tag_section(pitcher_zone_profiles.loc[pitcher_zone_profiles.get(pitcher_join_col, pd.Series(dtype="object")).isin(pitcher_ids)].copy(), "pitcher_zones"),
+                ],
+                ignore_index=True,
+                sort=False,
+            ),
+            game_dir / "zones.parquet",
+        )
+
+        _safe_parquet(
+            pd.concat(
+                [
+                    _tag_section(batter_family_zone_profiles.loc[batter_family_zone_profiles.get("batter_id", pd.Series(dtype="object")).isin(hitter_ids)].copy(), "batter_family"),
+                    _tag_section(pitcher_family_zone_context.loc[pitcher_family_zone_context.get("pitcher_id", pd.Series(dtype="object")).isin(pitcher_ids)].copy(), "pitcher_family"),
+                    _tag_section(pitcher_movement_arsenal.loc[pitcher_movement_arsenal.get("pitcher_id", pd.Series(dtype="object")).isin(pitcher_ids)].copy(), "pitcher_movement"),
+                ],
+                ignore_index=True,
+                sort=False,
+            ),
+            game_dir / "pitch_shape.parquet",
+        )
+        _safe_parquet(game_boards, game_dir / "exports.parquet")
 
 
 def _write_duckdb(
@@ -2172,6 +2396,8 @@ def run_build(
     capture_odds: bool = True,
 ) -> None:
     ensure_directories(context.config)
+    build_start = datetime.now(UTC)
+    prepare_start = datetime.now(UTC)
     prepared = prepared_assets or prepare_build_assets(
         context.config,
         context.csv_dir,
@@ -2179,7 +2405,9 @@ def run_build(
         force_historical_refresh=force_historical_refresh,
         historical_statcast_override=historical_statcast_override,
     )
+    print(f"[timing] prepare_assets={(datetime.now(UTC) - prepare_start).total_seconds():.2f}s")
     if refresh_reusable_artifacts:
+        reusable_start = datetime.now(UTC)
         _write_duckdb(
             context.config,
             prepared.hitter_metrics,
@@ -2214,6 +2442,8 @@ def run_build(
             prepared.pitcher_movement_arsenal,
             prepared.hitter_pitcher_exclusions,
         )
+        print(f"[timing] reusable_artifacts={(datetime.now(UTC) - reusable_start).total_seconds():.2f}s")
+    daily_context_start = datetime.now(UTC)
     schedule = fetch_schedule(context.target_date)
     rosters = fetch_team_rosters_for_schedule(schedule, context.target_date)
     valid_teams = tuple(sorted({game["away_team"] for game in schedule} | {game["home_team"] for game in schedule}))
@@ -2222,16 +2452,17 @@ def run_build(
         rotowire_lineups = resolve_rotowire_lineups(fetch_rotowire_lineups(context.target_date, valid_teams), rosters_frame)
     except Exception:
         rotowire_lineups = {}
+    print(f"[timing] daily_context={(datetime.now(UTC) - daily_context_start).total_seconds():.2f}s")
     source_max_event_date = _live_source_max_event_date(prepared.live_payload)
     tracking_health = _build_live_tracking_health(
         context.target_date,
         schedule,
         prepared.live_payload,
-        context.config.cockroach_live_pitch_mix_table,
+        str(context.config.statcast_source_dir),
     )
     if source_max_event_date is None or source_max_event_date < context.target_date:
         warnings.warn(
-            f"Live event source {context.config.cockroach_live_pitch_mix_table} is stale for {context.target_date.isoformat()}. "
+            f"Local Statcast source is stale for {context.target_date.isoformat()}. "
             f"Latest available event date is {source_max_event_date.isoformat() if source_max_event_date else 'none'}; "
             "tracked outcomes will be marked incomplete and excluded from backtesting."
         )
@@ -2317,6 +2548,7 @@ def run_build(
             )
             pitcher_outcome_snapshots = pd.DataFrame()
     pitcher_outcomes = _build_pitcher_game_outcomes(outcome_target_date, prepared.raw_statcast, pitcher_outcome_snapshots, source_max_event_date)
+    tracking_start = datetime.now(UTC)
     write_tracking_payload(
         context.config,
         snapshots,
@@ -2328,6 +2560,8 @@ def run_build(
         pitcher_arsenal_snapshots=pitcher_arsenal_snapshots,
         pitcher_count_snapshots=pitcher_count_snapshots,
     )
+    print(f"[timing] tracking_write={(datetime.now(UTC) - tracking_start).total_seconds():.2f}s")
+    daily_write_start = datetime.now(UTC)
     _save_daily_files(
         context,
         schedule,
@@ -2349,6 +2583,29 @@ def run_build(
         pitch_shape_diagnostics,
         tracking_health,
     )
+    print(f"[timing] daily_artifacts={(datetime.now(UTC) - daily_write_start).total_seconds():.2f}s")
+    per_game_start = datetime.now(UTC)
+    _save_per_game_files(
+        context,
+        schedule,
+        rosters,
+        snapshots,
+        pitcher_snapshots,
+        board_winners,
+        prepared.live_payload.hitter_rolling,
+        prepared.live_payload.pitcher_rolling,
+        prepared.pitcher_summary_by_hand,
+        prepared.pitcher_arsenal,
+        prepared.pitcher_arsenal_by_hand,
+        prepared.pitcher_usage_by_count,
+        prepared.batter_zone_profiles,
+        prepared.pitcher_zone_profiles,
+        prepared.batter_family_zone_profiles,
+        prepared.pitcher_family_zone_context,
+        prepared.pitcher_movement_arsenal,
+    )
+    print(f"[timing] per_game_artifacts={(datetime.now(UTC) - per_game_start).total_seconds():.2f}s")
+    print(f"[timing] build_total={(datetime.now(UTC) - build_start).total_seconds():.2f}s")
 
 
 def parse_args() -> argparse.Namespace:
@@ -2366,13 +2623,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--require-fresh-sources",
         action="store_true",
-        help="Fail the build when Cockroach live event sources lag behind the target date.",
+        help="Fail the build when local Statcast event sources lag behind the target date.",
     )
     parser.add_argument(
         "--freshness-lookback-days",
         type=int,
         default=7,
-        help="Recent-day window to inspect when checking Cockroach source freshness.",
+        help="Recent-day window to inspect when checking local Statcast source freshness.",
     )
     return parser.parse_args()
 
@@ -2382,13 +2639,15 @@ def main() -> None:
     config = AppConfig(csv_dir=args.csv_dir, db_path=args.db_path, artifacts_dir=args.artifacts_dir)
     if args.mode == "historical-refresh":
         ensure_directories(config)
+        csv_paths = _historical_csv_paths(args.csv_dir)
         historical = _resolve_historical_statcast(config, args.csv_dir, force_refresh=True)
+        _write_historical_aggregate_cache(config, csv_paths, historical)
         print(
             f"[historical-refresh] rows={len(historical)} cache={config.historical_statcast_cache_path}"
         )
         return
     if args.require_fresh_sources:
-        _require_fresh_cockroach_sources(
+        _require_fresh_local_sources(
             config,
             target_date=args.target_date,
             lookback_days=max(args.freshness_lookback_days, 1),

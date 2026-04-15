@@ -23,7 +23,7 @@ python -m mlb_dashboard.build `
   --target-date 2026-03-27
 ```
 
-To stop a build when Cockroach event sources are stale, add:
+To stop a build when local Statcast event sources are stale, add:
 
 ```powershell
 python -m mlb_dashboard.build `
@@ -34,7 +34,7 @@ python -m mlb_dashboard.build `
   --require-fresh-sources
 ```
 
-## Check Cockroach source freshness
+## Check local Statcast source freshness
 
 ```powershell
 python -m mlb_dashboard.health_check `
@@ -42,9 +42,9 @@ python -m mlb_dashboard.health_check `
   --lookback-days 7
 ```
 
-Use `--strict` to return a non-zero exit code when either tracked Cockroach source is stale.
+Use `--strict` to return a non-zero exit code when the local Statcast source is stale.
 
-## Ingest 2026 live events into Cockroach
+## Ingest 2026 Statcast events into local parquet
 
 ```powershell
 python -m mlb_dashboard.ingest --date 2026-04-02
@@ -54,6 +54,12 @@ Backfill a date range:
 
 ```powershell
 python -m mlb_dashboard.ingest --start-date 2026-03-27 --end-date 2026-04-02
+```
+
+Use a manual CSV if pybaseball cannot fill a date:
+
+```powershell
+python -m mlb_dashboard.ingest --date 2026-04-02 --fallback-csv ".\statcast_2026_gap.csv"
 ```
 
 Sync recent days and then build:
@@ -72,9 +78,8 @@ available:
 python -m mlb_dashboard.tracking_sync --days 3
 ```
 
-Required environment:
+Optional environment:
 
-- `DATABASE_URL`
 - `ODDS_API_KEY` if you want rebuilt dates to refresh captured odds rows too
 
 Expected CLI output:

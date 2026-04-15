@@ -50,23 +50,6 @@ class AppConfig:
     hf_repo_id: str = field(default_factory=lambda: os.getenv("HF_REPO_ID", ""))
     hf_repo_type: str = field(default_factory=lambda: os.getenv("HF_REPO_TYPE", "dataset"))
     hf_token: str = field(default_factory=lambda: os.getenv("HF_TOKEN", ""))
-    database_url: str = field(default_factory=lambda: os.getenv("DATABASE_URL", ""))
-    cockroach_live_pitch_mix_table: str = field(default_factory=lambda: os.getenv("COCKROACH_LIVE_PITCH_MIX_TABLE", "public.live_pitch_mix_2026"))
-    cockroach_pitcher_baseline_event_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_BASELINE_EVENT_TABLE", "public.shared_pitcher_baseline_event_rows"))
-    cockroach_hitter_rolling_table: str = field(default_factory=lambda: os.getenv("COCKROACH_HITTER_ROLLING_TABLE", "public.shared_hitter_rolling_summary"))
-    cockroach_pitcher_rolling_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_ROLLING_TABLE", "public.shared_pitcher_rolling_summary"))
-    cockroach_batter_zone_table: str = field(default_factory=lambda: os.getenv("COCKROACH_BATTER_ZONE_TABLE", "public.batter_zone_damage_profiles"))
-    cockroach_pitcher_zone_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_ZONE_TABLE", "public.pitcher_zone_profiles"))
-    cockroach_batter_family_zone_table: str = field(default_factory=lambda: os.getenv("COCKROACH_BATTER_FAMILY_ZONE_TABLE", "public.batter_family_zone_profiles"))
-    cockroach_hitter_snapshot_table: str = field(default_factory=lambda: os.getenv("COCKROACH_HITTER_SNAPSHOT_TABLE", "public.hitter_model_snapshots"))
-    cockroach_hitter_outcome_table: str = field(default_factory=lambda: os.getenv("COCKROACH_HITTER_OUTCOME_TABLE", "public.hitter_game_outcomes"))
-    cockroach_hitter_board_table: str = field(default_factory=lambda: os.getenv("COCKROACH_HITTER_BOARD_TABLE", "public.hitter_board_winners"))
-    cockroach_pitcher_snapshot_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_SNAPSHOT_TABLE", "public.pitcher_model_snapshots"))
-    cockroach_pitcher_outcome_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_OUTCOME_TABLE", "public.pitcher_game_outcomes"))
-    cockroach_pitcher_board_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_BOARD_TABLE", "public.pitcher_board_winners"))
-    cockroach_pitcher_arsenal_snapshot_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_ARSENAL_SNAPSHOT_TABLE", "public.pitcher_arsenal_snapshots"))
-    cockroach_pitcher_count_snapshot_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PITCHER_COUNT_SNAPSHOT_TABLE", "public.pitcher_count_usage_snapshots"))
-    cockroach_props_odds_table: str = field(default_factory=lambda: os.getenv("COCKROACH_PROPS_ODDS_TABLE", "public.cached_upcoming_props_rows"))
     odds_api_key: str = field(default_factory=lambda: os.getenv("ODDS_API_KEY", ""))
     odds_api_base_url: str = field(default_factory=lambda: os.getenv("ODDS_API_BASE_URL", "https://api.the-odds-api.com/v4"))
     odds_api_sport: str = field(default_factory=lambda: os.getenv("ODDS_API_SPORT", "baseball_mlb"))
@@ -92,6 +75,30 @@ class AppConfig:
         return self.artifacts_dir / "historical_cache"
 
     @property
+    def historical_aggregate_dir(self) -> Path:
+        return self.historical_cache_dir / "aggregates"
+
+    @property
+    def sources_dir(self) -> Path:
+        return self.artifacts_dir / "sources"
+
+    @property
+    def statcast_source_dir(self) -> Path:
+        return self.sources_dir / "statcast_events"
+
+    @property
+    def tracking_dir(self) -> Path:
+        return self.artifacts_dir / "tracking"
+
+    @property
+    def odds_dir(self) -> Path:
+        return self.artifacts_dir / "odds"
+
+    @property
+    def odds_history_path(self) -> Path:
+        return self.odds_dir / "props_odds_history.parquet"
+
+    @property
     def historical_statcast_cache_path(self) -> Path:
         return self.historical_cache_dir / "historical_statcast.parquet"
 
@@ -105,3 +112,8 @@ def ensure_directories(config: AppConfig) -> None:
     config.reusable_dir.mkdir(parents=True, exist_ok=True)
     config.daily_dir.mkdir(parents=True, exist_ok=True)
     config.historical_cache_dir.mkdir(parents=True, exist_ok=True)
+    config.historical_aggregate_dir.mkdir(parents=True, exist_ok=True)
+    config.sources_dir.mkdir(parents=True, exist_ok=True)
+    config.statcast_source_dir.mkdir(parents=True, exist_ok=True)
+    config.tracking_dir.mkdir(parents=True, exist_ok=True)
+    config.odds_dir.mkdir(parents=True, exist_ok=True)

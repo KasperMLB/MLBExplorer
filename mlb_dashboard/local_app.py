@@ -9,7 +9,6 @@ import streamlit as st
 
 from .backtesting_view import render_backtesting_tab
 from .branding import apply_branding_head, page_icon_path
-from .cockroach_loader import read_hitter_backtest_data, read_pitcher_backtest_data, read_prop_odds_history
 from .config import AppConfig
 from .dashboard_views import (
     ARSENAL_COLUMNS,
@@ -36,7 +35,6 @@ from .dashboard_views import (
     build_pitcher_matchup_key,
     build_zone_overlay_map,
     build_best_matchups,
-    build_full_slate_export_bundles,
     compute_family_fit_score,
     build_game_export_options,
     build_slate_export_options,
@@ -49,6 +47,7 @@ from .dashboard_views import (
     with_game_label,
 )
 from .odds_service import american_to_implied_prob
+from .local_store import read_hitter_backtest_data, read_pitcher_backtest_data, read_prop_odds_history
 from .query_engine import QueryFilters, StatcastQueryEngine
 from .rotowire_lineups import fetch_rotowire_lineups, resolve_rotowire_lineups
 from .ui_components import (
@@ -133,37 +132,34 @@ def _render_perf(events: list[tuple[str, float]]) -> None:
 
 @st.cache_data(show_spinner=False, ttl=300)
 def _cached_hitter_backtest_data(
-    database_url: str,
     start_date: date,
     end_date: date,
     split_key: str,
     recent_window: str,
     weighted_mode: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    config = AppConfig(database_url=database_url)
+    config = AppConfig()
     return read_hitter_backtest_data(config, start_date, end_date, split_key, recent_window, weighted_mode)
 
 
 @st.cache_data(show_spinner=False, ttl=300)
 def _cached_pitcher_backtest_data(
-    database_url: str,
     start_date: date,
     end_date: date,
     split_key: str,
     recent_window: str,
     weighted_mode: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    config = AppConfig(database_url=database_url)
+    config = AppConfig()
     return read_pitcher_backtest_data(config, start_date, end_date, split_key, recent_window, weighted_mode)
 
 
 @st.cache_data(show_spinner=False, ttl=300)
 def _cached_prop_odds_history(
-    database_url: str,
     start_date: date,
     end_date: date,
 ) -> pd.DataFrame:
-    config = AppConfig(database_url=database_url)
+    config = AppConfig()
     return read_prop_odds_history(config, start_date, end_date)
 
 
@@ -285,7 +281,6 @@ def _render_backtesting_explainer(entity: str) -> None:
 def _load_backtest_data(config: AppConfig, filters: dict[str, object]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if filters["entity"] == "Hitters" or filters["board_entity"] == "Hitters":
         return _cached_hitter_backtest_data(
-            config.database_url,
             filters["start_date"],
             filters["end_date"],
             filters["split_key"],
@@ -293,7 +288,6 @@ def _load_backtest_data(config: AppConfig, filters: dict[str, object]) -> tuple[
             filters["weighted_mode"],
         )
     return _cached_pitcher_backtest_data(
-        config.database_url,
         filters["start_date"],
         filters["end_date"],
         filters["split_key"],
@@ -947,10 +941,6 @@ def _render_board_backtest_view(
 
 
 def _render_backtesting_tab(config: AppConfig) -> None:
-    if not config.database_url:
-        st.error("DATABASE_URL is required for Backtesting because this view reads historical model results directly from Cockroach.")
-        return
-
     filters = _backtesting_filters()
     if filters["start_date"] > filters["end_date"]:
         st.error("Start date must be on or before end date.")
@@ -959,10 +949,10 @@ def _render_backtesting_tab(config: AppConfig) -> None:
     try:
         snapshots, outcomes, boards = _load_backtest_data(config, filters)
         odds_history = _normalize_prop_odds_history(
-            _cached_prop_odds_history(config.database_url, filters["start_date"], filters["end_date"])
+            _cached_prop_odds_history(filters["start_date"], filters["end_date"])
         )
     except Exception as exc:
-        st.error(f"Unable to load backtest history from Cockroach: {exc}")
+        st.error(f"Unable to load local backtest history: {exc}")
         return
 
     if filters["entity"] == "Hitters":
@@ -1003,14 +993,16 @@ def _render_backtesting_tab(config: AppConfig) -> None:
     _render_board_backtest_view(board_entity, board_frame, available_boards)
 
 
-def _game_selection(slate: list[dict]) -> list[dict]:
+def _game_selection(slate: list[dict]) -> tuple[str, list[dict]]:
     if not slate:
-        return []
-    options = ["All games"] + [f"{game['away_team']} @ {game['home_team']}" for game in slate]
-    selection = st.sidebar.selectbox("Game", options, index=0)
-    if selection == "All games":
-        return slate
-    return [game for game in slate if f"{game['away_team']} @ {game['home_team']}" == selection]
+        return "Slate Summary", []
+    labels = [f"{game['away_team']} @ {game['home_team']}" for game in slate]
+    options = ["Slate Summary"] + labels
+    default_index = 1 if len(options) > 1 else 0
+    selection = st.sidebar.selectbox("Game", options, index=default_index)
+    if selection == "Slate Summary":
+        return selection, []
+    return selection, [game for game in slate if f"{game['away_team']} @ {game['home_team']}" == selection]
 
 
 def _render_pitcher_tab(
@@ -1356,10 +1348,33 @@ def main() -> None:
         st.error(f"No built slate found for {target_date.isoformat()}. Run the build command for that date first.")
         return
     rosters = engine.load_daily_rosters(target_date)
-    selected_games = _game_selection(slate)
+    selected_label, selected_games = _game_selection(slate)
     active_sections = {st.session_state.get(f"section-local-{game['game_pk']}", "Matchup") for game in selected_games}
-    st.caption(f"Showing {len(selected_games)} of {len(slate)} games")
+    st.caption(f"{'Slate summary' if selected_label == 'Slate Summary' else f'Showing {selected_label}'} | {len(slate)} games on slate")
     st.caption("PulledBrl% tracks pulled barrels on tracked batted-ball events. Brl/BIP% uses all balls in play.")
+    if selected_label == "Slate Summary":
+        st.header("Slate Summary")
+        slate_summary = pd.DataFrame(slate)
+        summary_columns = [
+            column
+            for column in [
+                "away_team",
+                "home_team",
+                "away_probable_pitcher_name",
+                "home_probable_pitcher_name",
+                "game_status",
+                "game_pk",
+            ]
+            if column in slate_summary.columns
+        ]
+        render_metric_grid(
+            slate_summary[summary_columns] if summary_columns else slate_summary,
+            key="slate-summary-local",
+            height=420,
+            use_lightweight=True,
+        )
+        _render_perf(perf_events)
+        return
 
     hitters_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
     pitchers_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
@@ -1385,7 +1400,7 @@ def main() -> None:
     batter_family_zone_profiles = pd.DataFrame()
     pitcher_family_zone_context = pd.DataFrame()
     pitcher_movement_arsenal = pd.DataFrame()
-    if "Matchup" in active_sections:
+    if {"Matchup", "Exports"} & active_sections:
         shape_start = perf_counter()
         batter_family_zone_profiles = engine.load_daily_batter_family_zone_profiles(target_date)
         pitcher_family_zone_context = engine.load_daily_pitcher_family_zone_context(target_date)
@@ -1504,34 +1519,13 @@ def main() -> None:
         )
     _record_perf(perf_events, "game prep", game_prep_start)
 
-    export_options_by_game: dict[int, dict[str, list[dict]]] = {}
-    for game in selected_games:
-        away_hitters, home_hitters = hitters_by_game.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        away_summary_by_hand, home_summary_by_hand = pitcher_summary_by_hand_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        away_arsenal, home_arsenal = pitcher_arsenal_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        away_by_hand, home_by_hand = pitcher_by_hand_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        away_count, home_count = pitcher_count_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        away_export_sections = _build_pitcher_export_sections(game["away_team"], away_summary_by_hand, away_arsenal, away_by_hand, away_count)
-        home_export_sections = _build_pitcher_export_sections(game["home_team"], home_summary_by_hand, home_arsenal, home_by_hand, home_count)
-        export_options_by_game[game["game_pk"]] = build_game_export_options(
-            game_title=f"{game['away_team']} @ {game['home_team']}",
-            away_team=game["away_team"],
-            home_team=game["home_team"],
-            best_matchups=best_matchups_by_game.get(game["game_pk"], pd.DataFrame()).copy(),
-            away_sections=away_export_sections,
-            home_sections=home_export_sections,
-            away_hitters=away_hitters,
-            home_hitters=home_hitters,
-        )
-    full_slate_export_bundles = build_full_slate_export_bundles(selected_games, export_options_by_game)
-
     _render_top_sections(
         selected_games,
         hitters_by_game,
         pitchers_by_game,
         hitter_preset,
         best_matchups_by_game,
-        full_slate_export_bundles,
+        None,
     )
     _render_perf(perf_events)
     st.divider()
@@ -1549,11 +1543,12 @@ def main() -> None:
         away_export_sections = _build_pitcher_export_sections(game["away_team"], away_summary_by_hand, away_arsenal, away_by_hand, away_count)
         home_export_sections = _build_pitcher_export_sections(game["home_team"], home_summary_by_hand, home_arsenal, home_by_hand, home_count)
 
-        with st.expander(f"{game['away_team']} @ {game['home_team']}", expanded=idx == 0):
+        st.markdown(f"### {game['away_team']} @ {game['home_team']}")
+        with st.container():
             render_matchup_header(game)
             active_section = st.radio(
                 "Section",
-                ["Matchup", "Rolling", "Pitcher Zones", "Hitter Zones"],
+                ["Matchup", "Rolling", "Pitcher Zones", "Hitter Zones", "Exports"],
                 horizontal=True,
                 key=f"section-local-{game['game_pk']}",
                 label_visibility="collapsed",
@@ -1774,8 +1769,9 @@ def main() -> None:
                             use_lightweight=True,
                         )
 
-            export_options = export_options_by_game.get(game["game_pk"])
-            if export_options is None:
+            elif active_section == "Exports":
+                away_export_sections = _build_pitcher_export_sections(game["away_team"], away_summary_by_hand, away_arsenal, away_by_hand, away_count)
+                home_export_sections = _build_pitcher_export_sections(game["home_team"], home_summary_by_hand, home_arsenal, home_by_hand, home_count)
                 export_options = build_game_export_options(
                     game_title=f"{game['away_team']} @ {game['home_team']}",
                     away_team=game["away_team"],
@@ -1786,9 +1782,9 @@ def main() -> None:
                     away_hitters=away_hitters,
                     home_hitters=home_hitters,
                 )
-            render_export_hub(
-                key=f"export-{game['game_pk']}",
-                title=f"{game['away_team']} @ {game['home_team']}",
-                export_options=export_options,
-            )
+                render_export_hub(
+                    key=f"export-{game['game_pk']}",
+                    title=f"{game['away_team']} @ {game['home_team']}",
+                    export_options=export_options,
+                )
         st.divider()

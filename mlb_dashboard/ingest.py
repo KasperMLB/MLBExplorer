@@ -4,12 +4,13 @@ import argparse
 import math
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 
 from .build import BuildContext, run_build
-from .cockroach_loader import read_source_freshness_report, replace_live_event_payload
 from .config import AppConfig
+from .local_store import ingest_pybaseball_range, read_source_freshness_report
 from .metrics import add_metric_flags
 from .mlb_api import fetch_game_feed, fetch_schedule
 
@@ -413,43 +414,21 @@ def _normalize_game_feed_to_rows(game: dict, feed: dict, target_date: date, capt
     return live_rows, baseline_rows
 
 
-def ingest_date(config: AppConfig, target_date: date) -> IngestSummary:
+def ingest_date(config: AppConfig, target_date: date, *, fallback_csv=None) -> IngestSummary:
     schedule = fetch_schedule(target_date)
-    captured_at = datetime.now(UTC)
-    live_rows: list[dict] = []
-    baseline_rows: list[dict] = []
-    processed_games = 0
-    errors: list[str] = []
-    for game in schedule:
-        game_pk = game.get("game_pk")
-        try:
-            feed = fetch_game_feed(int(game_pk))
-            game_live_rows, game_baseline_rows = _normalize_game_feed_to_rows(game, feed, target_date, captured_at)
-            live_rows.extend(game_live_rows)
-            baseline_rows.extend(game_baseline_rows)
-            processed_games += 1
-        except Exception as exc:  # pragma: no cover
-            errors.append(f"{game_pk}: {exc}")
-    if errors:
-        raise RuntimeError(
-            "Failed to ingest one or more games for "
-            f"{target_date.isoformat()}:\n" + "\n".join(errors)
-        )
-    live_frame = _prepare_live_frame(live_rows)
-    baseline_frame = _prepare_baseline_frame(baseline_rows)
-    replace_live_event_payload(
+    live_frame = ingest_pybaseball_range(
         config,
-        live_frame,
-        baseline_frame,
         start_date=target_date,
         end_date=target_date,
+        fallback_csv=fallback_csv,
     )
+    observed_games = int(pd.to_numeric(live_frame.get("game_pk"), errors="coerce").nunique()) if not live_frame.empty else 0
     return IngestSummary(
         target_date=target_date,
         scheduled_games=len(schedule),
-        processed_games=processed_games,
+        processed_games=observed_games,
         live_rows=len(live_frame),
-        baseline_rows=len(baseline_frame),
+        baseline_rows=0,
     )
 
 
@@ -467,11 +446,12 @@ def _resolve_target_dates(args: argparse.Namespace) -> list[date]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Ingest MLB StatsAPI game-feed events into the 2026 Cockroach live tables.")
+    parser = argparse.ArgumentParser(description="Ingest pybaseball Statcast events into local parquet source partitions.")
     parser.add_argument("--date", type=lambda value: date.fromisoformat(value))
     parser.add_argument("--start-date", type=lambda value: date.fromisoformat(value))
     parser.add_argument("--end-date", type=lambda value: date.fromisoformat(value))
     parser.add_argument("--sync-recent", type=int)
+    parser.add_argument("--fallback-csv", type=Path, help="Optional manual Statcast CSV to use if pybaseball returns no rows.")
     parser.add_argument("--build-after", action="store_true", help="Run downstream build(s) after ingest completes.")
     parser.add_argument(
         "--build-target-date",
@@ -489,7 +469,7 @@ def main() -> None:
     config = AppConfig()
     summaries: list[IngestSummary] = []
     for target_date in target_dates:
-        summary = ingest_date(config, target_date)
+        summary = ingest_date(config, target_date, fallback_csv=args.fallback_csv)
         summaries.append(summary)
         print(
             f"Ingested {summary.target_date.isoformat()}: "

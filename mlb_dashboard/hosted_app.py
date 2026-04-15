@@ -33,7 +33,6 @@ from .dashboard_views import (
     build_pitcher_matchup_key,
     build_zone_overlay_map,
     build_best_matchups,
-    build_full_slate_export_bundles,
     build_slate_export_options,
     compute_family_fit_score,
     build_game_export_options,
@@ -375,6 +374,19 @@ def _frame_by_pitcher_id(frame: pd.DataFrame) -> dict[object, pd.DataFrame]:
 
 
 @st.cache_data(show_spinner=False)
+def _load_slate_artifacts(base_url: str, target_date: date) -> tuple[pd.DataFrame, pd.DataFrame]:
+    day = target_date.isoformat()
+    daily_base = f"{base_url}/daily/{day}"
+    loaded = load_remote_parquet_bundle(
+        {
+            "slate": (daily_base, "slate.parquet", None),
+            "rosters": (daily_base, "rosters.parquet", None),
+        }
+    )
+    return loaded["slate"], loaded["rosters"]
+
+
+@st.cache_data(show_spinner=False)
 def _load_core_artifacts(
     base_url: str,
     target_date: date,
@@ -472,14 +484,33 @@ def _load_artifacts_with_fallback(
     raise RuntimeError("No published hosted artifacts were found.")
 
 
-def _game_selection(slate: list[dict]) -> list[dict]:
+def _load_slate_with_fallback(
+    base_url: str,
+    target_date: date,
+    lookback_days: int = 7,
+) -> tuple[date, tuple[pd.DataFrame, pd.DataFrame]]:
+    last_error: Exception | None = None
+    for offset in range(lookback_days + 1):
+        candidate = target_date - timedelta(days=offset)
+        try:
+            return candidate, _load_slate_artifacts(base_url, candidate)
+        except Exception as exc:  # pragma: no cover
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No published hosted slate artifacts were found.")
+
+
+def _game_selection(slate: list[dict]) -> tuple[str, list[dict]]:
     if not slate:
-        return []
-    options = ["All games"] + [f"{game['away_team']} @ {game['home_team']}" for game in slate]
-    selection = st.sidebar.selectbox("Game", options, index=0)
-    if selection == "All games":
-        return slate
-    return [game for game in slate if f"{game['away_team']} @ {game['home_team']}" == selection]
+        return "Slate Summary", []
+    labels = [f"{game['away_team']} @ {game['home_team']}" for game in slate]
+    options = ["Slate Summary"] + labels
+    default_index = 1 if len(options) > 1 else 0
+    selection = st.sidebar.selectbox("Game", options, index=default_index)
+    if selection == "Slate Summary":
+        return selection, []
+    return selection, [game for game in slate if f"{game['away_team']} @ {game['home_team']}" == selection]
 
 
 def _filter_hitters(
@@ -734,6 +765,46 @@ def main() -> None:
     mobile_safe = True
     try:
         load_start = perf_counter()
+        resolved_date, slate_artifacts = _load_slate_with_fallback(base_url, target_date)
+        slate, rosters = slate_artifacts
+        _record_perf(perf_events, "slate load", load_start)
+    except Exception as exc:  # pragma: no cover
+        st.error(f"Unable to load hosted slate for {target_date.isoformat()}: {exc}")
+        return
+    if resolved_date != target_date:
+        st.warning(
+            f"No published artifacts were found for {target_date.isoformat()}. "
+            f"Showing the latest available published slate from {resolved_date.isoformat()} instead."
+        )
+    all_games = slate.to_dict(orient="records")
+    selected_label, selected_games = _game_selection(all_games)
+    st.caption(f"{'Slate summary' if selected_label == 'Slate Summary' else f'Showing {selected_label}'} | {len(all_games)} games on slate")
+    st.caption("PulledBrl% tracks pulled barrels on tracked batted-ball events. Brl/BIP% uses all balls in play.")
+    if selected_label == "Slate Summary":
+        st.header("Slate Summary")
+        slate_summary = pd.DataFrame(all_games)
+        summary_columns = [
+            column
+            for column in [
+                "away_team",
+                "home_team",
+                "away_probable_pitcher_name",
+                "home_probable_pitcher_name",
+                "game_status",
+                "game_pk",
+            ]
+            if column in slate_summary.columns
+        ]
+        _render_hosted_grid(
+            slate_summary[summary_columns] if summary_columns else slate_summary,
+            key="slate-summary-hosted",
+            mobile_safe=mobile_safe,
+            height=420,
+        )
+        _render_perf(perf_events)
+        return
+    try:
+        load_start = perf_counter()
         resolved_date, artifacts = _load_artifacts_with_fallback(base_url, target_date)
         (
             slate,
@@ -752,17 +823,7 @@ def main() -> None:
     except Exception as exc:  # pragma: no cover
         st.error(f"Unable to load hosted artifacts for {target_date.isoformat()}: {exc}")
         return
-    if resolved_date != target_date:
-        st.warning(
-            f"No published artifacts were found for {target_date.isoformat()}. "
-            f"Showing the latest available published slate from {resolved_date.isoformat()} instead."
-        )
-
-    all_games = slate.to_dict(orient="records")
-    selected_games = _game_selection(all_games)
     active_sections = {st.session_state.get(f"section-{game['game_pk']}", "Matchup") for game in selected_games}
-    st.caption(f"Showing {len(selected_games)} of {len(all_games)} games")
-    st.caption("PulledBrl% tracks pulled barrels on tracked batted-ball events. Brl/BIP% uses all balls in play.")
     batter_join_col = "batter_id" if "batter_id" in batter_zone_profiles.columns else "batter"
     pitcher_join_col = "pitcher_id" if "pitcher_id" in pitcher_zone_profiles.columns else "pitcher"
     valid_teams = tuple(sorted({game["away_team"] for game in all_games} | {game["home_team"] for game in all_games}))
@@ -782,7 +843,7 @@ def main() -> None:
         rolling_start = perf_counter()
         hitter_rolling, pitcher_rolling = _load_rolling_artifacts(base_url, resolved_date)
         _record_perf(perf_events, "rolling load", rolling_start)
-    if "Matchup" in active_sections:
+    if {"Matchup", "Exports"} & active_sections:
         shape_start = perf_counter()
         (
             batter_family_zone_profiles,
@@ -910,39 +971,6 @@ def main() -> None:
         if not home_pitcher.empty:
             pitcher_rows.append(with_game_label(home_pitcher, label))
 
-    export_options_by_game: dict[int, dict[str, list[dict]]] = {}
-    for game in selected_games:
-        away_hitters, home_hitters = hitters_by_game.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        away_summary_by_hand, home_summary_by_hand = pitcher_summary_by_hand_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        away_arsenal, home_arsenal = pitcher_arsenal_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        away_by_hand, home_by_hand = pitcher_by_hand_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        away_count, home_count = pitcher_count_map.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        away_export_sections = _build_pitcher_export_sections(
-            game["away_team"],
-            away_summary_by_hand,
-            away_arsenal,
-            away_by_hand,
-            away_count,
-        )
-        home_export_sections = _build_pitcher_export_sections(
-            game["home_team"],
-            home_summary_by_hand,
-            home_arsenal,
-            home_by_hand,
-            home_count,
-        )
-        export_options_by_game[game["game_pk"]] = build_game_export_options(
-            game_title=f"{game['away_team']} @ {game['home_team']}",
-            away_team=game["away_team"],
-            home_team=game["home_team"],
-            best_matchups=best_matchups_by_game.get(game["game_pk"], pd.DataFrame()).copy(),
-            away_sections=away_export_sections,
-            home_sections=home_export_sections,
-            away_hitters=away_hitters,
-            home_hitters=home_hitters,
-        )
-    full_slate_export_bundles = build_full_slate_export_bundles(selected_games, export_options_by_game)
-
     st.header("Top Slate Hitters")
     top_hitters_start = perf_counter()
     all_hitters = pd.concat(hitter_rows, ignore_index=True, sort=False) if hitter_rows else pd.DataFrame()
@@ -962,7 +990,7 @@ def main() -> None:
             "top-matchups-export-hosted",
             "Top Slate Export",
             export_options,
-            full_slate_export_bundles,
+            None,
         )
         top_hitter_columns, top_hitter_hidden = _hitter_table_columns(
             ranked_hitters,
@@ -1021,7 +1049,8 @@ def main() -> None:
         home_movement = movement_arsenal_by_pitcher.get(home_pitcher_id, filtered_movement_arsenal.head(0)).copy()
         best_matchups = best_matchups_by_game.get(game["game_pk"], pd.DataFrame()).copy()
 
-        with st.expander(f"{game['away_team']} @ {game['home_team']}", expanded=idx == 0):
+        st.markdown(f"### {game['away_team']} @ {game['home_team']}")
+        with st.container():
             render_matchup_header(game)
             active_section = st.radio(
                 "Section",
@@ -1267,18 +1296,16 @@ def main() -> None:
                     home_by_hand,
                     home_count,
                 )
-                export_options = export_options_by_game.get(game["game_pk"])
-                if export_options is None:
-                    export_options = build_game_export_options(
-                        game_title=f"{game['away_team']} @ {game['home_team']}",
-                        away_team=game["away_team"],
-                        home_team=game["home_team"],
-                        best_matchups=best_matchups,
-                        away_sections=away_export_sections,
-                        home_sections=home_export_sections,
-                        away_hitters=away_hitters,
-                        home_hitters=home_hitters,
-                    )
+                export_options = build_game_export_options(
+                    game_title=f"{game['away_team']} @ {game['home_team']}",
+                    away_team=game["away_team"],
+                    home_team=game["home_team"],
+                    best_matchups=best_matchups,
+                    away_sections=away_export_sections,
+                    home_sections=home_export_sections,
+                    away_hitters=away_hitters,
+                    home_hitters=home_hitters,
+                )
                 render_export_hub(
                     key=f"export-hosted-{game['game_pk']}",
                     title=f"{game['away_team']} @ {game['home_team']}",

@@ -5,12 +5,12 @@ import json
 import sys
 from datetime import date
 
-from .cockroach_loader import read_source_freshness_report
 from .config import AppConfig
+from .local_store import read_source_freshness_report
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Report Cockroach event-source freshness for recent MLB builds.")
+    parser = argparse.ArgumentParser(description="Report local Statcast event-source freshness for recent MLB builds.")
     parser.add_argument("--target-date", type=lambda value: date.fromisoformat(value), default=date.today())
     parser.add_argument("--lookback-days", type=int, default=7)
     parser.add_argument("--strict", action="store_true", help="Exit non-zero when any tracked source is stale.")
@@ -55,7 +55,7 @@ def main() -> None:
         print(json.dumps(report, indent=2, default=str))
     else:
         if not report:
-            print("No Cockroach freshness report was produced. Check DATABASE_URL.", file=sys.stderr)
+            print("No local Statcast freshness report was produced.", file=sys.stderr)
         for index, summary in enumerate(report):
             if index:
                 print()

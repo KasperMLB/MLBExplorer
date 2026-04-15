@@ -5,8 +5,8 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
-from .cockroach_loader import read_hitter_backtest_data, read_pitcher_backtest_data, read_prop_odds_history, purge_backtest_outcomes_before
 from .config import AppConfig
+from .local_store import read_hitter_backtest_data, read_pitcher_backtest_data, read_prop_odds_history, purge_backtest_outcomes_before
 from .odds_service import american_to_implied_prob
 from .ui_components import render_metric_grid
 
@@ -904,10 +904,6 @@ def _render_pitcher_view(base_frame: pd.DataFrame, line_frame: pd.DataFrame, sco
 
 
 def render_backtesting_tab(config: AppConfig) -> None:
-    if not config.database_url:
-        st.error("DATABASE_URL is required for Backtesting because this page reads tracked model, outcome, and odds history from Cockroach.")
-        return
-
     if not _require_backtest_password():
         return
 
@@ -934,7 +930,7 @@ def render_backtesting_tab(config: AppConfig) -> None:
             str(filters["weighted_mode"]),
         )
     except Exception as exc:
-        st.error(f"Unable to load backtesting data from Cockroach: {exc}")
+        st.error(f"Unable to load local backtesting data: {exc}")
         return
 
     _render_explainer(str(filters["entity"]), str(filters["mode"]))

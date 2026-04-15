@@ -98,6 +98,14 @@ class StatcastQueryEngine:
             return pd.DataFrame(columns=["player_id", "exclude_from_hitter_tables"])
         return pd.read_parquet(path)
 
+    def load_daily_game_bundle(self, target_date: date, game_pk: int) -> dict[str, pd.DataFrame]:
+        game_dir = self.config.daily_dir / target_date.isoformat() / "games" / str(game_pk)
+        bundle: dict[str, pd.DataFrame] = {}
+        for name in ["matchup", "rolling", "pitcher_detail", "zones", "pitch_shape", "exports"]:
+            path = game_dir / f"{name}.parquet"
+            bundle[name] = pd.read_parquet(path) if path.exists() else pd.DataFrame()
+        return bundle
+
     def get_pitcher_cards(self, pitcher_ids: list[int], filters: QueryFilters) -> pd.DataFrame:
         if not pitcher_ids:
             return pd.DataFrame()
@@ -331,3 +339,14 @@ def load_remote_parquet_bundle(
         for future in as_completed(futures):
             results[futures[future]] = future.result()
     return results
+
+
+def load_remote_game_bundle(base_url: str, target_date: date, game_pk: int) -> dict[str, pd.DataFrame]:
+    game_base = f"{base_url.rstrip('/')}/daily/{target_date.isoformat()}/games/{game_pk}"
+    bundle: dict[str, pd.DataFrame] = {}
+    for name in ["matchup", "rolling", "pitcher_detail", "zones", "pitch_shape", "exports"]:
+        try:
+            bundle[name] = load_remote_parquet(game_base, f"{name}.parquet")
+        except Exception:
+            bundle[name] = pd.DataFrame()
+    return bundle

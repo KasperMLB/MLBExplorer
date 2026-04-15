@@ -6,8 +6,8 @@ import pandas as pd
 import streamlit as st
 
 from .branding import apply_branding_head, page_icon_path
-from .cockroach_loader import read_hitter_exit_velo_events, read_recent_batter_name_lookup
 from .config import AppConfig
+from .local_store import read_hitter_exit_velo_events, read_recent_batter_name_lookup
 from .dashboard_views import latest_built_date
 from .query_engine import StatcastQueryEngine, load_remote_parquet
 from .ui_components import render_custom_metric_table, render_exit_velo_summary_grid
@@ -631,10 +631,10 @@ def main() -> None:
     try:
         raw = _load_exit_velo_events_cached(end_date.isoformat() if use_end_date else None)
     except Exception as exc:
-        st.error(f"Unable to load hitter exit velocity results from Cockroach: {exc}")
+        st.error(f"Unable to load hitter exit velocity results from local Statcast files: {exc}")
         return
     if raw.empty:
-        st.info("No hitter exit velocity results were found in the Cockroach event source.")
+        st.info("No hitter exit velocity results were found in the local Statcast event source.")
         return
     rosters = _load_rosters(config, end_date if use_end_date else None)
     hitter_artifact_names = _load_hitter_artifact_names(config, end_date if use_end_date else None)
