@@ -49,6 +49,7 @@ from .team_logos import add_matchup_logo_columns, team_logo_img_html
 from .ui_components import (
     build_pitcher_summary_table,
     render_export_hub,
+    render_logo_game_selector,
     render_matchup_header,
     render_metric_grid,
     render_slate_export_controls,
@@ -521,15 +522,7 @@ def _load_slate_with_fallback(
 
 
 def _game_selection(slate: list[dict]) -> tuple[str, list[dict]]:
-    if not slate:
-        return "Slate Summary", []
-    labels = [f"{game['away_team']} @ {game['home_team']}" for game in slate]
-    options = ["Slate Summary"] + labels
-    default_index = 1 if len(options) > 1 else 0
-    selection = st.selectbox("Game", options, index=default_index)
-    if selection == "Slate Summary":
-        return selection, []
-    return selection, [game for game in slate if f"{game['away_team']} @ {game['home_team']}" == selection]
+    return render_logo_game_selector(slate, key_prefix="game-selector-hosted")
 
 
 def _filter_top_board(frame: pd.DataFrame, split: str, recent_window: str, weighted_mode: str) -> pd.DataFrame:

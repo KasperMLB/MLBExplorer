@@ -124,6 +124,7 @@ HITTER_CONFIDENCE_COLORS = {
     "Very Thin": "#b91c1c",
 }
 LOGO_COLUMNS = {"away_logo", "home_logo"}
+SLATE_SUMMARY_SELECTION = "__slate_summary__"
 DISPLAY_LABELS = {
     "away_logo": "Away",
     "matchup_at": "@",
@@ -949,6 +950,131 @@ def render_metric_grid(
     if returned.empty:
         return frame
     return returned.loc[:, [column for column in visible_columns if column in returned.columns]]
+
+
+def _game_label(game: dict) -> str:
+    return f"{game.get('away_team', '')} @ {game.get('home_team', '')}"
+
+
+def resolve_logo_game_selection(slate: list[dict], selected_key: object | None) -> tuple[str, list[dict]]:
+    if not slate:
+        return "Slate Summary", []
+    if selected_key == SLATE_SUMMARY_SELECTION:
+        return "Slate Summary", []
+
+    game_by_key = {str(game.get("game_pk")): game for game in slate if game.get("game_pk") is not None}
+    first_key = next(iter(game_by_key), None)
+    selected = str(selected_key) if selected_key is not None else first_key
+    if selected not in game_by_key:
+        selected = first_key
+    if selected is None:
+        return "Slate Summary", []
+    game = game_by_key[selected]
+    return _game_label(game), [game]
+
+
+def _selector_card_html(content_html: str, *, active: bool) -> str:
+    active_class = " is-active" if active else ""
+    return f"<div class='game-logo-card{active_class}'>{content_html}</div>"
+
+
+def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[str, list[dict]]:
+    if not slate:
+        return "Slate Summary", []
+
+    state_key = f"{key_prefix}-selected-game-pk"
+    valid_keys = [str(game.get("game_pk")) for game in slate if game.get("game_pk") is not None]
+    if state_key not in st.session_state or st.session_state[state_key] not in {SLATE_SUMMARY_SELECTION, *valid_keys}:
+        st.session_state[state_key] = valid_keys[0] if valid_keys else SLATE_SUMMARY_SELECTION
+
+    st.markdown(
+        """
+        <style>
+        .game-logo-selector-label {
+            font-size: 1.0rem;
+            font-weight: 650;
+            margin: 0 0 8px 0;
+        }
+        .game-logo-card {
+            min-height: 72px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(31, 41, 55, 0.14);
+            border-radius: 8px;
+            background: #f8fafc;
+            padding: 8px 10px;
+            margin-bottom: 6px;
+        }
+        .game-logo-card.is-active {
+            border-color: #1f2937;
+            background: #eef3f8;
+            box-shadow: inset 0 0 0 1px rgba(31, 41, 55, 0.20);
+        }
+        .game-logo-card .matchup-logo-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .game-logo-card .matchup-at {
+            color: #1f2937;
+            font-weight: 800;
+            font-size: 0.95rem;
+        }
+        .game-logo-card .team-logo-fallback {
+            color: #1f2937;
+            font-weight: 800;
+            font-size: 0.85rem;
+        }
+        .game-logo-card.summary-card {
+            color: #1f2937;
+            font-weight: 750;
+            letter-spacing: 0;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div class='game-logo-selector-label'>Game</div>", unsafe_allow_html=True)
+
+    cards: list[tuple[str, str, str]] = [
+        (
+            SLATE_SUMMARY_SELECTION,
+            "<div class='game-logo-card summary-card'>Slate Summary</div>",
+            "Summary",
+        )
+    ]
+    for game in slate:
+        game_key = str(game.get("game_pk"))
+        cards.append(
+            (
+                game_key,
+                _selector_card_html(
+                    matchup_logo_html(str(game.get("away_team", "")), str(game.get("home_team", "")), size=32),
+                    active=st.session_state[state_key] == game_key,
+                ),
+                "Open",
+            )
+        )
+
+    per_row = 6
+    for start in range(0, len(cards), per_row):
+        columns = st.columns(min(per_row, len(cards) - start))
+        for column, (selection_key, card_html, button_label) in zip(columns, cards[start : start + per_row]):
+            active = st.session_state[state_key] == selection_key
+            with column:
+                if selection_key == SLATE_SUMMARY_SELECTION:
+                    st.markdown(
+                        card_html.replace("game-logo-card summary-card", f"game-logo-card summary-card{' is-active' if active else ''}"),
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(card_html, unsafe_allow_html=True)
+                if st.button("Selected" if active else button_label, key=f"{key_prefix}-card-{selection_key}", use_container_width=True):
+                    st.session_state[state_key] = selection_key
+
+    return resolve_logo_game_selection(slate, st.session_state.get(state_key))
 
 
 def build_pitcher_summary_table(pitcher_summary_by_hand: pd.DataFrame) -> pd.DataFrame:

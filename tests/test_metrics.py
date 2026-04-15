@@ -3,7 +3,6 @@ import pandas as pd
 from mlb_dashboard.config import AppConfig, DEFAULT_RECENT_WINDOWS, DEFAULT_SPLITS
 from mlb_dashboard.build import BuildContext, _build_hitter_hr_form, _save_per_game_files, _save_top_slate_board_files
 from mlb_dashboard.dashboard_views import BEST_MATCHUP_COLUMNS, HITTER_PRESETS, add_hitter_matchup_score, build_slate_summary_best_matchups, build_slate_summary_matchup_overview, filter_excluded_pitchers_from_hitter_pool, normalize_series
-from mlb_dashboard.local_app import _game_selection as _local_game_selection
 from mlb_dashboard.local_store import (
     compute_hitter_rolling,
     compute_pitcher_rolling,
@@ -17,6 +16,7 @@ from mlb_dashboard.local_store import (
     read_hitter_snapshots_for_date,
 )
 from mlb_dashboard.metrics import add_metric_flags, is_barrel
+from mlb_dashboard.ui_components import SLATE_SUMMARY_SELECTION, resolve_logo_game_selection
 
 
 def test_game_selection_defaults_to_first_game_detail():
@@ -24,41 +24,30 @@ def test_game_selection_defaults_to_first_game_detail():
         {"away_team": "AAA", "home_team": "BBB", "game_pk": 1},
         {"away_team": "CCC", "home_team": "DDD", "game_pk": 2},
     ]
-    import mlb_dashboard.local_app as local_app
+    selection, selected_games = resolve_logo_game_selection(slate, None)
 
-    original = local_app.st.selectbox
-    try:
-        seen = {}
-
-        def fake_selectbox(label, options, index=0):
-            seen["options"] = options
-            seen["index"] = index
-            return options[index]
-
-        local_app.st.selectbox = fake_selectbox
-        selection, selected_games = _local_game_selection(slate)
-    finally:
-        local_app.st.selectbox = original
-
-    assert seen["options"] == ["Slate Summary", "AAA @ BBB", "CCC @ DDD"]
-    assert seen["index"] == 1
     assert selection == "AAA @ BBB"
     assert [game["game_pk"] for game in selected_games] == [1]
 
 
 def test_game_selection_summary_prepares_no_detail_games():
     slate = [{"away_team": "AAA", "home_team": "BBB", "game_pk": 1}]
-    import mlb_dashboard.local_app as local_app
-
-    original = local_app.st.selectbox
-    try:
-        local_app.st.selectbox = lambda label, options, index=0: "Slate Summary"
-        selection, selected_games = _local_game_selection(slate)
-    finally:
-        local_app.st.selectbox = original
+    selection, selected_games = resolve_logo_game_selection(slate, SLATE_SUMMARY_SELECTION)
 
     assert selection == "Slate Summary"
     assert selected_games == []
+
+
+def test_game_selection_resolves_selected_game_pk():
+    slate = [
+        {"away_team": "AAA", "home_team": "BBB", "game_pk": 1},
+        {"away_team": "CCC", "home_team": "DDD", "game_pk": 2},
+    ]
+
+    selection, selected_games = resolve_logo_game_selection(slate, "2")
+
+    assert selection == "CCC @ DDD"
+    assert [game["game_pk"] for game in selected_games] == [2]
 
 
 def test_add_metric_flags_marks_core_metrics():
