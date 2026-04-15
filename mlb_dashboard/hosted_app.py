@@ -970,6 +970,41 @@ def main() -> None:
     except Exception:
         st.warning("Full-slate top board artifacts were not found. Rebuild and publish artifacts to restore full-slate top tables.")
 
+    _render_hosted_selected_game_area(
+        base_url,
+        target_date,
+        resolved_date,
+        split,
+        recent_window,
+        weighted_mode,
+        min_pitch_count,
+        min_bip,
+        likely_only,
+        hitter_preset,
+        all_games,
+        top_hitters,
+        perf_events,
+        mobile_safe,
+    )
+
+
+@st.fragment
+def _render_hosted_selected_game_area(
+    base_url: str,
+    target_date: date,
+    resolved_date: date,
+    split: str,
+    recent_window: str,
+    weighted_mode: str,
+    min_pitch_count: int,
+    min_bip: int,
+    likely_only: bool,
+    hitter_preset: str,
+    all_games: list[dict],
+    top_hitters: pd.DataFrame,
+    perf_events: list[tuple[str, float]],
+    mobile_safe: bool,
+) -> None:
     st.divider()
     selected_label, selected_games = _game_selection(all_games)
     st.caption(f"{'Slate summary' if selected_label == 'Slate Summary' else 'Selected game'} | {len(all_games)} games on slate")

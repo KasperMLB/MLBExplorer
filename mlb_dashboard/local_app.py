@@ -1388,6 +1388,32 @@ def main() -> None:
     _render_artifact_health(engine.load_daily_artifact_manifest(target_date))
     _record_perf(perf_events, "top boards", top_board_start)
 
+    _render_local_selected_game_area(
+        engine,
+        target_date,
+        filters,
+        hitter_preset,
+        slate,
+        rosters,
+        top_hitters,
+        perf_events,
+    )
+
+
+@st.fragment
+def _render_local_selected_game_area(
+    engine: StatcastQueryEngine,
+    target_date: date,
+    filters: QueryFilters,
+    hitter_preset: str,
+    slate: list[dict],
+    rosters: pd.DataFrame,
+    top_hitters: pd.DataFrame,
+    perf_events: list[tuple[str, float]],
+) -> None:
+    split = filters.split
+    recent_window = filters.recent_window
+    weighted_mode = filters.weighted_mode
     st.divider()
     selected_label, selected_games = _game_selection(slate)
     active_sections = {st.session_state.get(f"section-local-{game['game_pk']}", "Matchup") for game in selected_games}
