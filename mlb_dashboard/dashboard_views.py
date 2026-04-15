@@ -585,25 +585,17 @@ def add_hitter_matchup_score(
         enriched["zone_fit_score"] = 0.5
     swstr_score = normalize_series(enriched["swstr_pct"], inverse=True)
     barrel_score = normalize_series(enriched["barrel_bbe_pct"])
-    if "median_launch_angle" not in enriched.columns:
-        enriched["median_launch_angle"] = enriched.get("avg_launch_angle", pd.Series(0.5, index=enriched.index))
     enriched["shape_score"] = shape_score(
         enriched["avg_launch_angle"],
         enriched["sweet_spot_pct"] if "sweet_spot_pct" in enriched.columns else None,
         enriched["barrel_bbe_pct"] if "barrel_bbe_pct" in enriched.columns else None,
     )
-    enriched["test_shape_score"] = experimental_shape_score(
-        enriched["median_launch_angle"],
-        enriched["hr_window_pct"] if "hr_window_pct" in enriched.columns else None,
-        enriched["productive_air_pct"] if "productive_air_pct" in enriched.columns else None,
-        enriched["sweet_spot_pct"] if "sweet_spot_pct" in enriched.columns else None,
-        enriched["barrel_bbe_pct"] if "barrel_bbe_pct" in enriched.columns else None,
-    )
+    enriched["test_shape_score"] = enriched["shape_score"]
     base_score = ((swstr_score * 0.35) + (barrel_score * 0.30) + (enriched["shape_score"] * 0.20) + (enriched["zone_fit_score"] * 0.15)) * 100.0
     pulled_barrel_scale = normalize_series(enriched["pulled_barrel_pct"])
     pulled_barrel_bonus = ((pulled_barrel_scale - 0.5).clip(lower=0.0) / 0.5) * 0.08
     enriched["matchup_score"] = (base_score * (1.0 + pulled_barrel_bonus)).clip(lower=0.0, upper=100.0)
-    test_base_score = ((swstr_score * 0.35) + (barrel_score * 0.30) + (enriched["test_shape_score"] * 0.20) + (enriched["zone_fit_score"] * 0.15)) * 100.0
+    test_base_score = ((swstr_score * 0.325) + (barrel_score * 0.30) + (enriched["test_shape_score"] * 0.20) + (enriched["zone_fit_score"] * 0.175)) * 100.0
     enriched["test_score"] = (test_base_score * (1.0 + pulled_barrel_bonus)).clip(lower=0.0, upper=100.0)
     matchup_norm = normalize_series(enriched["matchup_score"])
     barrel_bip_norm = normalize_series(enriched["barrel_bip_pct"])

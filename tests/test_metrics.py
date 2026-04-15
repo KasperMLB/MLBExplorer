@@ -1,6 +1,6 @@
 import pandas as pd
 
-from mlb_dashboard.dashboard_views import filter_excluded_pitchers_from_hitter_pool
+from mlb_dashboard.dashboard_views import add_hitter_matchup_score, filter_excluded_pitchers_from_hitter_pool, normalize_series
 from mlb_dashboard.metrics import add_metric_flags, is_barrel
 
 
@@ -62,3 +62,55 @@ def test_ohtani_two_way_exception_stays_in_hitter_pool():
     filtered = filter_excluded_pitchers_from_hitter_pool(hitters, exclusions)
 
     assert filtered["batter"].tolist() == [660271, 999999]
+
+
+def test_test_score_boosts_zone_fit_without_changing_shape_formula():
+    hitters = pd.DataFrame(
+        [
+            {
+                "batter": 1,
+                "hitter_name": "Launch Band Hitter",
+                "swstr_pct": 0.12,
+                "barrel_bbe_pct": 0.20,
+                "pulled_barrel_pct": 0.18,
+                "sweet_spot_pct": 0.38,
+                "avg_launch_angle": 22.0,
+                "barrel_bip_pct": 0.15,
+                "hard_hit_pct": 0.48,
+                "xwoba": 0.410,
+            },
+            {
+                "batter": 2,
+                "hitter_name": "Low Launch Hitter",
+                "swstr_pct": 0.18,
+                "barrel_bbe_pct": 0.10,
+                "pulled_barrel_pct": 0.08,
+                "sweet_spot_pct": 0.24,
+                "avg_launch_angle": 4.0,
+                "barrel_bip_pct": 0.08,
+                "hard_hit_pct": 0.36,
+                "xwoba": 0.330,
+            },
+        ]
+    )
+
+    scored = add_hitter_matchup_score(hitters)
+    pulled_barrel_scale = normalize_series(scored["pulled_barrel_pct"])
+    pulled_barrel_bonus = ((pulled_barrel_scale - 0.5).clip(lower=0.0) / 0.5) * 0.08
+    expected_test_score = ((
+        (normalize_series(scored["swstr_pct"], inverse=True) * 0.325)
+        + (normalize_series(scored["barrel_bbe_pct"]) * 0.30)
+        + (scored["shape_score"] * 0.20)
+        + (scored["zone_fit_score"] * 0.175)
+    ) * 100.0 * (1.0 + pulled_barrel_bonus)).clip(lower=0.0, upper=100.0)
+
+    pd.testing.assert_series_equal(
+        scored["test_shape_score"],
+        scored["shape_score"],
+        check_names=False,
+    )
+    pd.testing.assert_series_equal(
+        scored["test_score"],
+        expected_test_score,
+        check_names=False,
+    )
