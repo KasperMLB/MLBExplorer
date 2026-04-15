@@ -1114,9 +1114,18 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             background: transparent;
         }
         @media (max-width: 760px) {
+            div[data-testid="stHorizontalBlock"]:has(.game-logo-card) {
+                display: flex !important;
+                flex-direction: row !important;
+                flex-wrap: wrap !important;
+                align-items: stretch !important;
+                gap: 8px !important;
+            }
             div[data-testid="stHorizontalBlock"]:has(.game-logo-card) > div[data-testid="column"] {
-                flex: 0 0 calc(50% - 8px) !important;
-                width: calc(50% - 8px) !important;
+                flex: 0 0 calc(50% - 4px) !important;
+                width: calc(50% - 4px) !important;
+                max-width: calc(50% - 4px) !important;
+                min-width: calc(50% - 4px) !important;
             }
             .game-logo-card {
                 min-height: 116px;
