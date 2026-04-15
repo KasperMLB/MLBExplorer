@@ -1034,6 +1034,7 @@ def _render_top_board_sections(top_hitters: pd.DataFrame, top_pitchers: pd.DataF
     if top_hitters.empty:
         st.info("No full-slate hitter board artifact is available for this slate.")
     else:
+        st.caption("HR Form is display-only: recent EV90 and launch-angle shape versus the hitter's own season baseline.")
         preset_columns = hitter_columns_for_preset(hitter_preset)
         ranked_hitters = top_hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
         display_hitters = add_matchup_logo_columns(ranked_hitters)
@@ -1069,6 +1070,34 @@ def _render_top_board_sections(top_hitters: pd.DataFrame, top_pitchers: pd.DataF
             height=320,
             lower_is_better=PITCHER_LOWER_IS_BETTER,
             higher_is_better=PITCHER_HIGHER_IS_BETTER,
+            use_lightweight=True,
+        )
+
+
+def _render_artifact_health(manifest: pd.DataFrame) -> None:
+    if manifest.empty:
+        return
+    with st.expander("Artifact Health", expanded=False):
+        display_columns = [
+            column
+            for column in [
+                "target_date",
+                "built_at_utc",
+                "metrics_version",
+                "game_count",
+                "hitter_snapshot_rows",
+                "pitcher_snapshot_rows",
+                "live_rows",
+                "timing_prepare_assets_seconds",
+                "timing_daily_artifacts_seconds",
+                "timing_per_game_artifacts_seconds",
+            ]
+            if column in manifest.columns
+        ]
+        render_metric_grid(
+            manifest[display_columns] if display_columns else manifest,
+            key="artifact-health-local",
+            height=130,
             use_lightweight=True,
         )
 
@@ -1353,9 +1382,10 @@ def main() -> None:
     rosters = engine.load_daily_rosters(target_date)
 
     top_board_start = perf_counter()
-    top_hitters = _filter_top_board(engine.load_daily_top_slate_hitters(target_date), filters)
-    top_pitchers = _filter_top_board(engine.load_daily_top_slate_pitchers(target_date), filters)
+    top_hitters = engine.load_daily_filtered_top_slate_hitters(target_date, filters)
+    top_pitchers = engine.load_daily_filtered_top_slate_pitchers(target_date, filters)
     _render_top_board_sections(top_hitters, top_pitchers, hitter_preset)
+    _render_artifact_health(engine.load_daily_artifact_manifest(target_date))
     _record_perf(perf_events, "top boards", top_board_start)
 
     st.divider()
@@ -1385,11 +1415,15 @@ def main() -> None:
             height=420,
             use_lightweight=True,
         )
-        summary_matchups = build_slate_summary_matchup_overview(top_hitters, per_game=3)
+        summary_matchups = engine.load_daily_slate_summary(target_date, filters)
+        if summary_matchups.empty:
+            summary_matchups = build_slate_summary_matchup_overview(top_hitters, per_game=3)
+        hidden_summary_columns = {"split_key", "recent_window", "weighted_mode"}
+        visible_summary_columns = [column for column in summary_matchups.columns if column not in hidden_summary_columns]
         if not summary_matchups.empty:
             st.markdown("#### Top 3 Matchups By Game")
             render_metric_grid(
-                summary_matchups,
+                summary_matchups[visible_summary_columns],
                 key="slate-summary-top-matchups-local",
                 height=420,
                 use_lightweight=True,

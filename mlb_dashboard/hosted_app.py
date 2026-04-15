@@ -407,6 +407,62 @@ def _load_top_board_artifacts(base_url: str, target_date: date) -> tuple[pd.Data
 
 
 @st.cache_data(show_spinner=False)
+def _load_filtered_top_board_artifacts(
+    base_url: str,
+    target_date: date,
+    split: str,
+    recent_window: str,
+    weighted_mode: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    day = target_date.isoformat()
+    daily_base = f"{base_url}/daily/{day}"
+    board_base = f"{daily_base}/top_boards"
+    hitter_file = f"{split}__{recent_window}__{weighted_mode}__hitters.parquet"
+    pitcher_file = f"{split}__{recent_window}__{weighted_mode}__pitchers.parquet"
+    try:
+        loaded = load_remote_parquet_bundle(
+            {
+                "top_hitters": (board_base, hitter_file, None),
+                "top_pitchers": (board_base, pitcher_file, None),
+            }
+        )
+        return loaded["top_hitters"], loaded["top_pitchers"]
+    except Exception:
+        top_hitters, top_pitchers = _load_top_board_artifacts(base_url, target_date)
+        return (
+            _filter_top_board(top_hitters, split, recent_window, weighted_mode),
+            _filter_top_board(top_pitchers, split, recent_window, weighted_mode),
+        )
+
+
+@st.cache_data(show_spinner=False)
+def _load_slate_summary_artifact(
+    base_url: str,
+    target_date: date,
+    split: str,
+    recent_window: str,
+    weighted_mode: str,
+) -> pd.DataFrame:
+    day = target_date.isoformat()
+    daily_base = f"{base_url}/daily/{day}"
+    try:
+        frame = load_remote_parquet(daily_base, "slate_summary.parquet")
+    except Exception:
+        return pd.DataFrame()
+    return _filter_top_board(frame, split, recent_window, weighted_mode)
+
+
+@st.cache_data(show_spinner=False)
+def _load_artifact_manifest(base_url: str, target_date: date) -> pd.DataFrame:
+    day = target_date.isoformat()
+    daily_base = f"{base_url}/daily/{day}"
+    try:
+        return load_remote_parquet(daily_base, "artifact_manifest.parquet")
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(show_spinner=False)
 def _load_core_artifacts(
     base_url: str,
     target_date: date,
@@ -556,6 +612,7 @@ def _render_top_board_sections(
     if top_hitters.empty:
         st.info("No full-slate hitter board artifact is available for this slate.")
     else:
+        st.caption("HR Form is display-only: recent EV90 and launch-angle shape versus the hitter's own season baseline.")
         preset_columns = hitter_columns_for_preset(hitter_preset)
         ranked_hitters = top_hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
         display_hitters = add_matchup_logo_columns(ranked_hitters)
@@ -608,6 +665,34 @@ def _render_top_board_sections(
             )
         else:
             st.info("No pitcher table columns available for this slate.")
+
+
+def _render_artifact_health(manifest: pd.DataFrame, mobile_safe: bool) -> None:
+    if manifest.empty:
+        return
+    with st.expander("Artifact Health", expanded=False):
+        display_columns = [
+            column
+            for column in [
+                "target_date",
+                "built_at_utc",
+                "metrics_version",
+                "game_count",
+                "hitter_snapshot_rows",
+                "pitcher_snapshot_rows",
+                "live_rows",
+                "timing_prepare_assets_seconds",
+                "timing_daily_artifacts_seconds",
+                "timing_per_game_artifacts_seconds",
+            ]
+            if column in manifest.columns
+        ]
+        _render_hosted_grid(
+            manifest[display_columns] if display_columns else manifest,
+            key="artifact-health-hosted",
+            mobile_safe=mobile_safe,
+            height=130,
+        )
 
 
 def _filter_hitters(
@@ -878,10 +963,9 @@ def main() -> None:
     top_pitchers = pd.DataFrame()
     try:
         top_board_start = perf_counter()
-        top_hitters, top_pitchers = _load_top_board_artifacts(base_url, resolved_date)
-        top_hitters = _filter_top_board(top_hitters, split, recent_window, weighted_mode)
-        top_pitchers = _filter_top_board(top_pitchers, split, recent_window, weighted_mode)
+        top_hitters, top_pitchers = _load_filtered_top_board_artifacts(base_url, resolved_date, split, recent_window, weighted_mode)
         _render_top_board_sections(top_hitters, top_pitchers, hitter_preset, mobile_safe)
+        _render_artifact_health(_load_artifact_manifest(base_url, resolved_date), mobile_safe)
         _record_perf(perf_events, "top boards", top_board_start)
     except Exception:
         st.warning("Full-slate top board artifacts were not found. Rebuild and publish artifacts to restore full-slate top tables.")
@@ -912,11 +996,15 @@ def main() -> None:
             mobile_safe=mobile_safe,
             height=420,
         )
-        summary_matchups = build_slate_summary_matchup_overview(top_hitters, per_game=3)
+        summary_matchups = _load_slate_summary_artifact(base_url, resolved_date, split, recent_window, weighted_mode)
+        if summary_matchups.empty:
+            summary_matchups = build_slate_summary_matchup_overview(top_hitters, per_game=3)
+        hidden_summary_columns = {"split_key", "recent_window", "weighted_mode"}
+        visible_summary_columns = [column for column in summary_matchups.columns if column not in hidden_summary_columns]
         if not summary_matchups.empty:
             st.markdown("#### Top 3 Matchups By Game")
             _render_hosted_grid(
-                summary_matchups,
+                summary_matchups[visible_summary_columns],
                 key="slate-summary-top-matchups-hosted",
                 mobile_safe=mobile_safe,
                 height=420,

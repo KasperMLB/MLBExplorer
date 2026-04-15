@@ -110,6 +110,35 @@ class StatcastQueryEngine:
             return pd.DataFrame()
         return pd.read_parquet(path)
 
+    def load_daily_filtered_top_slate_hitters(self, target_date: date, filters: QueryFilters) -> pd.DataFrame:
+        daily_dir = self.config.daily_dir / target_date.isoformat()
+        path = daily_dir / "top_boards" / f"{filters.split}__{filters.recent_window}__{filters.weighted_mode}__hitters.parquet"
+        if path.exists():
+            return pd.read_parquet(path)
+        return _filter_combo(self.load_daily_top_slate_hitters(target_date), filters.split, filters.recent_window, filters.weighted_mode)
+
+    def load_daily_filtered_top_slate_pitchers(self, target_date: date, filters: QueryFilters) -> pd.DataFrame:
+        daily_dir = self.config.daily_dir / target_date.isoformat()
+        path = daily_dir / "top_boards" / f"{filters.split}__{filters.recent_window}__{filters.weighted_mode}__pitchers.parquet"
+        if path.exists():
+            return pd.read_parquet(path)
+        return _filter_combo(self.load_daily_top_slate_pitchers(target_date), filters.split, filters.recent_window, filters.weighted_mode)
+
+    def load_daily_slate_summary(self, target_date: date, filters: QueryFilters) -> pd.DataFrame:
+        path = self.config.daily_dir / target_date.isoformat() / "slate_summary.parquet"
+        if not path.exists():
+            return pd.DataFrame()
+        return _filter_combo(pd.read_parquet(path), filters.split, filters.recent_window, filters.weighted_mode)
+
+    def load_daily_artifact_manifest(self, target_date: date) -> pd.DataFrame:
+        path = self.config.daily_dir / target_date.isoformat() / "artifact_manifest.parquet"
+        if path.exists():
+            return pd.read_parquet(path)
+        json_path = self.config.daily_dir / target_date.isoformat() / "artifact_manifest.json"
+        if json_path.exists():
+            return pd.DataFrame([json.loads(json_path.read_text(encoding="utf-8"))])
+        return pd.DataFrame()
+
     def load_daily_game_bundle(self, target_date: date, game_pk: int) -> dict[str, pd.DataFrame]:
         game_dir = self.config.daily_dir / target_date.isoformat() / "games" / str(game_pk)
         bundle: dict[str, pd.DataFrame] = {}
@@ -328,6 +357,20 @@ def load_remote_parquet(base_path: str, filename: str, columns: list[str] | None
         if requested:
             return pd.read_parquet(path)
         raise
+
+
+def _filter_combo(frame: pd.DataFrame, split: str, recent_window: str, weighted_mode: str) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    output = frame.copy()
+    for column, value in {
+        "split_key": split,
+        "recent_window": recent_window,
+        "weighted_mode": weighted_mode,
+    }.items():
+        if column in output.columns:
+            output = output.loc[output[column].astype(str).eq(str(value))]
+    return output.reset_index(drop=True)
 
 
 def load_remote_parquet_bundle(

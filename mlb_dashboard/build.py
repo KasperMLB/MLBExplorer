@@ -12,7 +12,14 @@ from pathlib import Path
 import pandas as pd
 
 from .config import AppConfig, DEFAULT_PITCH_GROUPS, DEFAULT_RECENT_WINDOWS, DEFAULT_SPLITS, ensure_directories
-from .dashboard_views import add_hitter_matchup_score, add_pitcher_rank_score, apply_projected_lineup, build_pitcher_matchup_key, launch_angle_score
+from .dashboard_views import (
+    add_hitter_matchup_score,
+    add_pitcher_rank_score,
+    apply_projected_lineup,
+    build_pitcher_matchup_key,
+    build_slate_summary_matchup_overview,
+    launch_angle_score,
+)
 from .local_store import (
     SourcePayload,
     load_local_source_payload,
@@ -302,19 +309,27 @@ def prepare_build_assets(
     historical_statcast_override: pd.DataFrame | None = None,
 ) -> PreparedBuildAssets:
     ensure_directories(config)
+    prepare_start = datetime.now(UTC)
+    _progress("resolve historical source", 1, 7, prepare_start)
     historical_statcast = historical_statcast_override if historical_statcast_override is not None else _resolve_historical_statcast(config, csv_dir, force_refresh=force_historical_refresh)
+    _progress("load local 2026 source payload", 2, 7, prepare_start)
     live_payload = load_local_source_payload(config, target_date=target_date)
+    _progress("merge historical and live rows", 3, 7, prepare_start)
     raw_statcast = _merge_historical_and_live(historical_statcast, live_payload)
+    _progress("aggregate zone profiles", 4, 7, prepare_start)
     hitter_pitcher_exclusions = _build_hitter_pitcher_exclusions(raw_statcast)
     batter_zone_profiles, pitcher_zone_profiles = _aggregate_zone_profiles(raw_statcast, config.zone_year_weights)
+    _progress("build hitter and pitcher metric tables", 5, 7, prepare_start)
     hitter_metrics, pitcher_metrics, pitcher_summary_by_hand, pitcher_arsenal, pitcher_arsenal_by_hand, pitcher_usage_by_count = build_metric_tables(
         raw_statcast,
         config,
     )
+    _progress("build pitch family and movement context", 6, 7, prepare_start)
     pitcher_family_zone_context, pitcher_movement_arsenal, batter_family_zone_profiles, pitch_context_source = build_movement_context_tables(
         raw_statcast,
         config,
     )
+    _progress("prepared build assets ready", 7, 7, prepare_start)
     return PreparedBuildAssets(
         historical_statcast=historical_statcast,
         live_payload=live_payload,
@@ -1605,6 +1620,85 @@ def _safe_parquet(frame: pd.DataFrame, path: Path) -> None:
     frame.to_parquet(path, index=False)
 
 
+def _elapsed_seconds(start: datetime) -> float:
+    return (datetime.now(UTC) - start).total_seconds()
+
+
+def _progress(label: str, step: int, total: int, start: datetime | None = None) -> None:
+    suffix = f" elapsed={_elapsed_seconds(start):.1f}s" if start is not None else ""
+    print(f"[progress] {step}/{total} {label}{suffix}", flush=True)
+
+
+def _write_artifact_manifest(
+    context: BuildContext,
+    *,
+    schedule: list[dict],
+    rosters: list[dict],
+    live_payload: SourcePayload,
+    hitter_snapshots: pd.DataFrame,
+    pitcher_snapshots: pd.DataFrame,
+    timings: dict[str, float],
+) -> None:
+    target_dir = context.config.daily_dir / context.target_date.isoformat()
+    source_max_event_date = _live_source_max_event_date(live_payload)
+    manifest = {
+        "target_date": context.target_date.isoformat(),
+        "built_at_utc": datetime.now(UTC).isoformat(),
+        "metrics_version": context.config.metrics_version,
+        "game_count": len(schedule),
+        "roster_rows": len(rosters),
+        "hitter_snapshot_rows": len(hitter_snapshots),
+        "pitcher_snapshot_rows": len(pitcher_snapshots),
+        "source_max_event_date": source_max_event_date.isoformat() if source_max_event_date else "",
+        "live_rows": len(live_payload.live_pitch_mix),
+        "hitter_rolling_rows": len(live_payload.hitter_rolling),
+        "pitcher_rolling_rows": len(live_payload.pitcher_rolling),
+        **{f"timing_{key}_seconds": round(value, 2) for key, value in timings.items()},
+    }
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "artifact_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    _safe_parquet(pd.DataFrame([manifest]), target_dir / "artifact_manifest.parquet")
+
+
+def _filtered_board_filename(split_key: str, recent_window: str, weighted_mode: str, board_type: str) -> str:
+    return f"{split_key}__{recent_window}__{weighted_mode}__{board_type}.parquet"
+
+
+def _write_filtered_top_board_files(
+    target_dir: Path,
+    top_hitters: pd.DataFrame,
+    top_pitchers: pd.DataFrame,
+) -> pd.DataFrame:
+    boards_dir = target_dir / "top_boards"
+    summary_rows: list[pd.DataFrame] = []
+    for split_key in DEFAULT_SPLITS:
+        for recent_window in DEFAULT_RECENT_WINDOWS:
+            for weighted_mode in ("weighted", "unweighted"):
+                mask_values = {
+                    "split_key": split_key,
+                    "recent_window": recent_window,
+                    "weighted_mode": weighted_mode,
+                }
+                hitter_subset = top_hitters.copy()
+                pitcher_subset = top_pitchers.copy()
+                for column, value in mask_values.items():
+                    if column in hitter_subset.columns:
+                        hitter_subset = hitter_subset.loc[hitter_subset[column].astype(str).eq(str(value))]
+                    if column in pitcher_subset.columns:
+                        pitcher_subset = pitcher_subset.loc[pitcher_subset[column].astype(str).eq(str(value))]
+                _safe_parquet(hitter_subset, boards_dir / _filtered_board_filename(split_key, recent_window, weighted_mode, "hitters"))
+                _safe_parquet(pitcher_subset, boards_dir / _filtered_board_filename(split_key, recent_window, weighted_mode, "pitchers"))
+                overview = build_slate_summary_matchup_overview(hitter_subset, per_game=3)
+                if not overview.empty:
+                    overview.insert(0, "weighted_mode", weighted_mode)
+                    overview.insert(0, "recent_window", recent_window)
+                    overview.insert(0, "split_key", split_key)
+                    summary_rows.append(overview)
+    if not summary_rows:
+        return pd.DataFrame(columns=["split_key", "recent_window", "weighted_mode", "Game", "Top 1", "Top 2", "Top 3"])
+    return pd.concat(summary_rows, ignore_index=True, sort=False)
+
+
 def _build_top_slate_hitter_board(snapshots: pd.DataFrame) -> pd.DataFrame:
     if snapshots.empty:
         return pd.DataFrame()
@@ -1679,8 +1773,12 @@ def _build_top_slate_pitcher_board(snapshots: pd.DataFrame) -> pd.DataFrame:
 
 def _save_top_slate_board_files(context: BuildContext, hitter_snapshots: pd.DataFrame, pitcher_snapshots: pd.DataFrame) -> None:
     target_dir = context.config.daily_dir / context.target_date.isoformat()
-    _safe_parquet(_build_top_slate_hitter_board(hitter_snapshots), target_dir / "top_slate_hitters.parquet")
-    _safe_parquet(_build_top_slate_pitcher_board(pitcher_snapshots), target_dir / "top_slate_pitchers.parquet")
+    top_hitters = _build_top_slate_hitter_board(hitter_snapshots)
+    top_pitchers = _build_top_slate_pitcher_board(pitcher_snapshots)
+    _safe_parquet(top_hitters, target_dir / "top_slate_hitters.parquet")
+    _safe_parquet(top_pitchers, target_dir / "top_slate_pitchers.parquet")
+    slate_summary = _write_filtered_top_board_files(target_dir, top_hitters, top_pitchers)
+    _safe_parquet(slate_summary, target_dir / "slate_summary.parquet")
 
 
 def _save_per_game_files(
@@ -2592,7 +2690,9 @@ def run_build(
 ) -> None:
     ensure_directories(context.config)
     build_start = datetime.now(UTC)
+    timings: dict[str, float] = {}
     prepare_start = datetime.now(UTC)
+    _progress("prepare reusable source assets", 1, 8, build_start)
     prepared = prepared_assets or prepare_build_assets(
         context.config,
         context.csv_dir,
@@ -2600,9 +2700,11 @@ def run_build(
         force_historical_refresh=force_historical_refresh,
         historical_statcast_override=historical_statcast_override,
     )
-    print(f"[timing] prepare_assets={(datetime.now(UTC) - prepare_start).total_seconds():.2f}s")
+    timings["prepare_assets"] = _elapsed_seconds(prepare_start)
+    print(f"[timing] prepare_assets={timings['prepare_assets']:.2f}s", flush=True)
     if refresh_reusable_artifacts:
         reusable_start = datetime.now(UTC)
+        _progress("write reusable artifacts", 2, 8, build_start)
         _write_duckdb(
             context.config,
             prepared.hitter_metrics,
@@ -2637,8 +2739,10 @@ def run_build(
             prepared.pitcher_movement_arsenal,
             prepared.hitter_pitcher_exclusions,
         )
-        print(f"[timing] reusable_artifacts={(datetime.now(UTC) - reusable_start).total_seconds():.2f}s")
+        timings["reusable_artifacts"] = _elapsed_seconds(reusable_start)
+        print(f"[timing] reusable_artifacts={timings['reusable_artifacts']:.2f}s", flush=True)
     daily_context_start = datetime.now(UTC)
+    _progress("fetch schedule, rosters, and lineups", 3, 8, build_start)
     schedule = fetch_schedule(context.target_date)
     rosters = fetch_team_rosters_for_schedule(schedule, context.target_date)
     valid_teams = tuple(sorted({game["away_team"] for game in schedule} | {game["home_team"] for game in schedule}))
@@ -2647,7 +2751,8 @@ def run_build(
         rotowire_lineups = resolve_rotowire_lineups(fetch_rotowire_lineups(context.target_date, valid_teams), rosters_frame)
     except Exception:
         rotowire_lineups = {}
-    print(f"[timing] daily_context={(datetime.now(UTC) - daily_context_start).total_seconds():.2f}s")
+    timings["daily_context"] = _elapsed_seconds(daily_context_start)
+    print(f"[timing] daily_context={timings['daily_context']:.2f}s", flush=True)
     source_max_event_date = _live_source_max_event_date(prepared.live_payload)
     tracking_health = _build_live_tracking_health(
         context.target_date,
@@ -2686,6 +2791,7 @@ def run_build(
                 write_props_odds_snapshot(context.config, props_payload.raw_rows)
         except Exception as exc:  # pragma: no cover
             warnings.warn(f"Unable to capture live odds during build for {context.target_date.isoformat()}: {exc}")
+    _progress("build hitter and pitcher snapshots", 4, 8, build_start)
     snapshots = _build_hitter_tracking_snapshots(
         context.target_date,
         schedule,
@@ -2744,6 +2850,7 @@ def run_build(
             pitcher_outcome_snapshots = pd.DataFrame()
     pitcher_outcomes = _build_pitcher_game_outcomes(outcome_target_date, prepared.raw_statcast, pitcher_outcome_snapshots, source_max_event_date)
     tracking_start = datetime.now(UTC)
+    _progress("write tracking files", 5, 8, build_start)
     write_tracking_payload(
         context.config,
         snapshots,
@@ -2755,8 +2862,10 @@ def run_build(
         pitcher_arsenal_snapshots=pitcher_arsenal_snapshots,
         pitcher_count_snapshots=pitcher_count_snapshots,
     )
-    print(f"[timing] tracking_write={(datetime.now(UTC) - tracking_start).total_seconds():.2f}s")
+    timings["tracking_write"] = _elapsed_seconds(tracking_start)
+    print(f"[timing] tracking_write={timings['tracking_write']:.2f}s", flush=True)
     daily_write_start = datetime.now(UTC)
+    _progress("write daily and top-board artifacts", 6, 8, build_start)
     _save_daily_files(
         context,
         schedule,
@@ -2779,8 +2888,10 @@ def run_build(
         tracking_health,
     )
     _save_top_slate_board_files(context, snapshots, pitcher_snapshots)
-    print(f"[timing] daily_artifacts={(datetime.now(UTC) - daily_write_start).total_seconds():.2f}s")
+    timings["daily_artifacts"] = _elapsed_seconds(daily_write_start)
+    print(f"[timing] daily_artifacts={timings['daily_artifacts']:.2f}s", flush=True)
     per_game_start = datetime.now(UTC)
+    _progress("write per-game artifacts", 7, 8, build_start)
     _save_per_game_files(
         context,
         schedule,
@@ -2800,8 +2911,23 @@ def run_build(
         prepared.pitcher_family_zone_context,
         prepared.pitcher_movement_arsenal,
     )
-    print(f"[timing] per_game_artifacts={(datetime.now(UTC) - per_game_start).total_seconds():.2f}s")
-    print(f"[timing] build_total={(datetime.now(UTC) - build_start).total_seconds():.2f}s")
+    timings["per_game_artifacts"] = _elapsed_seconds(per_game_start)
+    print(f"[timing] per_game_artifacts={timings['per_game_artifacts']:.2f}s", flush=True)
+    manifest_start = datetime.now(UTC)
+    _progress("write artifact manifest", 8, 8, build_start)
+    timings["build_total"] = _elapsed_seconds(build_start)
+    _write_artifact_manifest(
+        context,
+        schedule=schedule,
+        rosters=rosters,
+        live_payload=prepared.live_payload,
+        hitter_snapshots=snapshots,
+        pitcher_snapshots=pitcher_snapshots,
+        timings=timings,
+    )
+    timings["artifact_manifest"] = _elapsed_seconds(manifest_start)
+    print(f"[timing] artifact_manifest={timings['artifact_manifest']:.2f}s", flush=True)
+    print(f"[timing] build_total={_elapsed_seconds(build_start):.2f}s", flush=True)
 
 
 def parse_args() -> argparse.Namespace:

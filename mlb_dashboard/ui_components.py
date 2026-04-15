@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 from math import cos, radians, sin
 from pathlib import Path
+from urllib.parse import quote
 import warnings
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -978,17 +979,23 @@ def _selector_card_html(content_html: str, *, active: bool) -> str:
     return f"<div class='game-logo-card{active_class}'>{content_html}</div>"
 
 
-def _set_logo_game_selection(state_key: str, selection_key: str) -> None:
-    st.session_state[state_key] = selection_key
-
-
 def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[str, list[dict]]:
     if not slate:
         return "Slate Summary", []
 
     state_key = f"{key_prefix}-selected-game-pk"
+    param_key = f"{key_prefix}-game"
     valid_keys = [str(game.get("game_pk")) for game in slate if game.get("game_pk") is not None]
-    if state_key not in st.session_state or st.session_state[state_key] not in {SLATE_SUMMARY_SELECTION, *valid_keys}:
+    valid_selection_keys = {SLATE_SUMMARY_SELECTION, *valid_keys}
+    try:
+        query_selection = st.query_params.get(param_key)
+        if isinstance(query_selection, list):
+            query_selection = query_selection[0] if query_selection else None
+    except Exception:
+        query_selection = None
+    if query_selection in valid_selection_keys:
+        st.session_state[state_key] = query_selection
+    if state_key not in st.session_state or st.session_state[state_key] not in valid_selection_keys:
         st.session_state[state_key] = valid_keys[0] if valid_keys else SLATE_SUMMARY_SELECTION
 
     st.markdown(
@@ -999,16 +1006,24 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             font-weight: 650;
             margin: 0 0 8px 0;
         }
+        .game-logo-selector-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+            gap: 8px;
+            margin-bottom: 10px;
+        }
         .game-logo-card {
             min-height: 72px;
             display: flex;
             align-items: center;
             justify-content: center;
+            flex-direction: column;
             border: 1px solid rgba(31, 41, 55, 0.14);
             border-radius: 8px;
             background: #f8fafc;
             padding: 8px 10px;
-            margin-bottom: 6px;
+            color: #1f2937;
+            text-decoration: none;
         }
         .game-logo-card.is-active {
             border-color: #1f2937;
@@ -1036,52 +1051,51 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             font-weight: 750;
             letter-spacing: 0;
         }
+        .game-logo-card-status {
+            color: #6b7280;
+            font-size: 0.72rem;
+            line-height: 1;
+            margin-top: 7px;
+        }
+        .game-logo-card.is-active .game-logo-card-status {
+            color: #1f2937;
+            font-weight: 750;
+        }
         </style>
         """,
         unsafe_allow_html=True,
     )
     st.markdown("<div class='game-logo-selector-label'>Game</div>", unsafe_allow_html=True)
 
-    cards: list[tuple[str, str, str]] = [
-        (
-            SLATE_SUMMARY_SELECTION,
-            "<div class='game-logo-card summary-card'>Slate Summary</div>",
-            "Summary",
+    selected = str(st.session_state[state_key])
+
+    def _href(selection_key: str) -> str:
+        return f"?{quote(param_key)}={quote(selection_key)}"
+
+    cards: list[str] = []
+    summary_active = selected == SLATE_SUMMARY_SELECTION
+    cards.append(
+        "<a class='game-logo-card summary-card{active}' href='{href}'>"
+        "<span>Slate Summary</span><span class='game-logo-card-status'>{status}</span></a>".format(
+            active=" is-active" if summary_active else "",
+            href=_href(SLATE_SUMMARY_SELECTION),
+            status="Selected" if summary_active else "Open",
         )
-    ]
+    )
     for game in slate:
         game_key = str(game.get("game_pk"))
+        active = selected == game_key
         cards.append(
-            (
-                game_key,
-                _selector_card_html(
-                    matchup_logo_html(str(game.get("away_team", "")), str(game.get("home_team", "")), size=32),
-                    active=st.session_state[state_key] == game_key,
-                ),
-                "Open",
+            "<a class='game-logo-card{active}' href='{href}'>{logos}"
+            "<span class='game-logo-card-status'>{status}</span></a>".format(
+                active=" is-active" if active else "",
+                href=_href(game_key),
+                logos=matchup_logo_html(str(game.get("away_team", "")), str(game.get("home_team", "")), size=32),
+                status="Selected" if active else "Open",
             )
         )
 
-    per_row = 6
-    for start in range(0, len(cards), per_row):
-        columns = st.columns(min(per_row, len(cards) - start))
-        for column, (selection_key, card_html, button_label) in zip(columns, cards[start : start + per_row]):
-            active = st.session_state[state_key] == selection_key
-            with column:
-                if selection_key == SLATE_SUMMARY_SELECTION:
-                    st.markdown(
-                        card_html.replace("game-logo-card summary-card", f"game-logo-card summary-card{' is-active' if active else ''}"),
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(card_html, unsafe_allow_html=True)
-                st.button(
-                    "Selected" if active else button_label,
-                    key=f"{key_prefix}-card-{selection_key}",
-                    use_container_width=True,
-                    on_click=_set_logo_game_selection,
-                    args=(state_key, selection_key),
-                )
+    st.markdown("<div class='game-logo-selector-grid'>" + "".join(cards) + "</div>", unsafe_allow_html=True)
 
     return resolve_logo_game_selection(slate, st.session_state.get(state_key))
 
@@ -1875,7 +1889,9 @@ def _draw_dark_table(
             display_label = headers[col_idx]
             source_column = source_by_label.get(display_label, display_label)
             fill = "#ffffff" if row_idx % 2 else "#f7f9fc"
-            if source_column in frame.columns and (source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS):
+            if source_column == "hr_form" and HR_FORM_PCT_COLUMN in frame.columns:
+                fill = _hr_form_heatmap_hex(frame.iloc[row_idx - 1].get(HR_FORM_PCT_COLUMN)) or fill
+            elif source_column in frame.columns and (source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS):
                 fill = _background_hex(
                     source_column,
                     frame.iloc[row_idx - 1][source_column],
@@ -2202,7 +2218,9 @@ def _draw_top_slate_table_section(
             display_label = headers[col_idx]
             source_column = source_by_label.get(display_label, display_label)
             fill = "#ffffff" if row_idx % 2 else "#f7f9fc"
-            if source_column in frame.columns and (source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS):
+            if source_column == "hr_form" and HR_FORM_PCT_COLUMN in frame.columns:
+                fill = _hr_form_heatmap_hex(frame.iloc[row_idx - 1].get(HR_FORM_PCT_COLUMN)) or fill
+            elif source_column in frame.columns and (source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS):
                 fill = _background_hex(
                     source_column,
                     frame.iloc[row_idx - 1][source_column],
@@ -2514,7 +2532,9 @@ def _draw_section(
             display_label = headers[col_idx]
             source_column = source_by_label.get(display_label, display_label)
             fill = "#ffffff" if row_idx % 2 else "#f7f9fc"
-            if source_column in frame.columns and (source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS):
+            if source_column == "hr_form" and HR_FORM_PCT_COLUMN in frame.columns:
+                fill = _hr_form_heatmap_hex(frame.iloc[row_idx - 1].get(HR_FORM_PCT_COLUMN)) or fill
+            elif source_column in frame.columns and (source_column in PERCENT_COLUMNS or source_column in RATE_COLUMNS):
                 fill = _background_hex(
                     source_column,
                     frame.iloc[row_idx - 1][source_column],

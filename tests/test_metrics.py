@@ -578,10 +578,20 @@ def test_top_slate_board_artifacts_include_all_filter_combinations(tmp_path):
 
     top_hitters = pd.read_parquet(config.daily_dir / "2026-04-15" / "top_slate_hitters.parquet")
     top_pitchers = pd.read_parquet(config.daily_dir / "2026-04-15" / "top_slate_pitchers.parquet")
+    filtered_hitters = pd.read_parquet(config.daily_dir / "2026-04-15" / "top_boards" / "overall__season__weighted__hitters.parquet")
+    filtered_pitchers = pd.read_parquet(config.daily_dir / "2026-04-15" / "top_boards" / "overall__season__weighted__pitchers.parquet")
+    slate_summary = pd.read_parquet(config.daily_dir / "2026-04-15" / "slate_summary.parquet")
     expected_combos = len(DEFAULT_SPLITS) * len(DEFAULT_RECENT_WINDOWS) * 2
 
     assert top_hitters[["split_key", "recent_window", "weighted_mode"]].drop_duplicates().shape[0] == expected_combos
     assert top_pitchers[["split_key", "recent_window", "weighted_mode"]].drop_duplicates().shape[0] == expected_combos
+    assert filtered_hitters[["split_key", "recent_window", "weighted_mode"]].drop_duplicates().to_dict("records") == [
+        {"split_key": "overall", "recent_window": "season", "weighted_mode": "weighted"}
+    ]
+    assert filtered_pitchers[["split_key", "recent_window", "weighted_mode"]].drop_duplicates().to_dict("records") == [
+        {"split_key": "overall", "recent_window": "season", "weighted_mode": "weighted"}
+    ]
+    assert {"split_key", "recent_window", "weighted_mode", "Game", "Top 1"}.issubset(slate_summary.columns)
     assert top_hitters["game_pk"].nunique() == 2
     assert top_pitchers["game_pk"].nunique() == 2
     assert {"game", "hitter_name", "matchup_score", "test_score", "ceiling_score", "hr_form", "hr_form_pct"}.issubset(top_hitters.columns)
