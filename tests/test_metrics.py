@@ -1,7 +1,7 @@
 import pandas as pd
 
-from mlb_dashboard.config import AppConfig
-from mlb_dashboard.build import BuildContext, _save_per_game_files
+from mlb_dashboard.config import AppConfig, DEFAULT_RECENT_WINDOWS, DEFAULT_SPLITS
+from mlb_dashboard.build import BuildContext, _save_per_game_files, _save_top_slate_board_files
 from mlb_dashboard.dashboard_views import add_hitter_matchup_score, filter_excluded_pitchers_from_hitter_pool, normalize_series
 from mlb_dashboard.local_app import _game_selection as _local_game_selection
 from mlb_dashboard.local_store import (
@@ -26,7 +26,7 @@ def test_game_selection_defaults_to_first_game_detail():
     ]
     import mlb_dashboard.local_app as local_app
 
-    original = local_app.st.sidebar.selectbox
+    original = local_app.st.selectbox
     try:
         seen = {}
 
@@ -35,10 +35,10 @@ def test_game_selection_defaults_to_first_game_detail():
             seen["index"] = index
             return options[index]
 
-        local_app.st.sidebar.selectbox = fake_selectbox
+        local_app.st.selectbox = fake_selectbox
         selection, selected_games = _local_game_selection(slate)
     finally:
-        local_app.st.sidebar.selectbox = original
+        local_app.st.selectbox = original
 
     assert seen["options"] == ["Slate Summary", "AAA @ BBB", "CCC @ DDD"]
     assert seen["index"] == 1
@@ -50,12 +50,12 @@ def test_game_selection_summary_prepares_no_detail_games():
     slate = [{"away_team": "AAA", "home_team": "BBB", "game_pk": 1}]
     import mlb_dashboard.local_app as local_app
 
-    original = local_app.st.sidebar.selectbox
+    original = local_app.st.selectbox
     try:
-        local_app.st.sidebar.selectbox = lambda label, options, index=0: "Slate Summary"
+        local_app.st.selectbox = lambda label, options, index=0: "Slate Summary"
         selection, selected_games = _local_game_selection(slate)
     finally:
-        local_app.st.sidebar.selectbox = original
+        local_app.st.selectbox = original
 
     assert selection == "Slate Summary"
     assert selected_games == []
@@ -382,3 +382,69 @@ def test_per_game_artifacts_are_scoped_to_game(tmp_path):
     assert set(matchup["game_pk"].dropna().astype(int)) == {1}
     assert 12 not in set(pd.to_numeric(zones.get("batter_id"), errors="coerce").dropna().astype(int))
     assert 30 not in set(pd.to_numeric(detail.get("pitcher_id"), errors="coerce").dropna().astype(int))
+
+
+def test_top_slate_board_artifacts_include_all_filter_combinations(tmp_path):
+    config = AppConfig(workspace=tmp_path, csv_dir=tmp_path, artifacts_dir=tmp_path / "artifacts", db_path=tmp_path / "artifacts" / "statcast.duckdb")
+    context = BuildContext(config=config, target_date=pd.Timestamp("2026-04-15").date(), csv_dir=tmp_path)
+    hitter_rows = []
+    pitcher_rows = []
+    for game_pk, game_label, hitter_name, pitcher_name in [
+        (1, "AAA @ BBB", "Hitter One", "Pitcher One"),
+        (2, "CCC @ DDD", "Hitter Two", "Pitcher Two"),
+    ]:
+        for split_key in DEFAULT_SPLITS:
+            for recent_window in DEFAULT_RECENT_WINDOWS:
+                for weighted_mode in ("weighted", "unweighted"):
+                    hitter_rows.append(
+                        {
+                            "game_label": game_label,
+                            "game_pk": game_pk,
+                            "team": game_label[:3],
+                            "opponent": game_label[-3:],
+                            "hitter_name": hitter_name,
+                            "batter_id": game_pk * 10,
+                            "opposing_pitcher_name": pitcher_name,
+                            "split_key": split_key,
+                            "recent_window": recent_window,
+                            "weighted_mode": weighted_mode,
+                            "matchup_score": 70.0,
+                            "test_score": 68.0,
+                            "ceiling_score": 65.0,
+                            "xwoba": 0.4,
+                            "pitch_count": 100,
+                            "bip": 40,
+                        }
+                    )
+                    pitcher_rows.append(
+                        {
+                            "game_label": game_label,
+                            "game_pk": game_pk,
+                            "team": game_label[:3],
+                            "opponent": game_label[-3:],
+                            "pitcher_name": pitcher_name,
+                            "pitcher_id": game_pk * 20,
+                            "p_throws": "R",
+                            "split_key": split_key,
+                            "recent_window": recent_window,
+                            "weighted_mode": weighted_mode,
+                            "pitcher_score": 60.0,
+                            "strikeout_score": 55.0,
+                            "xwoba": 0.31,
+                            "csw_pct": 0.29,
+                            "swstr_pct": 0.12,
+                        }
+                    )
+
+    _save_top_slate_board_files(context, pd.DataFrame(hitter_rows), pd.DataFrame(pitcher_rows))
+
+    top_hitters = pd.read_parquet(config.daily_dir / "2026-04-15" / "top_slate_hitters.parquet")
+    top_pitchers = pd.read_parquet(config.daily_dir / "2026-04-15" / "top_slate_pitchers.parquet")
+    expected_combos = len(DEFAULT_SPLITS) * len(DEFAULT_RECENT_WINDOWS) * 2
+
+    assert top_hitters[["split_key", "recent_window", "weighted_mode"]].drop_duplicates().shape[0] == expected_combos
+    assert top_pitchers[["split_key", "recent_window", "weighted_mode"]].drop_duplicates().shape[0] == expected_combos
+    assert top_hitters["game_pk"].nunique() == 2
+    assert top_pitchers["game_pk"].nunique() == 2
+    assert {"game", "hitter_name", "matchup_score", "test_score", "ceiling_score"}.issubset(top_hitters.columns)
+    assert {"game", "pitcher_name", "pitcher_score", "strikeout_score"}.issubset(top_pitchers.columns)

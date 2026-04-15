@@ -98,6 +98,18 @@ class StatcastQueryEngine:
             return pd.DataFrame(columns=["player_id", "exclude_from_hitter_tables"])
         return pd.read_parquet(path)
 
+    def load_daily_top_slate_hitters(self, target_date: date) -> pd.DataFrame:
+        path = self.config.daily_dir / target_date.isoformat() / "top_slate_hitters.parquet"
+        if not path.exists():
+            return pd.DataFrame()
+        return pd.read_parquet(path)
+
+    def load_daily_top_slate_pitchers(self, target_date: date) -> pd.DataFrame:
+        path = self.config.daily_dir / target_date.isoformat() / "top_slate_pitchers.parquet"
+        if not path.exists():
+            return pd.DataFrame()
+        return pd.read_parquet(path)
+
     def load_daily_game_bundle(self, target_date: date, game_pk: int) -> dict[str, pd.DataFrame]:
         game_dir = self.config.daily_dir / target_date.isoformat() / "games" / str(game_pk)
         bundle: dict[str, pd.DataFrame] = {}

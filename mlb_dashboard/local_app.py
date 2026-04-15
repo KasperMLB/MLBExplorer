@@ -44,12 +44,12 @@ from .dashboard_views import (
     latest_built_date,
     pivot_count_usage,
     sort_arsenal_frame,
-    with_game_label,
 )
 from .odds_service import american_to_implied_prob
 from .local_store import read_hitter_backtest_data, read_pitcher_backtest_data, read_prop_odds_history
 from .query_engine import QueryFilters, StatcastQueryEngine
 from .rotowire_lineups import fetch_rotowire_lineups, resolve_rotowire_lineups
+from .team_logos import add_matchup_logo_columns, team_logo_img_html
 from .ui_components import (
     build_pitcher_summary_table,
     render_export_hub,
@@ -999,10 +999,74 @@ def _game_selection(slate: list[dict]) -> tuple[str, list[dict]]:
     labels = [f"{game['away_team']} @ {game['home_team']}" for game in slate]
     options = ["Slate Summary"] + labels
     default_index = 1 if len(options) > 1 else 0
-    selection = st.sidebar.selectbox("Game", options, index=default_index)
+    selection = st.selectbox("Game", options, index=default_index)
     if selection == "Slate Summary":
         return selection, []
     return selection, [game for game in slate if f"{game['away_team']} @ {game['home_team']}" == selection]
+
+
+def _filter_top_board(frame: pd.DataFrame, filters: QueryFilters) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    output = frame.copy()
+    for column, value in {
+        "split_key": filters.split,
+        "recent_window": filters.recent_window,
+        "weighted_mode": filters.weighted_mode,
+    }.items():
+        if column in output.columns:
+            output = output.loc[output[column].eq(value)].copy()
+    return output
+
+
+def _matchup_display_columns(frame: pd.DataFrame) -> list[str]:
+    logo_columns = ["away_logo", "matchup_at", "home_logo"]
+    if all(column in frame.columns for column in logo_columns) and frame[["away_logo", "home_logo"]].notna().any().any():
+        return logo_columns
+    return ["game"] if "game" in frame.columns else []
+
+
+def _render_top_board_sections(top_hitters: pd.DataFrame, top_pitchers: pd.DataFrame, hitter_preset: str) -> None:
+    st.header("Top Slate Hitters")
+    if top_hitters.empty:
+        st.info("No full-slate hitter board artifact is available for this slate.")
+    else:
+        preset_columns = hitter_columns_for_preset(hitter_preset)
+        ranked_hitters = top_hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
+        display_hitters = add_matchup_logo_columns(ranked_hitters)
+        top_hitter_columns = _matchup_display_columns(display_hitters) + [
+            column for column in preset_columns if column in display_hitters.columns and column != "game"
+        ]
+        render_slate_export_controls(
+            "top-matchups-export",
+            "Top Slate Export",
+            build_slate_export_options(ranked_hitters, preset_columns, top_pitchers),
+            None,
+        )
+        render_metric_grid(
+            display_hitters[top_hitter_columns].head(10),
+            key="top-slate-hitters",
+            height=320,
+            use_lightweight=True,
+        )
+
+    st.header("Top Slate Pitchers")
+    if top_pitchers.empty:
+        st.info("No full-slate pitcher board artifact is available for this slate.")
+    else:
+        ranked_pitchers = top_pitchers.sort_values(["pitcher_score", "xwoba"], ascending=[False, True], na_position="last")
+        display_pitchers = add_matchup_logo_columns(ranked_pitchers)
+        pitcher_columns = _matchup_display_columns(display_pitchers) + [
+            column for column in TOP_PITCHER_COLUMNS if column in display_pitchers.columns and column != "game"
+        ]
+        render_metric_grid(
+            display_pitchers[pitcher_columns].head(10),
+            key="top-slate-pitchers",
+            height=320,
+            lower_is_better=PITCHER_LOWER_IS_BETTER,
+            higher_is_better=PITCHER_HIGHER_IS_BETTER,
+            use_lightweight=True,
+        )
 
 
 def _render_pitcher_tab(
@@ -1139,71 +1203,6 @@ def _render_pitcher_tab(
         )
 
     return export_sections, summary_all, arsenal_grid, hand_grids, count_grids
-
-
-def _render_top_sections(
-    selected_games: list[dict],
-    hitters_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]],
-    pitchers_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]],
-    hitter_preset: str,
-    best_matchups_by_game: dict[int, pd.DataFrame] | None = None,
-    full_slate_export_bundles: list[dict] | None = None,
-) -> None:
-    hitter_rows: list[pd.DataFrame] = []
-    pitcher_rows: list[pd.DataFrame] = []
-
-    for game in selected_games:
-        label = f"{game['away_team']} @ {game['home_team']}"
-        away_hitters, home_hitters = hitters_by_game.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        away_pitcher, home_pitcher = pitchers_by_game.get(game["game_pk"], (pd.DataFrame(), pd.DataFrame()))
-        if not away_hitters.empty:
-            hitter_rows.append(with_game_label(away_hitters, label))
-        if not home_hitters.empty:
-            hitter_rows.append(with_game_label(home_hitters, label))
-        if not away_pitcher.empty:
-            pitcher_rows.append(with_game_label(away_pitcher, label))
-        if not home_pitcher.empty:
-            pitcher_rows.append(with_game_label(home_pitcher, label))
-
-    st.header("Top Slate Hitters")
-    all_hitters = pd.concat(hitter_rows, ignore_index=True, sort=False) if hitter_rows else pd.DataFrame()
-    all_pitchers = pd.concat(pitcher_rows, ignore_index=True, sort=False) if pitcher_rows else pd.DataFrame()
-    ranked_pitchers = all_pitchers.sort_values(["pitcher_score", "xwoba"], ascending=[False, True], na_position="last") if not all_pitchers.empty else pd.DataFrame()
-    if all_hitters.empty:
-        st.info("No hitter data available for this slate.")
-    else:
-        preset_columns = hitter_columns_for_preset(hitter_preset)
-        ranked_hitters = all_hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last")
-        export_options = build_slate_export_options(
-            ranked_hitters,
-            preset_columns,
-            ranked_pitchers,
-        )
-        render_slate_export_controls(
-            "top-matchups-export",
-            "Top Slate Export",
-            export_options,
-            full_slate_export_bundles,
-        )
-        render_metric_grid(
-            ranked_hitters[["game"] + [column for column in preset_columns if column in all_hitters.columns]].head(10),
-            key="top-slate-hitters",
-            height=320,
-            use_lightweight=True,
-        )
-
-    st.header("Top Slate Pitchers")
-    if all_pitchers.empty:
-        st.info("No pitcher data available for this slate.")
-    else:
-        render_metric_grid(
-            ranked_pitchers[_existing_columns(ranked_pitchers, TOP_PITCHER_COLUMNS)].head(10),
-            key="top-slate-pitchers",
-            height=320,
-            lower_is_better=PITCHER_LOWER_IS_BETTER,
-            higher_is_better=PITCHER_HIGHER_IS_BETTER,
-            use_lightweight=True,
-        )
 
 
 def _build_family_fit_board(
@@ -1348,18 +1347,29 @@ def main() -> None:
         st.error(f"No built slate found for {target_date.isoformat()}. Run the build command for that date first.")
         return
     rosters = engine.load_daily_rosters(target_date)
+    st.caption(f"{len(slate)} games on slate")
+    st.caption("PulledBrl% tracks pulled barrels on tracked batted-ball events. Brl/BIP% uses all balls in play.")
+
+    top_board_start = perf_counter()
+    top_hitters = _filter_top_board(engine.load_daily_top_slate_hitters(target_date), filters)
+    top_pitchers = _filter_top_board(engine.load_daily_top_slate_pitchers(target_date), filters)
+    _render_top_board_sections(top_hitters, top_pitchers, hitter_preset)
+    _record_perf(perf_events, "top boards", top_board_start)
+
+    st.divider()
     selected_label, selected_games = _game_selection(slate)
     active_sections = {st.session_state.get(f"section-local-{game['game_pk']}", "Matchup") for game in selected_games}
     st.caption(f"{'Slate summary' if selected_label == 'Slate Summary' else f'Showing {selected_label}'} | {len(slate)} games on slate")
-    st.caption("PulledBrl% tracks pulled barrels on tracked batted-ball events. Brl/BIP% uses all balls in play.")
     if selected_label == "Slate Summary":
         st.header("Slate Summary")
         slate_summary = pd.DataFrame(slate)
+        slate_summary["game"] = slate_summary["away_team"].astype(str) + " @ " + slate_summary["home_team"].astype(str)
+        slate_summary = add_matchup_logo_columns(slate_summary)
+        matchup_columns = _matchup_display_columns(slate_summary) or ["away_team", "home_team"]
         summary_columns = [
             column
             for column in [
-                "away_team",
-                "home_team",
+                *matchup_columns,
                 "away_probable_pitcher_name",
                 "home_probable_pitcher_name",
                 "game_status",
@@ -1519,14 +1529,6 @@ def main() -> None:
         )
     _record_perf(perf_events, "game prep", game_prep_start)
 
-    _render_top_sections(
-        selected_games,
-        hitters_by_game,
-        pitchers_by_game,
-        hitter_preset,
-        best_matchups_by_game,
-        None,
-    )
     _render_perf(perf_events)
     st.divider()
 
@@ -1543,7 +1545,6 @@ def main() -> None:
         away_export_sections = _build_pitcher_export_sections(game["away_team"], away_summary_by_hand, away_arsenal, away_by_hand, away_count)
         home_export_sections = _build_pitcher_export_sections(game["home_team"], home_summary_by_hand, home_arsenal, home_by_hand, home_count)
 
-        st.markdown(f"### {game['away_team']} @ {game['home_team']}")
         with st.container():
             render_matchup_header(game)
             active_section = st.radio(
@@ -1565,7 +1566,7 @@ def main() -> None:
                 st.markdown("#### Pitchers")
                 pitcher_cols = st.columns(2)
                 with pitcher_cols[0]:
-                    st.markdown(f"##### {game['away_team']} starter")
+                    st.markdown(f"##### {team_logo_img_html(game['away_team'], size=24)} {game['away_team']} starter", unsafe_allow_html=True)
                     _render_pitcher_tab(
                         game["game_pk"],
                         game["away_team"],
@@ -1581,7 +1582,7 @@ def main() -> None:
                         pitcher_family_zone_context,
                     )
                 with pitcher_cols[1]:
-                    st.markdown(f"##### {game['home_team']} starter")
+                    st.markdown(f"##### {team_logo_img_html(game['home_team'], size=24)} {game['home_team']} starter", unsafe_allow_html=True)
                     _render_pitcher_tab(
                         game["game_pk"],
                         game["home_team"],
@@ -1600,7 +1601,7 @@ def main() -> None:
                 st.markdown("#### Hitters")
                 hitter_cols = st.columns(2)
                 with hitter_cols[0]:
-                    st.caption(f"{game['away_team']} vs {game.get('home_probable_pitcher_name') or 'opposing starter'}")
+                    st.markdown(f"{team_logo_img_html(game['away_team'], size=22)} {game['away_team']} vs {game.get('home_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
                     away_hitters = render_metric_grid(
                         away_hitters[[column for column in hitter_columns if column in away_hitters.columns]],
                         key=f"away-hitters-{game['game_pk']}",
@@ -1608,7 +1609,7 @@ def main() -> None:
                         use_lightweight=True,
                     )
                 with hitter_cols[1]:
-                    st.caption(f"{game['home_team']} vs {game.get('away_probable_pitcher_name') or 'opposing starter'}")
+                    st.markdown(f"{team_logo_img_html(game['home_team'], size=22)} {game['home_team']} vs {game.get('away_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
                     home_hitters = render_metric_grid(
                         home_hitters[[column for column in hitter_columns if column in home_hitters.columns]],
                         key=f"home-hitters-{game['game_pk']}",

@@ -174,6 +174,26 @@ def add_metric_flags(frame: pd.DataFrame) -> pd.DataFrame:
     enriched["is_called_strike"] = is_called_strike(enriched)
     enriched["is_hit_event"] = is_hit_event(enriched)
     enriched["is_home_run_event"] = is_home_run_event(enriched)
+    flag_columns = [
+        "is_batted_ball",
+        "is_tracked_bbe",
+        "is_barrel",
+        "is_hard_hit",
+        "is_fly_ball",
+        "is_ground_ball",
+        "is_sweet_spot",
+        "is_pulled_batted_ball",
+        "is_pulled_barrel",
+        "is_hr_window",
+        "is_productive_air",
+        "is_swinging_strike",
+        "is_ball",
+        "is_called_strike",
+        "is_hit_event",
+        "is_home_run_event",
+    ]
+    for column in flag_columns:
+        enriched[column] = enriched[column].fillna(False).astype(bool)
     enriched["xwoba_value"] = pd.to_numeric(enriched["estimated_woba_using_speedangle"], errors="coerce")
     enriched["launch_angle_value"] = pd.to_numeric(enriched["launch_angle"], errors="coerce")
     enriched["release_speed_value"] = pd.to_numeric(enriched["release_speed"], errors="coerce")

@@ -9,6 +9,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pandas as pd
 import streamlit as st
 from .components import render_zone_tool as render_zone_tool_component
+from .team_logos import matchup_logo_html
 
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -120,7 +121,11 @@ HITTER_CONFIDENCE_COLORS = {
     "Thin": "#b45309",
     "Very Thin": "#b91c1c",
 }
+LOGO_COLUMNS = {"away_logo", "home_logo"}
 DISPLAY_LABELS = {
+    "away_logo": "Away",
+    "matchup_at": "@",
+    "home_logo": "Home",
     "game": "Game",
     "split_label": "Split",
     "hitter_name": "Hitter",
@@ -298,6 +303,8 @@ ZONE_RECTANGLES = {
 
 
 def _format_value(column: str, value: object, export_mode: bool = False) -> str:
+    if column in LOGO_COLUMNS:
+        return value if isinstance(value, str) else ""
     if pd.isna(value):
         return "-"
     if column in INTEGER_COLUMNS:
@@ -786,6 +793,14 @@ def render_metric_grid(
             hide_index=True,
             use_container_width=True,
             height=height,
+            column_config={
+                DISPLAY_LABELS.get(column, column): st.column_config.ImageColumn(
+                    DISPLAY_LABELS.get(column, column),
+                    width="small",
+                )
+                for column in frame.columns
+                if column in LOGO_COLUMNS
+            },
         )
         return frame
 
@@ -934,7 +949,15 @@ def build_pitcher_summary_table(pitcher_summary_by_hand: pd.DataFrame) -> pd.Dat
 
 
 def render_matchup_header(game: dict) -> None:
-    st.subheader(f"{game['away_team']} @ {game['home_team']}")
+    st.markdown(
+        f"""
+<div class="matchup-title">
+  {matchup_logo_html(str(game.get("away_team", "")), str(game.get("home_team", "")), size=38)}
+  <span class="matchup-title-text">{game['away_team']} @ {game['home_team']}</span>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.caption(f"{game.get('status', 'Scheduled')} | Game PK: {game['game_pk']}")
 
 

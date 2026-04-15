@@ -1502,6 +1502,82 @@ def _safe_parquet(frame: pd.DataFrame, path: Path) -> None:
     frame.to_parquet(path, index=False)
 
 
+def _build_top_slate_hitter_board(snapshots: pd.DataFrame) -> pd.DataFrame:
+    if snapshots.empty:
+        return pd.DataFrame()
+    output = snapshots.copy()
+    if "game" not in output.columns:
+        output["game"] = output.get("game_label")
+    columns = [
+        "game",
+        "game_pk",
+        "team",
+        "opponent",
+        "hitter_name",
+        "batter_id",
+        "opposing_pitcher_name",
+        "split_key",
+        "recent_window",
+        "weighted_mode",
+        "matchup_score",
+        "test_score",
+        "ceiling_score",
+        "zone_fit_score",
+        "pitch_count",
+        "bip",
+        "xwoba",
+        "xwoba_con",
+        "swstr_pct",
+        "pulled_barrel_pct",
+        "barrel_bip_pct",
+        "sweet_spot_pct",
+        "fb_pct",
+        "hard_hit_pct",
+        "avg_launch_angle",
+        "likely_starter_score",
+    ]
+    return output[[column for column in columns if column in output.columns]].copy()
+
+
+def _build_top_slate_pitcher_board(snapshots: pd.DataFrame) -> pd.DataFrame:
+    if snapshots.empty:
+        return pd.DataFrame()
+    output = snapshots.copy()
+    if "game" not in output.columns:
+        output["game"] = output.get("game_label")
+    columns = [
+        "game",
+        "game_pk",
+        "team",
+        "opponent",
+        "pitcher_name",
+        "pitcher_id",
+        "p_throws",
+        "split_key",
+        "recent_window",
+        "weighted_mode",
+        "pitcher_score",
+        "strikeout_score",
+        "xwoba",
+        "csw_pct",
+        "swstr_pct",
+        "putaway_pct",
+        "ball_pct",
+        "siera",
+        "pulled_barrel_pct",
+        "barrel_bip_pct",
+        "fb_pct",
+        "hard_hit_pct",
+    ]
+    return output[[column for column in columns if column in output.columns]].copy()
+
+
+def _save_top_slate_board_files(context: BuildContext, hitter_snapshots: pd.DataFrame, pitcher_snapshots: pd.DataFrame) -> None:
+    target_dir = context.config.daily_dir / context.target_date.isoformat()
+    _safe_parquet(_build_top_slate_hitter_board(hitter_snapshots), target_dir / "top_slate_hitters.parquet")
+    _safe_parquet(_build_top_slate_pitcher_board(pitcher_snapshots), target_dir / "top_slate_pitchers.parquet")
+
+
 def _save_per_game_files(
     context: BuildContext,
     schedule: list[dict],
@@ -2583,6 +2659,7 @@ def run_build(
         pitch_shape_diagnostics,
         tracking_health,
     )
+    _save_top_slate_board_files(context, snapshots, pitcher_snapshots)
     print(f"[timing] daily_artifacts={(datetime.now(UTC) - daily_write_start).total_seconds():.2f}s")
     per_game_start = datetime.now(UTC)
     _save_per_game_files(

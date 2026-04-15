@@ -15,3 +15,5 @@ statcast_clean.csv
 *.jpg
 *.jpeg
 *.png
+!logos/
+!logos/*.png
