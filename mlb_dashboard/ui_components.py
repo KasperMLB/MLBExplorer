@@ -1006,7 +1006,7 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             margin-bottom: 10px;
         }
         .game-logo-card {
-            min-height: 72px;
+            min-height: 116px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1014,7 +1014,7 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             border: 1px solid rgba(31, 41, 55, 0.14);
             border-radius: 8px;
             background: #f8fafc;
-            padding: 8px 10px;
+            padding: 14px 16px;
             color: #1f2937;
             text-decoration: none;
         }
@@ -1027,41 +1027,49 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 8px;
+            gap: 18px;
         }
         .game-logo-card .matchup-at {
             color: #1f2937;
             font-weight: 800;
-            font-size: 0.95rem;
+            font-size: 1.55rem;
         }
         .game-logo-card .team-logo-fallback {
             color: #1f2937;
             font-weight: 800;
-            font-size: 0.85rem;
+            font-size: 1rem;
         }
         .game-logo-card.summary-card {
             color: #1f2937;
             font-weight: 750;
             letter-spacing: 0;
         }
+        .game-logo-card-summary-title {
+            font-size: 1.5rem;
+            font-weight: 800;
+            text-decoration: underline;
+            text-underline-offset: 4px;
+        }
         .game-logo-card-status {
             color: #6b7280;
-            font-size: 0.72rem;
+            font-size: 1.0rem;
             line-height: 1;
-            margin-top: 7px;
+            margin-top: 12px;
+            text-decoration: underline;
+            text-underline-offset: 3px;
         }
         .game-logo-card.is-active .game-logo-card-status {
             color: #1f2937;
             font-weight: 750;
         }
         div[class*="st-key-__GAME_SELECTOR_KEY__-card-"] {
-            margin-top: -72px;
-            margin-bottom: 8px;
+            margin-top: -116px;
+            margin-bottom: 10px;
             position: relative;
             z-index: 2;
         }
         div[class*="st-key-__GAME_SELECTOR_KEY__-card-"] button {
-            min-height: 72px;
+            min-height: 116px;
             opacity: 0;
             padding: 0;
             border: 0;
@@ -1085,7 +1093,7 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
         (
             SLATE_SUMMARY_SELECTION,
             "<div class='game-logo-card summary-card'>"
-            "<span>Slate Summary</span><span class='game-logo-card-status'>Open</span></div>",
+            "<span class='game-logo-card-summary-title'>Slate Summary</span><span class='game-logo-card-status'>Open</span></div>",
             "Summary",
         )
     ]
@@ -1096,7 +1104,7 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             (
                 game_key,
                 _selector_card_html(
-                    matchup_logo_html(str(game.get("away_team", "")), str(game.get("home_team", "")), size=32)
+                    matchup_logo_html(str(game.get("away_team", "")), str(game.get("home_team", "")), size=54)
                     + f"<span class='game-logo-card-status'>{'Selected' if active else 'Open'}</span>",
                     active=active,
                 ),
@@ -1104,7 +1112,7 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             )
         )
 
-    per_row = 6
+    per_row = 2
     for start in range(0, len(cards), per_row):
         columns = st.columns(min(per_row, len(cards) - start))
         for column, (selection_key, card_html, button_label) in zip(columns, cards[start : start + per_row]):
