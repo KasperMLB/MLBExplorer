@@ -35,6 +35,7 @@ from .dashboard_views import (
     build_pitcher_matchup_key,
     build_zone_overlay_map,
     build_best_matchups,
+    build_slate_summary_best_matchups,
     compute_family_fit_score,
     build_game_export_options,
     build_slate_export_options,
@@ -1391,6 +1392,24 @@ def main() -> None:
             height=420,
             use_lightweight=True,
         )
+        summary_matchups = build_slate_summary_best_matchups(top_hitters, per_game=3)
+        if not summary_matchups.empty:
+            st.markdown("#### Top 3 Matchups By Game")
+            summary_matchups = add_matchup_logo_columns(summary_matchups)
+            matchup_columns, matchup_hidden = _hitter_table_columns(
+                summary_matchups,
+                _matchup_display_columns(summary_matchups)
+                + [column for column in BEST_MATCHUP_COLUMNS if column in summary_matchups.columns],
+            )
+            render_metric_grid(
+                summary_matchups[matchup_columns],
+                key="slate-summary-top-matchups-local",
+                height=620,
+                hidden_columns=matchup_hidden,
+                use_lightweight=True,
+            )
+        else:
+            st.info("No top matchup board rows are available for this slate summary.")
         _render_perf(perf_events)
         return
 

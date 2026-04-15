@@ -848,6 +848,17 @@ def build_best_matchups(away_hitters: pd.DataFrame, home_hitters: pd.DataFrame) 
     return combined.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last").head(3)
 
 
+def build_slate_summary_best_matchups(top_hitters: pd.DataFrame, per_game: int = 3) -> pd.DataFrame:
+    if top_hitters.empty or "game_pk" not in top_hitters.columns:
+        return pd.DataFrame()
+    sort_columns = [column for column in ["game_pk", "matchup_score", "xwoba"] if column in top_hitters.columns]
+    if not sort_columns:
+        return top_hitters.head(0).copy()
+    ascending = [True, False, False][: len(sort_columns)]
+    ranked = top_hitters.sort_values(sort_columns, ascending=ascending, na_position="last").copy()
+    return ranked.groupby("game_pk", sort=False).head(per_game).reset_index(drop=True)
+
+
 def build_top_matchups_export_sections(
     selected_games: list[dict],
     hitters_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]],
