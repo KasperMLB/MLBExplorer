@@ -1359,7 +1359,7 @@ def main() -> None:
     st.divider()
     selected_label, selected_games = _game_selection(slate)
     active_sections = {st.session_state.get(f"section-local-{game['game_pk']}", "Matchup") for game in selected_games}
-    st.caption(f"{'Slate summary' if selected_label == 'Slate Summary' else f'Showing {selected_label}'} | {len(slate)} games on slate")
+    st.caption(f"{'Slate summary' if selected_label == 'Slate Summary' else 'Selected game'} | {len(slate)} games on slate")
     if selected_label == "Slate Summary":
         st.header("Slate Summary")
         slate_summary = pd.DataFrame(slate)
@@ -1566,7 +1566,7 @@ def main() -> None:
                 st.markdown("#### Pitchers")
                 pitcher_cols = st.columns(2)
                 with pitcher_cols[0]:
-                    st.markdown(f"##### {team_logo_img_html(game['away_team'], size=24)} {game['away_team']} starter", unsafe_allow_html=True)
+                    st.markdown(f"##### {team_logo_img_html(game['away_team'], size=24)} Starter", unsafe_allow_html=True)
                     _render_pitcher_tab(
                         game["game_pk"],
                         game["away_team"],
@@ -1582,7 +1582,7 @@ def main() -> None:
                         pitcher_family_zone_context,
                     )
                 with pitcher_cols[1]:
-                    st.markdown(f"##### {team_logo_img_html(game['home_team'], size=24)} {game['home_team']} starter", unsafe_allow_html=True)
+                    st.markdown(f"##### {team_logo_img_html(game['home_team'], size=24)} Starter", unsafe_allow_html=True)
                     _render_pitcher_tab(
                         game["game_pk"],
                         game["home_team"],
@@ -1601,7 +1601,7 @@ def main() -> None:
                 st.markdown("#### Hitters")
                 hitter_cols = st.columns(2)
                 with hitter_cols[0]:
-                    st.markdown(f"{team_logo_img_html(game['away_team'], size=22)} {game['away_team']} vs {game.get('home_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
+                    st.markdown(f"{team_logo_img_html(game['away_team'], size=22)} vs {game.get('home_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
                     away_hitters = render_metric_grid(
                         away_hitters[[column for column in hitter_columns if column in away_hitters.columns]],
                         key=f"away-hitters-{game['game_pk']}",
@@ -1609,7 +1609,7 @@ def main() -> None:
                         use_lightweight=True,
                     )
                 with hitter_cols[1]:
-                    st.markdown(f"{team_logo_img_html(game['home_team'], size=22)} {game['home_team']} vs {game.get('away_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
+                    st.markdown(f"{team_logo_img_html(game['home_team'], size=22)} vs {game.get('away_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
                     home_hitters = render_metric_grid(
                         home_hitters[[column for column in hitter_columns if column in home_hitters.columns]],
                         key=f"home-hitters-{game['game_pk']}",

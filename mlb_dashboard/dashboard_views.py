@@ -387,11 +387,25 @@ def build_family_zone_fit_detail(
     if merged.empty:
         return pd.DataFrame(columns=FAMILY_FIT_DETAIL_COLUMNS)
 
+    def _coalesced_numeric(*columns: str, default: float = 0.0) -> pd.Series:
+        result = pd.Series(pd.NA, index=merged.index, dtype="Float64")
+        for column in columns:
+            if column in merged.columns:
+                result = result.fillna(pd.to_numeric(merged[column], errors="coerce"))
+        return result.fillna(default).astype(float)
+
+    merged["weighted_sample_size"] = _coalesced_numeric("weighted_sample_size", "weighted_sample_size_pitcher", "weighted_sample_size_batter")
+    merged["prior_weight_share"] = _coalesced_numeric("prior_weight_share", "prior_weight_share_pitcher", "prior_weight_share_batter")
+    merged["usage_rate_overall"] = _coalesced_numeric("usage_rate_overall", "usage_rate_overall_pitcher", "usage_rate_overall_batter")
+    merged["damage_rate"] = _coalesced_numeric("damage_rate", "damage_rate_batter")
+    merged["xwoba"] = _coalesced_numeric("xwoba", "xwoba_batter")
+    merged["damage_allowed_rate"] = _coalesced_numeric("damage_allowed_rate", "damage_allowed_rate_pitcher")
+    merged["xwoba_allowed"] = _coalesced_numeric("xwoba_allowed", "xwoba_allowed_pitcher")
+
     hitter_shape = normalize_series(pd.to_numeric(merged.get("damage_rate"), errors="coerce").fillna(pd.to_numeric(merged.get("xwoba"), errors="coerce")))
     pitcher_exposure = normalize_series(pd.to_numeric(merged.get("damage_allowed_rate"), errors="coerce").fillna(pd.to_numeric(merged.get("xwoba_allowed"), errors="coerce")))
     usage_scale = normalize_series(pd.to_numeric(merged.get("usage_rate_overall"), errors="coerce"))
     merged["fit_score"] = ((hitter_shape * 0.45) + (pitcher_exposure * 0.35) + (usage_scale * 0.20)).clip(lower=0.0, upper=1.0)
-    merged["weighted_sample_size"] = pd.to_numeric(merged["weighted_sample_size"], errors="coerce").fillna(0.0)
     return (
         merged[
             [

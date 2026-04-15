@@ -889,7 +889,7 @@ def main() -> None:
 
     st.divider()
     selected_label, selected_games = _game_selection(all_games)
-    st.caption(f"{'Slate summary' if selected_label == 'Slate Summary' else f'Showing {selected_label}'} | {len(all_games)} games on slate")
+    st.caption(f"{'Slate summary' if selected_label == 'Slate Summary' else 'Selected game'} | {len(all_games)} games on slate")
     if selected_label == "Slate Summary":
         st.header("Slate Summary")
         slate_summary = pd.DataFrame(all_games)
@@ -1119,7 +1119,7 @@ def main() -> None:
                 st.markdown("#### Pitchers")
                 pitcher_cols = st.columns(2)
                 with pitcher_cols[0]:
-                    st.markdown(f"##### {team_logo_img_html(game['away_team'], size=24)} {game['away_team']} starter", unsafe_allow_html=True)
+                    st.markdown(f"##### {team_logo_img_html(game['away_team'], size=24)} Starter", unsafe_allow_html=True)
                     away_export_sections = _render_pitcher_tab(
                         game["game_pk"],
                         game["away_team"],
@@ -1136,7 +1136,7 @@ def main() -> None:
                         mobile_safe,
                     )
                 with pitcher_cols[1]:
-                    st.markdown(f"##### {team_logo_img_html(game['home_team'], size=24)} {game['home_team']} starter", unsafe_allow_html=True)
+                    st.markdown(f"##### {team_logo_img_html(game['home_team'], size=24)} Starter", unsafe_allow_html=True)
                     home_export_sections = _render_pitcher_tab(
                         game["game_pk"],
                         game["home_team"],
@@ -1156,7 +1156,7 @@ def main() -> None:
                 st.markdown("#### Hitters")
                 hitter_cols = st.columns(2)
                 with hitter_cols[0]:
-                    st.markdown(f"{team_logo_img_html(game['away_team'], size=22)} {game['away_team']} vs {game.get('home_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
+                    st.markdown(f"{team_logo_img_html(game['away_team'], size=22)} vs {game.get('home_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
                     away_hitter_columns, away_hitter_hidden = _hitter_table_columns(away_hitters, hitter_columns)
                     away_hitters = _render_hosted_grid(
                         away_hitters[away_hitter_columns],
@@ -1167,7 +1167,7 @@ def main() -> None:
                         color_hitter_confidence=True,
                     )
                 with hitter_cols[1]:
-                    st.markdown(f"{team_logo_img_html(game['home_team'], size=22)} {game['home_team']} vs {game.get('away_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
+                    st.markdown(f"{team_logo_img_html(game['home_team'], size=22)} vs {game.get('away_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
                     home_hitter_columns, home_hitter_hidden = _hitter_table_columns(home_hitters, hitter_columns)
                     home_hitters = _render_hosted_grid(
                         home_hitters[home_hitter_columns],

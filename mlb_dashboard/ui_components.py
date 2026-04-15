@@ -953,7 +953,6 @@ def render_matchup_header(game: dict) -> None:
         f"""
 <div class="matchup-title">
   {matchup_logo_html(str(game.get("away_team", "")), str(game.get("home_team", "")), size=38)}
-  <span class="matchup-title-text">{game['away_team']} @ {game['home_team']}</span>
 </div>
         """,
         unsafe_allow_html=True,

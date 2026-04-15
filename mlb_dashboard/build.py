@@ -97,6 +97,11 @@ OUTCOME_STATUS_SOURCE_LAG = "source_lag"
 OUTCOME_STATUS_SOURCE_EMPTY = "source_empty"
 OUTCOME_STATUS_SOURCE_MISSING_ROWS = "source_missing_rows"
 
+
+def _select_schema_columns(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    return frame.reindex(columns=columns).copy()
+
+
 PITCHER_METRIC_INPUT_COLUMNS = [
     "game_year",
     "game_pk",
@@ -1887,7 +1892,8 @@ def _build_hitter_tracking_snapshots(
                             axis=1,
                         )
                         rows.append(
-                            work[
+                            _select_schema_columns(
+                                work,
                                 [
                                     "snapshot_id",
                                     "build_date",
@@ -1921,8 +1927,8 @@ def _build_hitter_tracking_snapshots(
                                     "avg_launch_angle",
                                     "pitch_count",
                                     "bip",
-                                ]
-                            ].rename(columns={"batter": "batter_id"})
+                                ],
+                            ).rename(columns={"batter": "batter_id"})
                         )
     if not rows:
         return pd.DataFrame()
@@ -2200,7 +2206,8 @@ def _build_pitcher_tracking_snapshots(
         ),
         axis=1,
     )
-    return starter_rows[
+    return _select_schema_columns(
+        starter_rows,
         [
             "snapshot_id",
             "build_date",
@@ -2244,8 +2251,8 @@ def _build_pitcher_tracking_snapshots(
             "avg_launch_angle",
             "pitch_count",
             "bip",
-        ]
-    ].copy()
+        ],
+    )
 
 
 def _build_pitcher_arsenal_snapshots(
@@ -2259,11 +2266,19 @@ def _build_pitcher_arsenal_snapshots(
     probable = probable_pitchers.drop_duplicates(["game_pk", "pitcher_id"]).copy()
     probable_ids = probable["pitcher_id"].dropna().astype(int).unique()
     rows: list[pd.DataFrame] = []
-    all_frame = pitcher_arsenal.loc[pitcher_arsenal["pitcher_id"].isin(probable_ids)].copy()
+    all_frame = (
+        pitcher_arsenal.loc[pitcher_arsenal["pitcher_id"].isin(probable_ids)].copy()
+        if "pitcher_id" in pitcher_arsenal.columns
+        else pd.DataFrame()
+    )
     if not all_frame.empty:
         all_frame["batter_side_key"] = "all"
         rows.append(all_frame)
-    by_hand = pitcher_arsenal_by_hand.loc[pitcher_arsenal_by_hand["pitcher_id"].isin(probable_ids)].copy()
+    by_hand = (
+        pitcher_arsenal_by_hand.loc[pitcher_arsenal_by_hand["pitcher_id"].isin(probable_ids)].copy()
+        if "pitcher_id" in pitcher_arsenal_by_hand.columns
+        else pd.DataFrame()
+    )
     if not by_hand.empty:
         rows.append(by_hand)
     if not rows:
@@ -2271,26 +2286,26 @@ def _build_pitcher_arsenal_snapshots(
     combined = pd.concat(rows, ignore_index=True, sort=False)
     enriched = combined.merge(probable[["game_pk", "pitcher_id"]].drop_duplicates(), on="pitcher_id", how="inner")
     enriched["slate_date"] = target_date
-    return enriched[
-        [
-            "slate_date",
-            "game_pk",
-            "pitcher_id",
-            "pitcher_name",
-            "split_key",
-            "recent_window",
-            "weighted_mode",
-            "batter_side_key",
-            "pitch_name",
-            "usage_pct",
-            "swstr_pct",
-            "hard_hit_pct",
-            "avg_release_speed",
-            "avg_spin_rate",
-            "xwoba_con",
-        ]
-    ].drop_duplicates(
-        ["slate_date", "game_pk", "pitcher_id", "split_key", "recent_window", "weighted_mode", "batter_side_key", "pitch_name"]
+    columns = [
+        "slate_date",
+        "game_pk",
+        "pitcher_id",
+        "pitcher_name",
+        "split_key",
+        "recent_window",
+        "weighted_mode",
+        "batter_side_key",
+        "pitch_name",
+        "usage_pct",
+        "swstr_pct",
+        "hard_hit_pct",
+        "avg_release_speed",
+        "avg_spin_rate",
+        "xwoba_con",
+    ]
+    output = _select_schema_columns(enriched, columns)
+    return output.drop_duplicates(
+        [column for column in ["slate_date", "game_pk", "pitcher_id", "split_key", "recent_window", "weighted_mode", "batter_side_key", "pitch_name"] if column in output.columns]
     )
 
 
@@ -2303,27 +2318,29 @@ def _build_pitcher_count_snapshots(
         return pd.DataFrame()
     probable = probable_pitchers.drop_duplicates(["game_pk", "pitcher_id"]).copy()
     probable_ids = probable["pitcher_id"].dropna().astype(int).unique()
+    if "pitcher_id" not in pitcher_usage_by_count.columns:
+        return pd.DataFrame()
     combined = pitcher_usage_by_count.loc[pitcher_usage_by_count["pitcher_id"].isin(probable_ids)].copy()
     if combined.empty:
         return pd.DataFrame()
     enriched = combined.merge(probable[["game_pk", "pitcher_id"]].drop_duplicates(), on="pitcher_id", how="inner")
     enriched["slate_date"] = target_date
-    return enriched[
-        [
-            "slate_date",
-            "game_pk",
-            "pitcher_id",
-            "pitcher_name",
-            "split_key",
-            "recent_window",
-            "weighted_mode",
-            "batter_side_key",
-            "pitch_name",
-            "count_bucket",
-            "usage_pct",
-        ]
-    ].drop_duplicates(
-        ["slate_date", "game_pk", "pitcher_id", "split_key", "recent_window", "weighted_mode", "batter_side_key", "pitch_name", "count_bucket"]
+    columns = [
+        "slate_date",
+        "game_pk",
+        "pitcher_id",
+        "pitcher_name",
+        "split_key",
+        "recent_window",
+        "weighted_mode",
+        "batter_side_key",
+        "pitch_name",
+        "count_bucket",
+        "usage_pct",
+    ]
+    output = _select_schema_columns(enriched, columns)
+    return output.drop_duplicates(
+        [column for column in ["slate_date", "game_pk", "pitcher_id", "split_key", "recent_window", "weighted_mode", "batter_side_key", "pitch_name", "count_bucket"] if column in output.columns]
     )
 
 
