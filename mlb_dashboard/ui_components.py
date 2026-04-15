@@ -982,19 +982,6 @@ def _set_logo_game_selection(state_key: str, selection_key: str) -> None:
     st.session_state[state_key] = selection_key
 
 
-def _is_mobile_request() -> bool:
-    try:
-        context = getattr(st, "context", None)
-        headers = getattr(context, "headers", None)
-        if headers is None:
-            return False
-        user_agent = headers.get("User-Agent", "") or headers.get("user-agent", "")
-        agent = str(user_agent).lower()
-        return any(token in agent for token in ("iphone", "android", "ipad", "mobile", "blackberry", "opera mini", "windows phone"))
-    except Exception:
-        return False
-
-
 def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[str, list[dict]]:
     if not slate:
         return "Slate Summary", []
@@ -1004,8 +991,6 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
     if state_key not in st.session_state or st.session_state[state_key] not in {SLATE_SUMMARY_SELECTION, *valid_keys}:
         st.session_state[state_key] = valid_keys[0] if valid_keys else SLATE_SUMMARY_SELECTION
 
-    mobile_layout = _is_mobile_request()
-    column_width = "50%" if mobile_layout else "12.5%"
     st.markdown(
         """
         <style>
@@ -1020,16 +1005,17 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             gap: 8px;
             margin-bottom: 10px;
         }
-        div[data-testid="stHorizontalBlock"]:has(.game-logo-card) {
-            flex-wrap: wrap;
-            gap: 8px;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.game-logo-card) > div[data-testid="column"] {
-            flex: 0 0 calc(__COLUMN_WIDTH__ - 8px) !important;
-            width: calc(__COLUMN_WIDTH__ - 8px) !important;
-            min-width: 0 !important;
+        div[class*="st-key-__GAME_SELECTOR_KEY__-tile-"] {
+            display: inline-block !important;
+            width: calc(12.5% - 8px) !important;
+            min-width: 118px !important;
+            margin: 0 8px 8px 0 !important;
+            vertical-align: top !important;
+            position: relative !important;
         }
         .game-logo-card {
+            box-sizing: border-box;
+            width: 100%;
             min-height: 92px;
             display: flex;
             align-items: center;
@@ -1114,18 +1100,9 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             background: transparent;
         }
         @media (max-width: 760px) {
-            div[data-testid="stHorizontalBlock"]:has(.game-logo-card) {
-                display: flex !important;
-                flex-direction: row !important;
-                flex-wrap: wrap !important;
-                align-items: stretch !important;
-                gap: 8px !important;
-            }
-            div[data-testid="stHorizontalBlock"]:has(.game-logo-card) > div[data-testid="column"] {
-                flex: 0 0 calc(50% - 4px) !important;
-                width: calc(50% - 4px) !important;
-                max-width: calc(50% - 4px) !important;
-                min-width: calc(50% - 4px) !important;
+            div[class*="st-key-__GAME_SELECTOR_KEY__-tile-"] {
+                width: calc(50% - 8px) !important;
+                min-width: 0 !important;
             }
             .game-logo-card {
                 min-height: 116px;
@@ -1157,7 +1134,7 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             }
         }
         </style>
-        """.replace("__GAME_SELECTOR_KEY__", key_prefix).replace("__COLUMN_WIDTH__", column_width),
+        """.replace("__GAME_SELECTOR_KEY__", key_prefix),
         unsafe_allow_html=True,
     )
     st.markdown("<div class='game-logo-selector-label'>Game</div>", unsafe_allow_html=True)
@@ -1185,30 +1162,27 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             )
         )
 
-    per_row = 2 if mobile_layout else 8
-    for start in range(0, len(cards), per_row):
-        columns = st.columns(min(per_row, len(cards) - start))
-        for column, (selection_key, card_html, button_label) in zip(columns, cards[start : start + per_row]):
-            active = st.session_state[state_key] == selection_key
-            with column:
-                if selection_key == SLATE_SUMMARY_SELECTION:
-                    summary_card = card_html.replace(
-                        "<span class='game-logo-card-status'>Open</span>",
-                        f"<span class='game-logo-card-status'>{'Selected' if active else 'Open'}</span>",
-                    )
-                    st.markdown(
-                        summary_card.replace("game-logo-card summary-card", f"game-logo-card summary-card{' is-active' if active else ''}"),
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(card_html, unsafe_allow_html=True)
-                st.button(
-                    "Selected" if active else button_label,
-                    key=f"{key_prefix}-card-{selection_key}",
-                    use_container_width=True,
-                    on_click=_set_logo_game_selection,
-                    args=(state_key, selection_key),
+    for selection_key, card_html, button_label in cards:
+        active = st.session_state[state_key] == selection_key
+        with st.container(key=f"{key_prefix}-tile-{selection_key}"):
+            if selection_key == SLATE_SUMMARY_SELECTION:
+                summary_card = card_html.replace(
+                    "<span class='game-logo-card-status'>Open</span>",
+                    f"<span class='game-logo-card-status'>{'Selected' if active else 'Open'}</span>",
                 )
+                st.markdown(
+                    summary_card.replace("game-logo-card summary-card", f"game-logo-card summary-card{' is-active' if active else ''}"),
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(card_html, unsafe_allow_html=True)
+            st.button(
+                "Selected" if active else button_label,
+                key=f"{key_prefix}-card-{selection_key}",
+                use_container_width=True,
+                on_click=_set_logo_game_selection,
+                args=(state_key, selection_key),
+            )
 
     return resolve_logo_game_selection(slate, st.session_state.get(state_key))
 
