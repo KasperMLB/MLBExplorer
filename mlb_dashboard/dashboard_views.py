@@ -859,6 +859,28 @@ def build_slate_summary_best_matchups(top_hitters: pd.DataFrame, per_game: int =
     return ranked.groupby("game_pk", sort=False).head(per_game).reset_index(drop=True)
 
 
+def build_slate_summary_matchup_overview(top_hitters: pd.DataFrame, per_game: int = 3) -> pd.DataFrame:
+    best_matchups = build_slate_summary_best_matchups(top_hitters, per_game=per_game)
+    if best_matchups.empty:
+        return pd.DataFrame()
+
+    rows: list[dict[str, object]] = []
+    for game_pk, group in best_matchups.groupby("game_pk", sort=False):
+        first = group.iloc[0]
+        row: dict[str, object] = {"Game": first.get("game", game_pk)}
+        for idx, (_, hitter) in enumerate(group.head(per_game).iterrows(), start=1):
+            name = hitter.get("hitter_name", "-")
+            team = hitter.get("team")
+            score = pd.to_numeric(pd.Series([hitter.get("matchup_score")]), errors="coerce").iloc[0]
+            prefix = f"{team}: " if pd.notna(team) and str(team).strip() else ""
+            suffix = f" ({float(score):.1f})" if pd.notna(score) else ""
+            row[f"Top {idx}"] = f"{prefix}{name}{suffix}"
+        for idx in range(1, per_game + 1):
+            row.setdefault(f"Top {idx}", "-")
+        rows.append(row)
+    return pd.DataFrame(rows, columns=["Game", *[f"Top {idx}" for idx in range(1, per_game + 1)]])
+
+
 def build_top_matchups_export_sections(
     selected_games: list[dict],
     hitters_by_game: dict[int, tuple[pd.DataFrame, pd.DataFrame]],

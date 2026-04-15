@@ -2,7 +2,7 @@ import pandas as pd
 
 from mlb_dashboard.config import AppConfig, DEFAULT_RECENT_WINDOWS, DEFAULT_SPLITS
 from mlb_dashboard.build import BuildContext, _build_hitter_hr_form, _save_per_game_files, _save_top_slate_board_files
-from mlb_dashboard.dashboard_views import BEST_MATCHUP_COLUMNS, HITTER_PRESETS, add_hitter_matchup_score, build_slate_summary_best_matchups, filter_excluded_pitchers_from_hitter_pool, normalize_series
+from mlb_dashboard.dashboard_views import BEST_MATCHUP_COLUMNS, HITTER_PRESETS, add_hitter_matchup_score, build_slate_summary_best_matchups, build_slate_summary_matchup_overview, filter_excluded_pitchers_from_hitter_pool, normalize_series
 from mlb_dashboard.local_app import _game_selection as _local_game_selection
 from mlb_dashboard.local_store import (
     compute_hitter_rolling,
@@ -214,6 +214,23 @@ def test_slate_summary_best_matchups_keeps_top_three_per_game():
 
     assert summary["hitter_name"].tolist() == ["B", "A", "C", "E", "F"]
     assert summary.groupby("game_pk").size().max() <= 3
+
+
+def test_slate_summary_matchup_overview_is_one_row_per_game():
+    frame = pd.DataFrame(
+        [
+            {"game": "AAA @ BBB", "game_pk": 1, "team": "AAA", "hitter_name": "A", "matchup_score": 70.0, "xwoba": 0.400},
+            {"game": "AAA @ BBB", "game_pk": 1, "team": "BBB", "hitter_name": "B", "matchup_score": 80.0, "xwoba": 0.390},
+            {"game": "AAA @ BBB", "game_pk": 1, "team": "AAA", "hitter_name": "C", "matchup_score": 60.0, "xwoba": 0.410},
+            {"game": "CCC @ DDD", "game_pk": 2, "team": "CCC", "hitter_name": "D", "matchup_score": 90.0, "xwoba": 0.380},
+        ]
+    )
+
+    overview = build_slate_summary_matchup_overview(frame, per_game=3)
+
+    assert overview.shape[0] == 2
+    assert overview.columns.tolist() == ["Game", "Top 1", "Top 2", "Top 3"]
+    assert overview.loc[0, "Top 1"] == "BBB: B (80.0)"
 
 
 def test_official_barrel_bands_expand_with_exit_velocity():
