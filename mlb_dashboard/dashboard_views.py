@@ -203,6 +203,7 @@ HITTER_ROLLING_COLUMNS = [
     "rolling_window",
     "games_in_window",
     "pulled_barrel_pct",
+    "barrel_bip_pct",
     "hard_hit_pct",
     "fb_pct",
     "avg_launch_angle",

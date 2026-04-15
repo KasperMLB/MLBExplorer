@@ -114,14 +114,23 @@ def _normalize_pitcher_baseline_event_rows(frame: pd.DataFrame) -> pd.DataFrame:
     return add_metric_flags(normalized)
 
 
-def _compute_hitter_rolling_15(live_pitch_mix: pd.DataFrame) -> pd.DataFrame:
+def _empty_hitter_rolling_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=["player_id", "player_name", "rolling_window", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle", "xwoba", "games_in_window"])
+
+
+def _empty_pitcher_rolling_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=["player_id", "player_name", "rolling_window", "avg_release_speed", "barrel_bip_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle", "games_in_window"])
+
+
+def _compute_hitter_rolling(live_pitch_mix: pd.DataFrame, windows: tuple[int, ...] = (5, 10, 15)) -> pd.DataFrame:
     if live_pitch_mix.empty:
-        return pd.DataFrame(columns=["player_name", "rolling_window", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle", "xwoba", "games_in_window"])
+        return _empty_hitter_rolling_frame()
     game_log = (
         live_pitch_mix.sort_values(["batter", "game_date", "game_pk"])
         .groupby(["batter", "player_name", "game_pk", "game_date"], as_index=False)
         .agg(
             tracked_bbe=("is_tracked_bbe", "sum"),
+            barrels=("is_barrel", "sum"),
             pulled_barrels=("is_pulled_barrel", "sum"),
             hard_hits=("is_hard_hit", "sum"),
             fly_balls=("is_fly_ball", "sum"),
@@ -132,33 +141,35 @@ def _compute_hitter_rolling_15(live_pitch_mix: pd.DataFrame) -> pd.DataFrame:
             xwoba_count=("xwoba_value", lambda s: pd.to_numeric(s, errors="coerce").notna().sum()),
         )
     )
-    game_log["games_rank"] = game_log.groupby("batter").cumcount(ascending=False)
-    recent = game_log.groupby("batter", group_keys=False).apply(lambda group: group.tail(15))
     rows: list[dict] = []
-    for (batter, player_name), group in recent.groupby(["batter", "player_name"], sort=False):
-        tracked_bbe = float(group["tracked_bbe"].sum())
-        bip = float(group["bip"].sum())
-        launch_count = float(group["launch_angle_count"].sum())
-        xwoba_count = float(group["xwoba_count"].sum())
-        rows.append(
-            {
-                "player_id": batter,
-                "player_name": player_name,
-                "rolling_window": "Rolling 15",
-                "pulled_barrel_pct": float(group["pulled_barrels"].sum()) / max(tracked_bbe, 1e-9),
-                "hard_hit_pct": float(group["hard_hits"].sum()) / max(bip, 1e-9),
-                "fb_pct": float(group["fly_balls"].sum()) / max(bip, 1e-9),
-                "avg_launch_angle": float(group["launch_angle_sum"].sum()) / max(launch_count, 1e-9),
-                "xwoba": float(group["xwoba_sum"].sum()) / max(xwoba_count, 1e-9),
-                "games_in_window": int(group["game_pk"].nunique()),
-            }
-        )
-    return pd.DataFrame(rows)
+    for (batter, player_name), player_games in game_log.groupby(["batter", "player_name"], sort=False):
+        ordered = player_games.sort_values(["game_date", "game_pk"])
+        for window in windows:
+            group = ordered.tail(window)
+            tracked_bbe = float(group["tracked_bbe"].sum())
+            bip = float(group["bip"].sum())
+            launch_count = float(group["launch_angle_count"].sum())
+            xwoba_count = float(group["xwoba_count"].sum())
+            rows.append(
+                {
+                    "player_id": batter,
+                    "player_name": player_name,
+                    "rolling_window": f"Rolling {window}",
+                    "pulled_barrel_pct": float(group["pulled_barrels"].sum()) / max(tracked_bbe, 1e-9),
+                    "barrel_bip_pct": float(group["barrels"].sum()) / max(bip, 1e-9),
+                    "hard_hit_pct": float(group["hard_hits"].sum()) / max(bip, 1e-9),
+                    "fb_pct": float(group["fly_balls"].sum()) / max(bip, 1e-9),
+                    "avg_launch_angle": float(group["launch_angle_sum"].sum()) / max(launch_count, 1e-9),
+                    "xwoba": float(group["xwoba_sum"].sum()) / max(xwoba_count, 1e-9),
+                    "games_in_window": int(group["game_pk"].nunique()),
+                }
+            )
+    return pd.DataFrame(rows) if rows else _empty_hitter_rolling_frame()
 
 
 def _map_hitter_rolling(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
-        return pd.DataFrame(columns=["player_name", "rolling_window", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle", "xwoba", "games_in_window"])
+        return _empty_hitter_rolling_frame()
     rows: list[dict] = []
     for _, row in frame.iterrows():
         rows.append(
@@ -185,7 +196,7 @@ def _map_hitter_rolling(frame: pd.DataFrame) -> pd.DataFrame:
                 "games_in_window": row.get("batter_games_in_window_10g"),
             }
         )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows) if rows else _empty_hitter_rolling_frame()
 
 
 def _map_pitcher_rolling(frame: pd.DataFrame, live_pitch_mix: pd.DataFrame) -> pd.DataFrame:
@@ -251,7 +262,49 @@ def _map_pitcher_rolling(frame: pd.DataFrame, live_pitch_mix: pd.DataFrame) -> p
                     "games_in_window": int(group["game_pk"].nunique()),
                 }
             )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows) if rows else _empty_pitcher_rolling_frame()
+
+
+def _compute_pitcher_rolling(live_pitch_mix: pd.DataFrame, windows: tuple[int, ...] = (5, 10, 15)) -> pd.DataFrame:
+    if live_pitch_mix.empty:
+        return _empty_pitcher_rolling_frame()
+    game_log = (
+        live_pitch_mix.sort_values(["pitcher", "game_date", "game_pk"])
+        .groupby(["pitcher", "pitcher_name", "game_pk", "game_date"], as_index=False)
+        .agg(
+            tracked_bbe=("is_tracked_bbe", "sum"),
+            barrels=("is_barrel", "sum"),
+            hard_hits=("is_hard_hit", "sum"),
+            fly_balls=("is_fly_ball", "sum"),
+            bip=("is_batted_ball", "sum"),
+            release_speed_sum=("release_speed_value", lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum()),
+            release_speed_count=("release_speed_value", lambda s: pd.to_numeric(s, errors="coerce").notna().sum()),
+            launch_angle_sum=("launch_angle_value", lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum()),
+            launch_angle_count=("launch_angle_value", lambda s: pd.to_numeric(s, errors="coerce").notna().sum()),
+        )
+    )
+    rows: list[dict] = []
+    for (pitcher_id, player_name), player_games in game_log.groupby(["pitcher", "pitcher_name"], sort=False):
+        ordered = player_games.sort_values(["game_date", "game_pk"])
+        for window in windows:
+            group = ordered.tail(window)
+            bip = float(group["bip"].sum())
+            velo_count = float(group["release_speed_count"].sum())
+            la_count = float(group["launch_angle_count"].sum())
+            rows.append(
+                {
+                    "player_id": pitcher_id,
+                    "player_name": player_name,
+                    "rolling_window": f"Rolling {window}",
+                    "avg_release_speed": float(group["release_speed_sum"].sum()) / max(velo_count, 1e-9),
+                    "barrel_bip_pct": float(group["barrels"].sum()) / max(bip, 1e-9),
+                    "hard_hit_pct": float(group["hard_hits"].sum()) / max(bip, 1e-9),
+                    "fb_pct": float(group["fly_balls"].sum()) / max(bip, 1e-9),
+                    "avg_launch_angle": float(group["launch_angle_sum"].sum()) / max(la_count, 1e-9),
+                    "games_in_window": int(group["game_pk"].nunique()),
+                }
+            )
+    return pd.DataFrame(rows) if rows else _empty_pitcher_rolling_frame()
 
 
 def _normalize_batter_zone_profiles(frame: pd.DataFrame) -> pd.DataFrame:
@@ -1587,8 +1640,12 @@ def load_cockroach_payload(
         batter_family_zone_profiles = _read_query(conn, f"SELECT * FROM {config.cockroach_batter_family_zone_table}")
     live_pitch_mix = _normalize_live_pitch_mix(live_pitch_mix)
     pitcher_baseline_event_rows = _normalize_pitcher_baseline_event_rows(pitcher_baseline_event_rows)
-    hitter_rolling_mapped = pd.concat([_map_hitter_rolling(hitter_rolling), _compute_hitter_rolling_15(live_pitch_mix)], ignore_index=True, sort=False)
-    pitcher_rolling_mapped = _map_pitcher_rolling(pitcher_rolling, live_pitch_mix)
+    hitter_rolling_mapped = _compute_hitter_rolling(live_pitch_mix)
+    if hitter_rolling_mapped.empty:
+        hitter_rolling_mapped = _map_hitter_rolling(hitter_rolling)
+    pitcher_rolling_mapped = _compute_pitcher_rolling(live_pitch_mix)
+    if pitcher_rolling_mapped.empty:
+        pitcher_rolling_mapped = _map_pitcher_rolling(pitcher_rolling, live_pitch_mix)
     batter_zone_profiles = _normalize_batter_zone_profiles(batter_zone_profiles)
     pitcher_zone_profiles = _normalize_pitcher_zone_profiles(pitcher_zone_profiles)
     batter_family_zone_profiles = _normalize_batter_family_zone_profiles(batter_family_zone_profiles)

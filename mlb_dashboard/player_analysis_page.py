@@ -719,7 +719,7 @@ def _render_rolling_tab(selected_row: pd.Series, reusable: dict[str, pd.DataFram
     player_name = str(selected_row["player_name"])
     if entity_type == "Hitter":
         rolling = reusable.get("hitter_rolling", pd.DataFrame())
-        metrics = ["xwoba", "pulled_barrel_pct", "hard_hit_pct", "fb_pct"]
+        metrics = ["xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "fb_pct"]
         columns = HITTER_ROLLING_COLUMNS
         lower_is_better = None
         higher_is_better = None
