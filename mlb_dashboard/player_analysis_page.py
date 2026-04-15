@@ -36,7 +36,7 @@ from .dashboard_views import (
     pivot_count_usage,
     sort_arsenal_frame,
 )
-from .query_engine import QueryFilters, StatcastQueryEngine, load_remote_parquet
+from .query_engine import QueryFilters, StatcastQueryEngine, load_remote_parquet, load_remote_parquet_bundle
 from .rotowire_lineups import fetch_rotowire_lineups, resolve_rotowire_lineups
 from .ui_components import render_metric_grid, render_zone_heatmap
 
@@ -221,25 +221,28 @@ def _read_local_parquet(path: Path) -> pd.DataFrame:
 @st.cache_data(show_spinner=False)
 def _load_remote_daily_bundle(base_url: str, target_date: date) -> dict[str, pd.DataFrame]:
     day = target_date.isoformat()
-    bundle = {
-        "slate": load_remote_parquet(f"{base_url}/daily/{day}", "slate.parquet"),
-        "rosters": load_remote_parquet(f"{base_url}/daily/{day}", "rosters.parquet"),
-        "daily_hitters": load_remote_parquet(f"{base_url}/daily/{day}", "daily_hitter_metrics.parquet"),
-        "daily_pitchers": load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_metrics.parquet"),
-        "daily_pitcher_summary_by_hand": load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_summary_by_hand.parquet"),
-        "daily_pitcher_arsenal": load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_arsenal.parquet"),
-        "daily_pitcher_arsenal_by_hand": load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_arsenal_by_hand.parquet"),
-        "daily_pitcher_usage_by_count": load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_usage_by_count.parquet"),
-        "daily_hitter_rolling": load_remote_parquet(f"{base_url}/daily/{day}", "daily_hitter_rolling.parquet"),
-        "daily_pitcher_rolling": load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_rolling.parquet"),
-        "daily_batter_zone_profiles": load_remote_parquet(f"{base_url}/daily/{day}", "daily_batter_zone_profiles.parquet"),
-        "daily_pitcher_zone_profiles": load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_zone_profiles.parquet"),
-        "daily_batter_family_zone_profiles": load_remote_parquet(f"{base_url}/daily/{day}", "daily_batter_family_zone_profiles.parquet"),
-        "daily_pitcher_family_zone_context": load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_family_zone_context.parquet"),
-        "daily_pitcher_movement_arsenal": load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_movement_arsenal.parquet"),
-    }
+    daily_base = f"{base_url}/daily/{day}"
+    bundle = load_remote_parquet_bundle(
+        {
+            "slate": (daily_base, "slate.parquet", None),
+            "rosters": (daily_base, "rosters.parquet", None),
+            "daily_hitters": (daily_base, "daily_hitter_metrics.parquet", None),
+            "daily_pitchers": (daily_base, "daily_pitcher_metrics.parquet", None),
+            "daily_pitcher_summary_by_hand": (daily_base, "daily_pitcher_summary_by_hand.parquet", None),
+            "daily_pitcher_arsenal": (daily_base, "daily_pitcher_arsenal.parquet", None),
+            "daily_pitcher_arsenal_by_hand": (daily_base, "daily_pitcher_arsenal_by_hand.parquet", None),
+            "daily_pitcher_usage_by_count": (daily_base, "daily_pitcher_usage_by_count.parquet", None),
+            "daily_hitter_rolling": (daily_base, "daily_hitter_rolling.parquet", None),
+            "daily_pitcher_rolling": (daily_base, "daily_pitcher_rolling.parquet", None),
+            "daily_batter_zone_profiles": (daily_base, "daily_batter_zone_profiles.parquet", None),
+            "daily_pitcher_zone_profiles": (daily_base, "daily_pitcher_zone_profiles.parquet", None),
+            "daily_batter_family_zone_profiles": (daily_base, "daily_batter_family_zone_profiles.parquet", None),
+            "daily_pitcher_family_zone_context": (daily_base, "daily_pitcher_family_zone_context.parquet", None),
+            "daily_pitcher_movement_arsenal": (daily_base, "daily_pitcher_movement_arsenal.parquet", None),
+        }
+    )
     try:
-        bundle["hitter_pitcher_exclusions"] = load_remote_parquet(f"{base_url}/daily/{day}", "hitter_pitcher_exclusions.parquet")
+        bundle["hitter_pitcher_exclusions"] = load_remote_parquet(daily_base, "hitter_pitcher_exclusions.parquet")
     except Exception:
         bundle["hitter_pitcher_exclusions"] = pd.DataFrame(columns=["player_id", "exclude_from_hitter_tables"])
     return bundle
@@ -248,21 +251,23 @@ def _load_remote_daily_bundle(base_url: str, target_date: date) -> dict[str, pd.
 @st.cache_data(show_spinner=False)
 def _load_remote_reusable_bundle(base_url: str) -> dict[str, pd.DataFrame]:
     reusable_base = f"{base_url}/reusable"
-    return {
-        "hitters": load_remote_parquet(reusable_base, "hitter_metrics.parquet"),
-        "pitchers": load_remote_parquet(reusable_base, "pitcher_metrics.parquet"),
-        "pitcher_summary_by_hand": load_remote_parquet(reusable_base, "pitcher_summary_by_hand.parquet"),
-        "pitcher_arsenal": load_remote_parquet(reusable_base, "pitcher_arsenal.parquet"),
-        "pitcher_arsenal_by_hand": load_remote_parquet(reusable_base, "pitcher_arsenal_by_hand.parquet"),
-        "pitcher_usage_by_count": load_remote_parquet(reusable_base, "pitcher_usage_by_count.parquet"),
-        "hitter_rolling": load_remote_parquet(reusable_base, "hitter_rolling.parquet"),
-        "pitcher_rolling": load_remote_parquet(reusable_base, "pitcher_rolling.parquet"),
-        "batter_zone_profiles": load_remote_parquet(reusable_base, "batter_zone_profiles.parquet"),
-        "pitcher_zone_profiles": load_remote_parquet(reusable_base, "pitcher_zone_profiles.parquet"),
-        "batter_family_zone_profiles": load_remote_parquet(reusable_base, "batter_family_zone_profiles.parquet"),
-        "pitcher_family_zone_context": load_remote_parquet(reusable_base, "pitcher_family_zone_context.parquet"),
-        "pitcher_movement_arsenal": load_remote_parquet(reusable_base, "pitcher_movement_arsenal.parquet"),
-    }
+    return load_remote_parquet_bundle(
+        {
+            "hitters": (reusable_base, "hitter_metrics.parquet", None),
+            "pitchers": (reusable_base, "pitcher_metrics.parquet", None),
+            "pitcher_summary_by_hand": (reusable_base, "pitcher_summary_by_hand.parquet", None),
+            "pitcher_arsenal": (reusable_base, "pitcher_arsenal.parquet", None),
+            "pitcher_arsenal_by_hand": (reusable_base, "pitcher_arsenal_by_hand.parquet", None),
+            "pitcher_usage_by_count": (reusable_base, "pitcher_usage_by_count.parquet", None),
+            "hitter_rolling": (reusable_base, "hitter_rolling.parquet", None),
+            "pitcher_rolling": (reusable_base, "pitcher_rolling.parquet", None),
+            "batter_zone_profiles": (reusable_base, "batter_zone_profiles.parquet", None),
+            "pitcher_zone_profiles": (reusable_base, "pitcher_zone_profiles.parquet", None),
+            "batter_family_zone_profiles": (reusable_base, "batter_family_zone_profiles.parquet", None),
+            "pitcher_family_zone_context": (reusable_base, "pitcher_family_zone_context.parquet", None),
+            "pitcher_movement_arsenal": (reusable_base, "pitcher_movement_arsenal.parquet", None),
+        }
+    )
 
 
 def _load_local_daily_bundle(config: AppConfig, target_date: date) -> dict[str, pd.DataFrame]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date
 
@@ -307,3 +308,26 @@ def load_remote_parquet(base_path: str, filename: str, columns: list[str] | None
         if requested:
             return pd.read_parquet(path)
         raise
+
+
+def load_remote_parquet_bundle(
+    specs: dict[str, tuple[str, str, list[str] | None]],
+    *,
+    max_workers: int = 8,
+) -> dict[str, pd.DataFrame]:
+    if not specs:
+        return {}
+    if len(specs) == 1:
+        key, (base_path, filename, columns) = next(iter(specs.items()))
+        return {key: load_remote_parquet(base_path, filename, columns=columns)}
+
+    workers = max(1, min(max_workers, len(specs)))
+    results: dict[str, pd.DataFrame] = {}
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(load_remote_parquet, base_path, filename, columns): key
+            for key, (base_path, filename, columns) in specs.items()
+        }
+        for future in as_completed(futures):
+            results[futures[future]] = future.result()
+    return results

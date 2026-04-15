@@ -44,7 +44,7 @@ from .dashboard_views import (
     sort_arsenal_frame,
     with_game_label,
 )
-from .query_engine import load_remote_parquet
+from .query_engine import load_remote_parquet, load_remote_parquet_bundle
 from .rotowire_lineups import fetch_rotowire_lineups, resolve_rotowire_lineups
 from .ui_components import (
     build_pitcher_summary_table,
@@ -380,78 +380,65 @@ def _load_core_artifacts(
     target_date: date,
 ) -> tuple[pd.DataFrame, ...]:
     day = target_date.isoformat()
-    slate = load_remote_parquet(f"{base_url}/daily/{day}", "slate.parquet")
-    rosters = load_remote_parquet(f"{base_url}/daily/{day}", "rosters.parquet")
-    hitters = load_remote_parquet(f"{base_url}/daily/{day}", "daily_hitter_metrics.parquet", columns=HITTER_REQUIRED_COLUMNS)
-    pitchers = load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_metrics.parquet", columns=PITCHER_REQUIRED_COLUMNS)
-    pitcher_summary_by_hand = load_remote_parquet(
-        f"{base_url}/daily/{day}",
-        "daily_pitcher_summary_by_hand.parquet",
-        columns=PITCHER_SUMMARY_REQUIRED_COLUMNS,
-    )
-    arsenal = load_remote_parquet(f"{base_url}/daily/{day}", "daily_pitcher_arsenal.parquet", columns=ARSENAL_REQUIRED_COLUMNS)
-    arsenal_by_hand = load_remote_parquet(
-        f"{base_url}/daily/{day}",
-        "daily_pitcher_arsenal_by_hand.parquet",
-        columns=ARSENAL_REQUIRED_COLUMNS,
-    )
-    usage_by_count = load_remote_parquet(
-        f"{base_url}/daily/{day}",
-        "daily_pitcher_usage_by_count.parquet",
-        columns=COUNT_USAGE_REQUIRED_COLUMNS,
-    )
-    batter_zone_profiles = load_remote_parquet(
-        f"{base_url}/daily/{day}",
-        "daily_batter_zone_profiles.parquet",
-        columns=BATTER_ZONE_REQUIRED_COLUMNS,
-    )
-    pitcher_zone_profiles = load_remote_parquet(
-        f"{base_url}/daily/{day}",
-        "daily_pitcher_zone_profiles.parquet",
-        columns=PITCHER_ZONE_REQUIRED_COLUMNS,
+    daily_base = f"{base_url}/daily/{day}"
+    loaded = load_remote_parquet_bundle(
+        {
+            "slate": (daily_base, "slate.parquet", None),
+            "rosters": (daily_base, "rosters.parquet", None),
+            "hitters": (daily_base, "daily_hitter_metrics.parquet", HITTER_REQUIRED_COLUMNS),
+            "pitchers": (daily_base, "daily_pitcher_metrics.parquet", PITCHER_REQUIRED_COLUMNS),
+            "pitcher_summary_by_hand": (daily_base, "daily_pitcher_summary_by_hand.parquet", PITCHER_SUMMARY_REQUIRED_COLUMNS),
+            "arsenal": (daily_base, "daily_pitcher_arsenal.parquet", ARSENAL_REQUIRED_COLUMNS),
+            "arsenal_by_hand": (daily_base, "daily_pitcher_arsenal_by_hand.parquet", ARSENAL_REQUIRED_COLUMNS),
+            "usage_by_count": (daily_base, "daily_pitcher_usage_by_count.parquet", COUNT_USAGE_REQUIRED_COLUMNS),
+            "batter_zone_profiles": (daily_base, "daily_batter_zone_profiles.parquet", BATTER_ZONE_REQUIRED_COLUMNS),
+            "pitcher_zone_profiles": (daily_base, "daily_pitcher_zone_profiles.parquet", PITCHER_ZONE_REQUIRED_COLUMNS),
+        }
     )
     try:
-        hitter_pitcher_exclusions = load_remote_parquet(f"{base_url}/daily/{day}", "hitter_pitcher_exclusions.parquet")
+        hitter_pitcher_exclusions = load_remote_parquet(daily_base, "hitter_pitcher_exclusions.parquet")
     except Exception:
         hitter_pitcher_exclusions = pd.DataFrame(columns=["player_id", "exclude_from_hitter_tables"])
-    return slate, rosters, hitters, pitchers, pitcher_summary_by_hand, arsenal, arsenal_by_hand, usage_by_count, batter_zone_profiles, pitcher_zone_profiles, hitter_pitcher_exclusions
+    return (
+        loaded["slate"],
+        loaded["rosters"],
+        loaded["hitters"],
+        loaded["pitchers"],
+        loaded["pitcher_summary_by_hand"],
+        loaded["arsenal"],
+        loaded["arsenal_by_hand"],
+        loaded["usage_by_count"],
+        loaded["batter_zone_profiles"],
+        loaded["pitcher_zone_profiles"],
+        hitter_pitcher_exclusions,
+    )
 
 
 @st.cache_data(show_spinner=False)
 def _load_rolling_artifacts(base_url: str, target_date: date) -> tuple[pd.DataFrame, pd.DataFrame]:
     day = target_date.isoformat()
-    hitter_rolling = load_remote_parquet(
-        f"{base_url}/daily/{day}",
-        "daily_hitter_rolling.parquet",
-        columns=HITTER_ROLLING_REQUIRED_COLUMNS,
+    daily_base = f"{base_url}/daily/{day}"
+    loaded = load_remote_parquet_bundle(
+        {
+            "hitter_rolling": (daily_base, "daily_hitter_rolling.parquet", HITTER_ROLLING_REQUIRED_COLUMNS),
+            "pitcher_rolling": (daily_base, "daily_pitcher_rolling.parquet", PITCHER_ROLLING_REQUIRED_COLUMNS),
+        }
     )
-    pitcher_rolling = load_remote_parquet(
-        f"{base_url}/daily/{day}",
-        "daily_pitcher_rolling.parquet",
-        columns=PITCHER_ROLLING_REQUIRED_COLUMNS,
-    )
-    return hitter_rolling, pitcher_rolling
+    return loaded["hitter_rolling"], loaded["pitcher_rolling"]
 
 
 @st.cache_data(show_spinner=False)
 def _load_pitch_shape_artifacts(base_url: str, target_date: date) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     day = target_date.isoformat()
-    batter_family_zone_profiles = load_remote_parquet(
-        f"{base_url}/daily/{day}",
-        "daily_batter_family_zone_profiles.parquet",
-        columns=BATTER_FAMILY_REQUIRED_COLUMNS,
+    daily_base = f"{base_url}/daily/{day}"
+    loaded = load_remote_parquet_bundle(
+        {
+            "batter_family_zone_profiles": (daily_base, "daily_batter_family_zone_profiles.parquet", BATTER_FAMILY_REQUIRED_COLUMNS),
+            "pitcher_family_zone_context": (daily_base, "daily_pitcher_family_zone_context.parquet", PITCHER_FAMILY_REQUIRED_COLUMNS),
+            "pitcher_movement_arsenal": (daily_base, "daily_pitcher_movement_arsenal.parquet", MOVEMENT_REQUIRED_COLUMNS),
+        }
     )
-    pitcher_family_zone_context = load_remote_parquet(
-        f"{base_url}/daily/{day}",
-        "daily_pitcher_family_zone_context.parquet",
-        columns=PITCHER_FAMILY_REQUIRED_COLUMNS,
-    )
-    pitcher_movement_arsenal = load_remote_parquet(
-        f"{base_url}/daily/{day}",
-        "daily_pitcher_movement_arsenal.parquet",
-        columns=MOVEMENT_REQUIRED_COLUMNS,
-    )
-    return batter_family_zone_profiles, pitcher_family_zone_context, pitcher_movement_arsenal
+    return loaded["batter_family_zone_profiles"], loaded["pitcher_family_zone_context"], loaded["pitcher_movement_arsenal"]
 
 
 def _sidebar() -> tuple[date, str, str, str, int, int, bool, str]:

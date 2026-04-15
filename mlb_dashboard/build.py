@@ -808,7 +808,8 @@ def _build_hitter_pitcher_exclusions(raw_statcast: pd.DataFrame, inning_threshol
     exclusions["innings_pitched"] = exclusions["outs_recorded"] / 3.0
     exclusions["override_reason"] = pd.NA
 
-    ohtani_mask = exclusions["pitcher_name"].fillna("").str.strip().str.lower().eq("shohei ohtani")
+    normalized_pitcher_name = exclusions["pitcher_name"].fillna("").astype(str).str.casefold()
+    ohtani_mask = normalized_pitcher_name.str.contains("shohei", regex=False) & normalized_pitcher_name.str.contains("ohtani", regex=False)
     threshold_mask = exclusions["innings_pitched"].fillna(0) >= float(inning_threshold)
     exclusions["exclude_from_hitter_tables"] = threshold_mask & ~ohtani_mask
     exclusions.loc[ohtani_mask, "override_reason"] = "two_way_exception"

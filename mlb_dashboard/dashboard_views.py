@@ -971,13 +971,31 @@ def apply_roster_names(frame: pd.DataFrame, rosters: pd.DataFrame, team: str) ->
     return enriched.drop(columns=["player_id", "player_name"], errors="ignore")
 
 
+def _is_ohtani_name(series: pd.Series) -> pd.Series:
+    normalized = series.fillna("").astype(str).str.casefold()
+    return normalized.str.contains("ohtani", regex=False) & normalized.str.contains("shohei", regex=False)
+
+
+def _truthy_series(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_bool_dtype(series):
+        return series.fillna(False)
+    normalized = series.fillna(False).astype(str).str.strip().str.casefold()
+    return normalized.isin({"1", "true", "t", "yes", "y"})
+
+
 def filter_excluded_pitchers_from_hitter_pool(frame: pd.DataFrame, exclusions: pd.DataFrame | None) -> pd.DataFrame:
     if frame.empty or exclusions is None or exclusions.empty or "batter" not in frame.columns:
         return frame
     if "player_id" not in exclusions.columns or "exclude_from_hitter_tables" not in exclusions.columns:
         return frame
+    exclusion_work = exclusions.copy()
+    exclude_mask = _truthy_series(exclusion_work["exclude_from_hitter_tables"])
+    if "override_reason" in exclusion_work.columns:
+        exclude_mask &= ~exclusion_work["override_reason"].fillna("").astype(str).str.casefold().eq("two_way_exception")
+    if "pitcher_name" in exclusion_work.columns:
+        exclude_mask &= ~_is_ohtani_name(exclusion_work["pitcher_name"])
     excluded_ids = pd.to_numeric(
-        exclusions.loc[exclusions["exclude_from_hitter_tables"].fillna(False), "player_id"],
+        exclusion_work.loc[exclude_mask, "player_id"],
         errors="coerce",
     ).dropna()
     if excluded_ids.empty:

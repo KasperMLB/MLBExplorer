@@ -1,5 +1,6 @@
 import pandas as pd
 
+from mlb_dashboard.dashboard_views import filter_excluded_pitchers_from_hitter_pool
 from mlb_dashboard.metrics import add_metric_flags, is_barrel
 
 
@@ -41,3 +42,23 @@ def test_official_barrel_bands_expand_with_exit_velocity():
     )
     result = is_barrel(frame).tolist()
     assert result == [True, True, False, True, False, True, False, True, False]
+
+
+def test_ohtani_two_way_exception_stays_in_hitter_pool():
+    hitters = pd.DataFrame(
+        [
+            {"batter": 660271, "hitter_name": "Shohei Ohtani"},
+            {"batter": 123456, "hitter_name": "Pitcher Hitter"},
+            {"batter": 999999, "hitter_name": "Everyday Batter"},
+        ]
+    )
+    exclusions = pd.DataFrame(
+        [
+            {"player_id": 660271, "pitcher_name": "Ohtani, Shohei", "exclude_from_hitter_tables": True},
+            {"player_id": 123456, "pitcher_name": "Pitcher Hitter", "exclude_from_hitter_tables": True},
+        ]
+    )
+
+    filtered = filter_excluded_pitchers_from_hitter_pool(hitters, exclusions)
+
+    assert filtered["batter"].tolist() == [660271, 999999]
