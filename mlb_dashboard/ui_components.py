@@ -1005,18 +1005,32 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             gap: 8px;
             margin-bottom: 10px;
         }
+        div[data-testid="stHorizontalBlock"]:has(.game-logo-card) {
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.game-logo-card) > div[data-testid="column"] {
+            flex: 0 0 calc(12.5% - 8px) !important;
+            width: calc(12.5% - 8px) !important;
+            min-width: 0 !important;
+        }
         .game-logo-card {
-            min-height: 116px;
+            min-height: 92px;
             display: flex;
             align-items: center;
             justify-content: center;
             flex-direction: column;
-            border: 1px solid rgba(31, 41, 55, 0.14);
+            border: 1px solid rgba(31, 41, 55, 0.16);
             border-radius: 8px;
             background: #f8fafc;
-            padding: 14px 16px;
+            padding: 10px 12px;
             color: #1f2937;
             text-decoration: none;
+        }
+        .game-logo-card img {
+            width: 42px !important;
+            height: 42px !important;
+            object-fit: contain !important;
         }
         .game-logo-card.is-active {
             border-color: #1f2937;
@@ -1027,12 +1041,12 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 18px;
+            gap: 8px;
         }
         .game-logo-card .matchup-at {
             color: #1f2937;
             font-weight: 800;
-            font-size: 1.55rem;
+            font-size: 1.05rem;
         }
         .game-logo-card .team-logo-fallback {
             color: #1f2937;
@@ -1045,16 +1059,17 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             letter-spacing: 0;
         }
         .game-logo-card-summary-title {
-            font-size: 1.5rem;
+            font-size: 1.0rem;
             font-weight: 800;
             text-decoration: underline;
             text-underline-offset: 4px;
+            text-align: center;
         }
         .game-logo-card-status {
             color: #6b7280;
-            font-size: 1.0rem;
+            font-size: 0.88rem;
             line-height: 1;
-            margin-top: 12px;
+            margin-top: 10px;
             text-decoration: underline;
             text-underline-offset: 3px;
         }
@@ -1063,13 +1078,13 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             font-weight: 750;
         }
         div[class*="st-key-__GAME_SELECTOR_KEY__-card-"] {
-            margin-top: -116px;
-            margin-bottom: 10px;
+            margin-top: -92px;
+            margin-bottom: 8px;
             position: relative;
             z-index: 2;
         }
         div[class*="st-key-__GAME_SELECTOR_KEY__-card-"] button {
-            min-height: 116px;
+            min-height: 92px;
             opacity: 0;
             padding: 0;
             border: 0;
@@ -1082,6 +1097,40 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             opacity: 0;
             border: 0;
             background: transparent;
+        }
+        @media (max-width: 760px) {
+            div[data-testid="stHorizontalBlock"]:has(.game-logo-card) > div[data-testid="column"] {
+                flex: 0 0 calc(50% - 8px) !important;
+                width: calc(50% - 8px) !important;
+            }
+            .game-logo-card {
+                min-height: 116px;
+                padding: 14px 12px;
+            }
+            .game-logo-card img {
+                width: 54px !important;
+                height: 54px !important;
+            }
+            .game-logo-card .matchup-logo-row {
+                gap: 14px;
+            }
+            .game-logo-card .matchup-at {
+                font-size: 1.35rem;
+            }
+            .game-logo-card-summary-title {
+                font-size: 1.25rem;
+            }
+            .game-logo-card-status {
+                font-size: 1rem;
+                margin-top: 13px;
+            }
+            div[class*="st-key-__GAME_SELECTOR_KEY__-card-"] {
+                margin-top: -116px;
+                margin-bottom: 10px;
+            }
+            div[class*="st-key-__GAME_SELECTOR_KEY__-card-"] button {
+                min-height: 116px;
+            }
         }
         </style>
         """.replace("__GAME_SELECTOR_KEY__", key_prefix),
@@ -1112,7 +1161,7 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             )
         )
 
-    per_row = 2
+    per_row = 8
     for start in range(0, len(cards), per_row):
         columns = st.columns(min(per_row, len(cards) - start))
         for column, (selection_key, card_html, button_label) in zip(columns, cards[start : start + per_row]):
