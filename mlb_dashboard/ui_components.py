@@ -1757,6 +1757,7 @@ def _draw_dark_table(
 
 def _identity_columns_for_section(frame: pd.DataFrame, title: str) -> list[str]:
     lowered = title.lower()
+    prefix_columns = ["game"] if "game" in frame.columns else []
     if "hitters" in lowered or "best matchups" in lowered:
         columns = ["hitter_name", "team"]
     elif "arsenal" in lowered or "count usage" in lowered:
@@ -1765,7 +1766,7 @@ def _identity_columns_for_section(frame: pd.DataFrame, title: str) -> list[str]:
         columns = ["pitcher_name", "team", "p_throws"]
     else:
         columns = [frame.columns[0]] if len(frame.columns) else []
-    return [column for column in columns if column in frame.columns]
+    return [column for column in [*prefix_columns, *columns] if column in frame.columns]
 
 
 def _metric_columns_for_section(frame: pd.DataFrame, title: str) -> list[str]:
