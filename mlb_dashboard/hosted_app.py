@@ -7,7 +7,7 @@ from time import perf_counter
 import pandas as pd
 import streamlit as st
 
-from .branding import apply_branding_head, page_icon_path
+from .branding import apply_branding_head, page_icon_path, render_kasper_header
 from .dashboard_views import (
     ARSENAL_COLUMNS,
     BATTER_SIDE_LABELS,
@@ -855,9 +855,9 @@ def _build_pitcher_export_sections(
 
 
 def main() -> None:
-    st.set_page_config(page_title="MLB Hosted Slate Companion", page_icon=page_icon_path(), layout="wide")
+    st.set_page_config(page_title="Kasper", page_icon=page_icon_path(), layout="wide")
     apply_branding_head()
-    st.title("MLB Hosted Slate Companion")
+    render_kasper_header()
     perf_events: list[tuple[str, float]] = []
     base_url = _base_url()
     if not base_url:
@@ -880,8 +880,6 @@ def main() -> None:
             f"Showing the latest available published slate from {resolved_date.isoformat()} instead."
         )
     all_games = slate.to_dict(orient="records")
-    st.caption(f"{len(all_games)} games on slate")
-    st.caption("PulledBrl% tracks pulled barrels on tracked batted-ball events. Brl/BIP% uses all balls in play.")
     try:
         top_board_start = perf_counter()
         top_hitters, top_pitchers = _load_top_board_artifacts(base_url, resolved_date)

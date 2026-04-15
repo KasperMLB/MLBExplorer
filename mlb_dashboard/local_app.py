@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from .backtesting_view import render_backtesting_tab
-from .branding import apply_branding_head, page_icon_path
+from .branding import apply_branding_head, page_icon_path, render_kasper_header
 from .config import AppConfig
 from .dashboard_views import (
     ARSENAL_COLUMNS,
@@ -1341,9 +1341,9 @@ def _build_pitcher_export_sections(
 
 
 def main() -> None:
-    st.set_page_config(page_title="MLB Local Explorer", page_icon=page_icon_path(), layout="wide")
+    st.set_page_config(page_title="Kasper", page_icon=page_icon_path(), layout="wide")
     apply_branding_head()
-    st.title("MLB Local Explorer")
+    render_kasper_header()
     perf_events: list[tuple[str, float]] = []
     config = AppConfig()
     top_level_view = st.sidebar.radio("View", ["Slate Explorer", "Backtesting"], key="local-top-view")
@@ -1357,8 +1357,6 @@ def main() -> None:
         st.error(f"No built slate found for {target_date.isoformat()}. Run the build command for that date first.")
         return
     rosters = engine.load_daily_rosters(target_date)
-    st.caption(f"{len(slate)} games on slate")
-    st.caption("PulledBrl% tracks pulled barrels on tracked batted-ball events. Brl/BIP% uses all balls in play.")
 
     top_board_start = perf_counter()
     top_hitters = _filter_top_board(engine.load_daily_top_slate_hitters(target_date), filters)
