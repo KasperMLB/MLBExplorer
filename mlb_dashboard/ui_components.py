@@ -1054,8 +1054,29 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             color: #1f2937;
             font-weight: 750;
         }
+        div[class*="st-key-__GAME_SELECTOR_KEY__-card-"] {
+            margin-top: -72px;
+            margin-bottom: 8px;
+            position: relative;
+            z-index: 2;
+        }
+        div[class*="st-key-__GAME_SELECTOR_KEY__-card-"] button {
+            min-height: 72px;
+            opacity: 0;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            cursor: pointer;
+        }
+        div[class*="st-key-__GAME_SELECTOR_KEY__-card-"] button:hover,
+        div[class*="st-key-__GAME_SELECTOR_KEY__-card-"] button:focus,
+        div[class*="st-key-__GAME_SELECTOR_KEY__-card-"] button:active {
+            opacity: 0;
+            border: 0;
+            background: transparent;
+        }
         </style>
-        """,
+        """.replace("__GAME_SELECTOR_KEY__", key_prefix),
         unsafe_allow_html=True,
     )
     st.markdown("<div class='game-logo-selector-label'>Game</div>", unsafe_allow_html=True)
@@ -1064,18 +1085,20 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
         (
             SLATE_SUMMARY_SELECTION,
             "<div class='game-logo-card summary-card'>"
-            "<span>Slate Summary</span><span class='game-logo-card-status'>Summary</span></div>",
+            "<span>Slate Summary</span><span class='game-logo-card-status'>Open</span></div>",
             "Summary",
         )
     ]
     for game in slate:
         game_key = str(game.get("game_pk"))
+        active = st.session_state[state_key] == game_key
         cards.append(
             (
                 game_key,
                 _selector_card_html(
-                    matchup_logo_html(str(game.get("away_team", "")), str(game.get("home_team", "")), size=32),
-                    active=st.session_state[state_key] == game_key,
+                    matchup_logo_html(str(game.get("away_team", "")), str(game.get("home_team", "")), size=32)
+                    + f"<span class='game-logo-card-status'>{'Selected' if active else 'Open'}</span>",
+                    active=active,
                 ),
                 "Open",
             )
@@ -1088,8 +1111,12 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
             active = st.session_state[state_key] == selection_key
             with column:
                 if selection_key == SLATE_SUMMARY_SELECTION:
+                    summary_card = card_html.replace(
+                        "<span class='game-logo-card-status'>Open</span>",
+                        f"<span class='game-logo-card-status'>{'Selected' if active else 'Open'}</span>",
+                    )
                     st.markdown(
-                        card_html.replace("game-logo-card summary-card", f"game-logo-card summary-card{' is-active' if active else ''}"),
+                        summary_card.replace("game-logo-card summary-card", f"game-logo-card summary-card{' is-active' if active else ''}"),
                         unsafe_allow_html=True,
                     )
                 else:
