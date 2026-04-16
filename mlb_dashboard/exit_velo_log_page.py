@@ -21,6 +21,12 @@ SORT_DEPTH = 20
 EVENT_LOG_LIMIT = 250
 REMOTE_EXIT_VELO_LOOKBACK_DAYS = 75
 EXIT_VELO_SOURCE_CACHE_VERSION = "2026-04-14-source-v2"
+EXIT_VELO_ARTIFACT_CACHE_VERSION = "2026-04-16-ev-artifacts-v1"
+EXIT_VELO_ARTIFACT_FILES = {
+    "events": "events.parquet",
+    "event_log": "event_log.parquet",
+    "player_summary": "player_summary.parquet",
+}
 EXIT_VELO_EVENT_COLUMNS = [
     "game_date", "game_pk", "away_team", "home_team", "inning_topbot", "batter", "batter_name", "pitcher_name",
     "player_name", "team", "opponent", "game_label", "at_bat_number", "pitch_number", "pitch_type", "pitch_name",
@@ -218,6 +224,152 @@ def _load_remote_exit_velo_events_cached(base_url: str, end_date_value: str | No
     return _shape_exit_velo_events(pd.concat(frames, ignore_index=True, sort=False))
 
 
+def _daily_exit_velo_artifact_dir(config: AppConfig, target_date: date):
+    return config.daily_dir / target_date.isoformat() / "exit_velo"
+
+
+def _empty_exit_velo_artifacts() -> dict[str, pd.DataFrame]:
+    return {key: pd.DataFrame() for key in EXIT_VELO_ARTIFACT_FILES}
+
+
+def _read_local_exit_velo_artifacts(config: AppConfig, target_date: date) -> dict[str, pd.DataFrame]:
+    artifact_dir = _daily_exit_velo_artifact_dir(config, target_date)
+    if not (artifact_dir / EXIT_VELO_ARTIFACT_FILES["events"]).exists():
+        return _empty_exit_velo_artifacts()
+    return {
+        key: pd.read_parquet(artifact_dir / filename)
+        for key, filename in EXIT_VELO_ARTIFACT_FILES.items()
+        if (artifact_dir / filename).exists()
+    }
+
+
+def write_exit_velo_artifacts(config: AppConfig, target_date: date, artifacts: dict[str, pd.DataFrame]) -> None:
+    artifact_dir = _daily_exit_velo_artifact_dir(config, target_date)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    for key, filename in EXIT_VELO_ARTIFACT_FILES.items():
+        frame = artifacts.get(key, pd.DataFrame())
+        frame.to_parquet(artifact_dir / filename, index=False)
+
+
+def _build_recent_name_lookup_from_events(events: pd.DataFrame) -> pd.DataFrame:
+    if events.empty:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    name_column = "batter_name" if "batter_name" in events.columns else "player_name"
+    if name_column not in events.columns:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    lookup = events.copy()
+    lookup["player_name"] = _normalize_name_series(lookup[name_column])
+    lookup["team"] = lookup.get("team", pd.Series("", index=lookup.index)).fillna("").astype(str).str.upper()
+    lookup["batter"] = pd.to_numeric(lookup.get("batter"), errors="coerce")
+    lookup = lookup.loc[
+        lookup["batter"].notna()
+        & lookup["player_name"].ne("")
+        & ~lookup["player_name"].map(_is_numeric_name)
+    ].copy()
+    if lookup.empty:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    lookup["batter"] = lookup["batter"].astype(int)
+    return lookup.sort_values("game_date").drop_duplicates(["batter", "team"], keep="last")[["batter", "team", "player_name"]]
+
+
+def _hitter_artifact_names_from_metrics(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    batter_column = next((column for column in ["hitter_id", "batter", "player_id"] if column in frame.columns), None)
+    name_column = next((column for column in ["hitter_name", "player_name"] if column in frame.columns), None)
+    if batter_column is None or name_column is None:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    lookup_columns = [batter_column, name_column]
+    if "team" in frame.columns:
+        lookup_columns.append("team")
+    lookup = frame.loc[:, lookup_columns].copy()
+    lookup = lookup.rename(columns={batter_column: "batter", name_column: "player_name"})
+    lookup["batter"] = pd.to_numeric(lookup["batter"], errors="coerce")
+    lookup = lookup.loc[lookup["batter"].notna()].copy()
+    if lookup.empty:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    lookup["batter"] = lookup["batter"].astype(int)
+    lookup["player_name"] = _normalize_name_series(lookup["player_name"])
+    lookup["team"] = lookup.get("team", pd.Series("", index=lookup.index)).fillna("").astype(str).str.strip().str.upper()
+    lookup = lookup.loc[lookup["player_name"].ne("") & ~lookup["player_name"].map(_is_numeric_name)].drop_duplicates(["batter", "team"])
+    return lookup.reset_index(drop=True)
+
+
+def build_exit_velo_artifact_frames(
+    raw_events: pd.DataFrame,
+    rosters: pd.DataFrame,
+    hitter_metrics: pd.DataFrame,
+    mlb_people_names: pd.DataFrame | None = None,
+) -> dict[str, pd.DataFrame]:
+    shaped = _shape_exit_velo_events(raw_events)
+    recent_names = _build_recent_name_lookup_from_events(shaped)
+    hitter_names = _hitter_artifact_names_from_metrics(hitter_metrics)
+    named = _apply_layered_names(
+        shaped,
+        rosters,
+        hitter_names,
+        recent_names,
+        mlb_people_names if mlb_people_names is not None else pd.DataFrame(columns=["batter", "team", "player_name"]),
+    )
+    events = _prepare_events(named)
+    event_log = _build_event_log(events)
+    player_summary = _build_player_summary(events)
+    return {
+        "events": events,
+        "event_log": event_log,
+        "player_summary": player_summary,
+    }
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _load_local_exit_velo_artifacts_cached(target_date_value: str, cache_version: str) -> dict[str, pd.DataFrame]:
+    return _read_local_exit_velo_artifacts(AppConfig(), date.fromisoformat(target_date_value))
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _load_remote_exit_velo_artifacts_cached(base_url: str, target_date_value: str, cache_version: str) -> dict[str, pd.DataFrame]:
+    artifact_base = f"{base_url.rstrip('/')}/daily/{target_date_value}/exit_velo"
+    try:
+        events = load_remote_parquet(artifact_base, EXIT_VELO_ARTIFACT_FILES["events"])
+    except Exception:
+        return _empty_exit_velo_artifacts()
+    artifacts = {"events": events}
+    for key in ["event_log", "player_summary"]:
+        try:
+            artifacts[key] = load_remote_parquet(artifact_base, EXIT_VELO_ARTIFACT_FILES[key])
+        except Exception:
+            artifacts[key] = pd.DataFrame()
+    return artifacts
+
+
+def _load_exit_velo_artifacts_with_fallback(
+    config: AppConfig,
+    base_url: str,
+    target_date: date,
+    *,
+    allow_lookback: bool,
+    lookback_days: int = 7,
+) -> tuple[date | None, dict[str, pd.DataFrame]]:
+    offsets = range(lookback_days + 1) if allow_lookback else range(1)
+    for offset in offsets:
+        candidate = target_date - timedelta(days=offset)
+        artifacts = _empty_exit_velo_artifacts()
+        if base_url:
+            artifacts = _load_remote_exit_velo_artifacts_cached(
+                base_url,
+                candidate.isoformat(),
+                EXIT_VELO_ARTIFACT_CACHE_VERSION,
+            )
+        if artifacts.get("events", pd.DataFrame()).empty:
+            artifacts = _load_local_exit_velo_artifacts_cached(
+                candidate.isoformat(),
+                EXIT_VELO_ARTIFACT_CACHE_VERSION,
+            )
+        if not artifacts.get("events", pd.DataFrame()).empty:
+            return candidate, artifacts
+    return None, _empty_exit_velo_artifacts()
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def _load_recent_batter_names_cached(end_date_value: str | None) -> pd.DataFrame:
     config = AppConfig()
@@ -341,24 +493,7 @@ def _load_hitter_artifact_names(config: AppConfig, end_date: date | None) -> pd.
             frame = pd.DataFrame()
     if frame.empty:
         return pd.DataFrame(columns=["batter", "team", "player_name"])
-    batter_column = next((column for column in ["hitter_id", "batter", "player_id"] if column in frame.columns), None)
-    name_column = next((column for column in ["hitter_name", "player_name"] if column in frame.columns), None)
-    if batter_column is None or name_column is None:
-        return pd.DataFrame(columns=["batter", "team", "player_name"])
-    lookup_columns = [batter_column, name_column]
-    if "team" in frame.columns:
-        lookup_columns.append("team")
-    lookup = frame.loc[:, lookup_columns].copy()
-    lookup = lookup.rename(columns={batter_column: "batter", name_column: "player_name"})
-    lookup["batter"] = pd.to_numeric(lookup["batter"], errors="coerce")
-    lookup = lookup.loc[lookup["batter"].notna()].copy()
-    if lookup.empty:
-        return pd.DataFrame(columns=["batter", "team", "player_name"])
-    lookup["batter"] = lookup["batter"].astype(int)
-    lookup["player_name"] = _normalize_name_series(lookup["player_name"])
-    lookup["team"] = lookup.get("team", pd.Series("", index=lookup.index)).fillna("").astype(str).str.strip().str.upper()
-    lookup = lookup.loc[lookup["player_name"].ne("") & ~lookup["player_name"].map(_is_numeric_name)].drop_duplicates(["batter", "team"])
-    return lookup.reset_index(drop=True)
+    return _hitter_artifact_names_from_metrics(frame)
 
 
 def _prepare_name_lookup(frame: pd.DataFrame, *, id_column: str, team_column: str | None = None, name_column: str = "player_name") -> pd.DataFrame:
@@ -824,48 +959,61 @@ def main() -> None:
     use_end_date = st.sidebar.checkbox("Use end-date override", value=False)
     end_date = st.sidebar.date_input("End date", value=date.today(), disabled=not use_end_date)
     base_url = _hosted_base_url()
-    raw = pd.DataFrame()
-    local_error: Exception | None = None
-    if base_url:
-        try:
-            raw = _load_remote_exit_velo_events_cached(
-                base_url,
-                end_date.isoformat() if use_end_date else None,
-                EXIT_VELO_SOURCE_CACHE_VERSION,
-            )
-        except Exception as exc:
-            st.warning(f"Published Statcast source could not be loaded; trying local files. Detail: {exc}")
-    if raw.empty:
-        try:
-            raw = _load_exit_velo_events_cached(end_date.isoformat() if use_end_date else None)
-        except Exception as exc:
-            local_error = exc
-    if raw.empty and local_error is not None:
-        st.error(f"Unable to load hitter exit velocity results from local Statcast files: {local_error}")
-        return
-    if raw.empty:
-        st.info("No hitter exit velocity results were found in the local or published Statcast event source.")
-        return
-    rosters = _load_rosters(config, end_date if use_end_date else None)
-    hitter_artifact_names = _load_hitter_artifact_names(config, end_date if use_end_date else None)
-    recent_live_names = _load_recent_batter_names_cached(end_date.isoformat() if use_end_date else None)
-    batter_ids = tuple(
-        sorted(
-            int(value)
-            for value in pd.to_numeric(raw.get("batter", pd.Series(dtype=object)), errors="coerce").dropna().unique().tolist()
-        )
+    artifact_target_date = end_date if use_end_date else date.today()
+    artifact_date, artifact_frames = _load_exit_velo_artifacts_with_fallback(
+        config,
+        base_url,
+        artifact_target_date,
+        allow_lookback=not use_end_date,
     )
-    mlb_people_names = _load_mlb_people_names_cached(batter_ids)
-    raw = _apply_layered_names(raw, rosters, hitter_artifact_names, recent_live_names, mlb_people_names)
+    events = artifact_frames.get("events", pd.DataFrame()).copy()
+    using_artifacts = not events.empty
 
-    latest_tracked = pd.to_datetime(raw["game_date"], errors="coerce").max()
+    if not using_artifacts:
+        raw = pd.DataFrame()
+        local_error: Exception | None = None
+        if base_url:
+            try:
+                raw = _load_remote_exit_velo_events_cached(
+                    base_url,
+                    end_date.isoformat() if use_end_date else None,
+                    EXIT_VELO_SOURCE_CACHE_VERSION,
+                )
+            except Exception as exc:
+                st.warning(f"Published Statcast source could not be loaded; trying local files. Detail: {exc}")
+        if raw.empty:
+            try:
+                raw = _load_exit_velo_events_cached(end_date.isoformat() if use_end_date else None)
+            except Exception as exc:
+                local_error = exc
+        if raw.empty and local_error is not None:
+            st.error(f"Unable to load hitter exit velocity results from local Statcast files: {local_error}")
+            return
+        if raw.empty:
+            st.info("No hitter exit velocity results were found in the local or published Statcast event source.")
+            return
+        rosters = _load_rosters(config, end_date if use_end_date else None)
+        hitter_artifact_names = _load_hitter_artifact_names(config, end_date if use_end_date else None)
+        recent_live_names = _load_recent_batter_names_cached(end_date.isoformat() if use_end_date else None)
+        batter_ids = tuple(
+            sorted(
+                int(value)
+                for value in pd.to_numeric(raw.get("batter", pd.Series(dtype=object)), errors="coerce").dropna().unique().tolist()
+            )
+        )
+        mlb_people_names = _load_mlb_people_names_cached(batter_ids)
+        raw = _apply_layered_names(raw, rosters, hitter_artifact_names, recent_live_names, mlb_people_names)
+        events = _prepare_events(raw)
+
+    latest_tracked = pd.to_datetime(events["game_date"], errors="coerce").max()
     if pd.notna(latest_tracked):
         if use_end_date:
             st.caption(f"Using tracked hitter EV/LA events through {pd.Timestamp(end_date).date().isoformat()}. Latest available event date: {latest_tracked.date().isoformat()}.")
+        elif using_artifacts and artifact_date is not None:
+            st.caption(f"Using prebuilt tracked hitter EV/LA artifacts through {latest_tracked.date().isoformat()}.")
         else:
             st.caption(f"Using latest tracked hitter EV/LA events through {latest_tracked.date().isoformat()}.")
 
-    events = _prepare_events(raw)
     team_options = sorted(value for value in events["team"].dropna().astype(str).unique().tolist())
     selected_teams = st.sidebar.multiselect("Teams", team_options)
     player_search = st.sidebar.text_input("Player search", value="")
@@ -880,8 +1028,17 @@ def main() -> None:
         st.info("No hitters matched the current filters.")
         return
 
-    event_log = _build_event_log(filtered)
-    summary_board = _build_player_summary(filtered)
+    unfiltered_view = not selected_teams and not player_search.strip()
+    event_log = (
+        artifact_frames.get("event_log", pd.DataFrame()).copy()
+        if using_artifacts and unfiltered_view and not artifact_frames.get("event_log", pd.DataFrame()).empty
+        else _build_event_log(filtered)
+    )
+    summary_board = (
+        artifact_frames.get("player_summary", pd.DataFrame()).copy()
+        if using_artifacts and unfiltered_view and not artifact_frames.get("player_summary", pd.DataFrame()).empty
+        else _build_player_summary(filtered)
+    )
     left, right = st.columns([2.0, 1.1])
     with left:
         st.subheader("Recent Event Log")
@@ -952,7 +1109,16 @@ def main() -> None:
         summary_pitch_filters,
         summary_zone_filters,
     )
-    summary_board = _build_player_summary(summary_filtered_events)
+    summary_uses_base_board = (
+        using_artifacts
+        and unfiltered_view
+        and not summary_team_filters
+        and summary_handedness_filter == "Both"
+        and not summary_pitch_filters
+        and not summary_zone_filters
+        and not artifact_frames.get("player_summary", pd.DataFrame()).empty
+    )
+    summary_board = artifact_frames["player_summary"].copy() if summary_uses_base_board else _build_player_summary(summary_filtered_events)
     display_summary_board = _filter_and_sort_summary(summary_board, summary_player_search)
     display_summary_board = _select_summary_columns(display_summary_board, summary_window_filters)
     st.caption(f"{len(display_summary_board):,} hitters")

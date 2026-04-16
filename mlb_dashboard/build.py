@@ -20,6 +20,7 @@ from .dashboard_views import (
     build_slate_summary_matchup_overview,
     launch_angle_score,
 )
+from .exit_velo_log_page import build_exit_velo_artifact_frames, write_exit_velo_artifacts
 from .local_store import (
     SourcePayload,
     load_local_source_payload,
@@ -2888,6 +2889,18 @@ def run_build(
         tracking_health,
     )
     _save_top_slate_board_files(context, snapshots, pitcher_snapshots)
+    ev_artifact_start = datetime.now(UTC)
+    try:
+        ev_artifacts = build_exit_velo_artifact_frames(
+            prepared.live_payload.statcast_events,
+            rosters_frame,
+            prepared.hitter_metrics,
+        )
+        write_exit_velo_artifacts(context.config, context.target_date, ev_artifacts)
+    except Exception as exc:  # pragma: no cover
+        warnings.warn(f"Unable to write exit velo artifacts for {context.target_date.isoformat()}: {exc}")
+    timings["exit_velo_artifacts"] = _elapsed_seconds(ev_artifact_start)
+    print(f"[timing] exit_velo_artifacts={timings['exit_velo_artifacts']:.2f}s", flush=True)
     timings["daily_artifacts"] = _elapsed_seconds(daily_write_start)
     print(f"[timing] daily_artifacts={timings['daily_artifacts']:.2f}s", flush=True)
     per_game_start = datetime.now(UTC)
