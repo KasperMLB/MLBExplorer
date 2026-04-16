@@ -1125,7 +1125,7 @@ def render_sticky_logo_game_nav(
                 "homeTeam": home_team,
                 "awayLogo": team_logo_data_uri(away_team),
                 "homeLogo": team_logo_data_uri(home_team),
-                "status": str(game.get("game_status", "") or ""),
+                "status": str(game.get("status", "") or game.get("game_status", "") or ""),
             }
         )
 
