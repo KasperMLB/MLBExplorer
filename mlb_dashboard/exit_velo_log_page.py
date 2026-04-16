@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 
 import pandas as pd
@@ -16,6 +17,18 @@ from .ui_components import render_custom_metric_table, render_exit_velo_summary_
 WINDOWS = [1, 3, 5, 10, 15, 25]
 SORT_DEPTH = 20
 EVENT_LOG_LIMIT = 250
+REMOTE_EXIT_VELO_LOOKBACK_DAYS = 75
+EXIT_VELO_EVENT_COLUMNS = [
+    "game_date", "game_pk", "away_team", "home_team", "inning_topbot", "batter", "batter_name", "pitcher_name",
+    "player_name", "team", "opponent", "game_label", "at_bat_number", "pitch_number", "pitch_type", "pitch_name",
+    "p_throws", "zone", "plate_x", "plate_z", "stand", "hc_x", "bb_type", "events", "launch_speed", "launch_angle",
+    "release_speed",
+]
+REMOTE_STATCAST_COLUMNS = [
+    "game_date", "game_pk", "away_team", "home_team", "inning_topbot", "batter", "batter_name", "pitcher_name",
+    "player_name", "at_bat_number", "pitch_number", "pitch_type", "pitch_name", "p_throws", "zone", "plate_x",
+    "plate_z", "stand", "hc_x", "bb_type", "events", "launch_speed", "launch_angle", "release_speed",
+]
 ZONE_DISPLAY_MAP = {
     1: "Upper Inside",
     2: "Upper Middle",
@@ -125,6 +138,70 @@ def _load_exit_velo_events_cached(end_date_value: str | None) -> pd.DataFrame:
     config = AppConfig()
     parsed_end_date = date.fromisoformat(end_date_value) if end_date_value else None
     return read_hitter_exit_velo_events(config, end_date=parsed_end_date)
+
+
+def _shape_exit_velo_events(events: pd.DataFrame) -> pd.DataFrame:
+    if events.empty:
+        return pd.DataFrame(columns=EXIT_VELO_EVENT_COLUMNS)
+    work = events.loc[
+        pd.to_numeric(events.get("launch_speed"), errors="coerce").notna()
+        & pd.to_numeric(events.get("launch_angle"), errors="coerce").notna()
+    ].copy()
+    if work.empty:
+        return pd.DataFrame(columns=EXIT_VELO_EVENT_COLUMNS)
+    for column in REMOTE_STATCAST_COLUMNS:
+        if column not in work.columns:
+            work[column] = pd.NA
+    work["game_date"] = pd.to_datetime(work["game_date"], errors="coerce")
+    away_team = work.get("away_team", pd.Series("", index=work.index)).fillna("").astype(str).str.upper()
+    home_team = work.get("home_team", pd.Series("", index=work.index)).fillna("").astype(str).str.upper()
+    topbot = work.get("inning_topbot", pd.Series("", index=work.index)).fillna("").astype(str)
+    work["team"] = away_team.where(topbot.eq("Top"), home_team)
+    work["opponent"] = home_team.where(work["team"].eq(away_team), away_team)
+    work["game_label"] = away_team + " @ " + home_team
+    ranked_games = (
+        work[["batter", "game_date", "game_pk"]]
+        .drop_duplicates()
+        .sort_values(["batter", "game_date", "game_pk"], ascending=[True, False, False], na_position="last")
+    )
+    ranked_games["recent_game_rank"] = ranked_games.groupby("batter").cumcount() + 1
+    work = work.merge(ranked_games.loc[ranked_games["recent_game_rank"].le(25)], on=["batter", "game_date", "game_pk"], how="inner")
+    for column in EXIT_VELO_EVENT_COLUMNS:
+        if column not in work.columns:
+            work[column] = pd.NA
+    return work[EXIT_VELO_EVENT_COLUMNS].sort_values(
+        ["game_date", "game_pk", "at_bat_number", "pitch_number"],
+        ascending=[False, False, False, False],
+        na_position="last",
+    ).reset_index(drop=True)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _load_remote_exit_velo_events_cached(base_url: str, end_date_value: str | None) -> pd.DataFrame:
+    end = date.fromisoformat(end_date_value) if end_date_value else date.today()
+    days = [end - timedelta(days=offset) for offset in range(REMOTE_EXIT_VELO_LOOKBACK_DAYS)]
+    frames: list[pd.DataFrame] = []
+
+    def _load_day(day: date) -> pd.DataFrame:
+        return load_remote_parquet(
+            f"{base_url.rstrip('/')}/sources/statcast_events/year={day.year}",
+            f"game_date={day.isoformat()}.parquet",
+            columns=REMOTE_STATCAST_COLUMNS,
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(_load_day, day): day for day in days}
+        for future in as_completed(futures):
+            try:
+                frame = future.result()
+            except Exception:
+                continue
+            if frame.empty:
+                continue
+            frames.append(frame)
+    if not frames:
+        return pd.DataFrame(columns=EXIT_VELO_EVENT_COLUMNS)
+    return _shape_exit_velo_events(pd.concat(frames, ignore_index=True, sort=False))
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -633,8 +710,14 @@ def main() -> None:
     except Exception as exc:
         st.error(f"Unable to load hitter exit velocity results from local Statcast files: {exc}")
         return
+    if raw.empty and _hosted_base_url():
+        try:
+            raw = _load_remote_exit_velo_events_cached(_hosted_base_url(), end_date.isoformat() if use_end_date else None)
+        except Exception as exc:
+            st.error(f"Unable to load hitter exit velocity results from published Statcast files: {exc}")
+            return
     if raw.empty:
-        st.info("No hitter exit velocity results were found in the local Statcast event source.")
+        st.info("No hitter exit velocity results were found in the local or published Statcast event source.")
         return
     rosters = _load_rosters(config, end_date if use_end_date else None)
     hitter_artifact_names = _load_hitter_artifact_names(config, end_date if use_end_date else None)
