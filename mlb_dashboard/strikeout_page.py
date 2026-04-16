@@ -125,8 +125,11 @@ def _pitcher_ids_from_games(games: list[dict]) -> list[int]:
     for g in games:
         for key in ("away_probable_pitcher_id", "home_probable_pitcher_id"):
             pid = g.get(key)
-            if pid:
-                ids.append(int(pid))
+            try:
+                if pid is not None and pid == pid:  # NaN != NaN
+                    ids.append(int(pid))
+            except (TypeError, ValueError):
+                pass
     return ids
 
 
