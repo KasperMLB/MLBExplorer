@@ -545,7 +545,18 @@ function StickyPortalBar({ parentDocument, visible, cards, selectedKey, selected
   if (!parentDocument) return null;
 
   const scrollToTop = () => {
-    try { window.parent.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+    try {
+      let el = window.frameElement?.parentElement;
+      while (el) {
+        const { overflow, overflowY } = window.parent.getComputedStyle(el);
+        if (/auto|scroll/.test(overflow + overflowY)) {
+          el.scrollTo({ top: 0, behavior: "smooth" });
+          return;
+        }
+        el = el.parentElement;
+      }
+      window.parent.scrollTo({ top: 0, behavior: "smooth" });
+    } catch {}
   };
 
   return createPortal(
