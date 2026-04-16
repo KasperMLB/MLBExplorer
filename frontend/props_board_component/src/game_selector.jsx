@@ -514,7 +514,7 @@ export function StickyGameNav({ args }) {
     if (!ParentIO) return undefined;
     const observer = new ParentIO(
       ([entry]) => {
-        setStickyVisible(!entry.isIntersecting);
+        setStickyVisible(!entry.isIntersecting && entry.boundingClientRect.top < 0);
       },
       { threshold: 0 }
     );
