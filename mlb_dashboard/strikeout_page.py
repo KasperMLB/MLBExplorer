@@ -268,8 +268,21 @@ def _render_slate_summary(projections: pd.DataFrame) -> None:
         key="so-slate-summary",
         height=420,
         use_lightweight=True,
-        higher_is_better={"Proj K", "K Rate", "Lineup K%", "Blend K%", "Mix Whiff"},
-        lower_is_better={"BB Rate", "Proj BB"},
+        higher_is_better={
+            "Proj K",       # more projected Ks = higher ceiling
+            "Proj BF",      # more batters faced = more K opportunities
+            "Avg Pitches",  # deeper outings = more K chances
+            "K Rate",       # pitcher historical K rate
+            "Lineup K%",    # opposing lineup vulnerability
+            "Blend K%",     # blended final K rate
+            "Mix Whiff",    # pitch-mix weighted whiff rate
+            "W. Starts",    # more starts = higher confidence
+        },
+        lower_is_better={
+            "Proj BB",      # fewer BBs = cleaner outing
+            "BB Rate",      # lower walk rate = better command
+            "P/PA",         # fewer pitches per batter = more efficient
+        },
     )
 
 
@@ -376,16 +389,16 @@ def _render_matchup_breakdown(pitcher_row: dict, hitter_k_probs: list[dict]) -> 
     # Insert Team logo column after Hitter
     if "team" in display.columns:
         display.insert(1, "Team", display.pop("team").map(lambda t: team_logo_data_uri(str(t)) or str(t)))
-    if "SwStr%" in display.columns:
-        display["SwStr%"] = pd.to_numeric(display["SwStr%"], errors="coerce").map(lambda v: f"{v:.1%}" if pd.notna(v) else "--")
-    if "K Prob" in display.columns:
-        display["K Prob"] = pd.to_numeric(display["K Prob"], errors="coerce").map(lambda v: f"{v:.1%}" if pd.notna(v) else "--")
+    # Keep numeric so _build_lightweight_grid_payload can color them
+    for col in ["SwStr%", "K Prob", "SwStr Scale", "Pitch-Mix Vuln"]:
+        if col in display.columns:
+            display[col] = pd.to_numeric(display[col], errors="coerce")
     render_metric_grid(
         display,
         key=f"so-matchup-{pitcher_row.get('pitcher_id', 0)}",
         height=320,
         use_lightweight=True,
-        higher_is_better={"Pitch-Mix Vuln", "K Prob", "SwStr Scale"},
+        higher_is_better={"SwStr%", "SwStr Scale", "Pitch-Mix Vuln", "K Prob"},
     )
 
 
