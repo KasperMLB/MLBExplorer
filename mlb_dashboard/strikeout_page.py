@@ -88,6 +88,14 @@ def _load_slate(config: AppConfig, target_date: date) -> tuple[list[dict], str, 
 
 
 @st.cache_data(show_spinner=False)
+def _load_remote_daily_parquet(base_url: str, target_date: date, filename: str) -> pd.DataFrame:
+    try:
+        return pd.read_parquet(f"{base_url}/daily/{target_date.isoformat()}/{filename}")
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(show_spinner=False)
 def _load_all_data(
     target_date: date,
     pitcher_ids: tuple[int, ...],
@@ -98,18 +106,51 @@ def _load_all_data(
 ) -> dict:
     """Load all data needed for projections; cached by date + pitcher IDs."""
     config = AppConfig()
-    engine = StatcastQueryEngine(config)
-    filters = QueryFilters(split=split, recent_window=recent_window, weighted_mode=weighted_mode)
+    base_url = _hosted_base_url()
+    is_local = config.db_path.exists()
 
-    pitcher_metrics = engine.get_pitcher_cards(list(pitcher_ids), filters) if pitcher_ids else pd.DataFrame()
-    outcomes = engine.load_pitcher_game_outcomes_for_projections(list(pitcher_ids), n_starts=30)
-    pitcher_fzc = engine.load_daily_pitcher_family_zone_context(target_date)
-    batter_fzp = engine.load_daily_batter_family_zone_profiles(target_date)
+    if is_local:
+        engine = StatcastQueryEngine(config)
+        filters = QueryFilters(split=split, recent_window=recent_window, weighted_mode=weighted_mode)
+        pitcher_metrics = engine.get_pitcher_cards(list(pitcher_ids), filters) if pitcher_ids else pd.DataFrame()
+        outcomes = engine.load_pitcher_game_outcomes_for_projections(list(pitcher_ids), n_starts=30)
+        pitcher_fzc = engine.load_daily_pitcher_family_zone_context(target_date)
+        batter_fzp = engine.load_daily_batter_family_zone_profiles(target_date)
+        hitters_by_team: dict[str, list] = {}
+        for team in team_list:
+            pool = engine.get_team_hitter_pool(team, None, filters)
+            hitters_by_team[team] = pool.to_dict("records") if not pool.empty else []
+    else:
+        # Hosted: load everything from remote parquet files; no DuckDB available.
+        # Game outcomes are not hosted — projection falls back to proxy stats (confidence: Low).
+        raw_pitchers = _load_remote_daily_parquet(base_url, target_date, "top_slate_pitchers.parquet")
+        if not raw_pitchers.empty and "split_key" in raw_pitchers.columns:
+            raw_pitchers = raw_pitchers.loc[
+                raw_pitchers["split_key"].eq(split)
+                & raw_pitchers.get("recent_window", pd.Series(recent_window, index=raw_pitchers.index)).eq(recent_window)
+                & raw_pitchers.get("weighted_mode", pd.Series(weighted_mode, index=raw_pitchers.index)).eq(weighted_mode)
+            ]
+        if pitcher_ids and not raw_pitchers.empty and "pitcher_id" in raw_pitchers.columns:
+            raw_pitchers = raw_pitchers.loc[raw_pitchers["pitcher_id"].isin(pitcher_ids)]
+        pitcher_metrics = raw_pitchers
 
-    hitters_by_team: dict[str, list] = {}
-    for team in team_list:
-        pool = engine.get_team_hitter_pool(team, None, filters)
-        hitters_by_team[team] = pool.to_dict("records") if not pool.empty else []
+        outcomes = pd.DataFrame()  # not available on hosted; proxy fallback used
+
+        pitcher_fzc = _load_remote_daily_parquet(base_url, target_date, "daily_pitcher_family_zone_context.parquet")
+        batter_fzp = _load_remote_daily_parquet(base_url, target_date, "daily_batter_family_zone_profiles.parquet")
+
+        raw_hitters = _load_remote_daily_parquet(base_url, target_date, "top_slate_hitters.parquet")
+        if not raw_hitters.empty and "split_key" in raw_hitters.columns:
+            raw_hitters = raw_hitters.loc[
+                raw_hitters["split_key"].eq(split)
+                & raw_hitters.get("recent_window", pd.Series(recent_window, index=raw_hitters.index)).eq(recent_window)
+                & raw_hitters.get("weighted_mode", pd.Series(weighted_mode, index=raw_hitters.index)).eq(weighted_mode)
+            ]
+        hitters_by_team = {}
+        if not raw_hitters.empty and "team" in raw_hitters.columns:
+            for team in team_list:
+                pool = raw_hitters.loc[raw_hitters["team"] == team]
+                hitters_by_team[team] = pool.to_dict("records") if not pool.empty else []
 
     return {
         "pitcher_metrics": pitcher_metrics.to_dict("records") if not pitcher_metrics.empty else [],
