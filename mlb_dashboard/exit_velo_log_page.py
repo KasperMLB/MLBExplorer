@@ -707,7 +707,7 @@ def _select_summary_columns(frame: pd.DataFrame, selected_windows: list[str]) ->
 
 def _format_detail_table(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
-        return pd.DataFrame(columns=["Date", "away_logo", "matchup_at", "home_logo", "PA", "isHH", "isBarrel", "Result", "EV", "LA", "Pitch Velo", "Brl"])
+        return pd.DataFrame(columns=["Date", "PA", "isHH", "isBarrel", "Result", "EV", "LA", "Pitch Velo", "Brl"])
     detail = frame.sort_values(
         ["game_date", "game_pk", "at_bat_number", "pitch_number"],
         ascending=[False, False, False, False],
@@ -733,12 +733,12 @@ def _format_detail_table(frame: pd.DataFrame) -> pd.DataFrame:
     detail["LA"] = pd.to_numeric(detail["launch_angle"], errors="coerce").round(1)
     detail["Pitch Velo"] = pd.to_numeric(detail["release_speed"], errors="coerce").round(1)
     detail["Brl"] = pd.to_numeric(detail.get("barrel_count"), errors="coerce").fillna(0).astype(int)
-    return detail[["Date", "away_logo", "matchup_at", "home_logo", "PA", "isHH", "isBarrel", "Result", "EV", "LA", "Pitch Velo", "Brl"]].reset_index(drop=True)
+    return detail[["Date", "PA", "isHH", "isBarrel", "Result", "EV", "LA", "Pitch Velo", "Brl"]].reset_index(drop=True)
 
 
 def _build_detail_rollup(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
-        return pd.DataFrame(columns=["Date", "away_logo", "matchup_at", "home_logo", "BBE", "Avg EV", "Max EV", "HH%", "Brl"])
+        return pd.DataFrame(columns=["Date", "BBE", "Avg EV", "Max EV", "HH%", "Brl"])
     grouped = (
         frame.groupby(["game_date", "game_pk", "game_label"], as_index=False)
         .agg(
@@ -769,7 +769,7 @@ def _build_detail_rollup(frame: pd.DataFrame) -> pd.DataFrame:
         (pd.to_numeric(grouped["hard_hits"], errors="coerce").fillna(0) / grouped["BBE"].replace(0, pd.NA)) * 100.0
     ).round(0)
     grouped["Brl"] = pd.to_numeric(grouped["barrel_count"], errors="coerce").fillna(0).astype(int)
-    return grouped[["Date", "away_logo", "matchup_at", "home_logo", "BBE", "Avg EV", "Max EV", "HH%", "Brl"]].reset_index(drop=True)
+    return grouped[["Date", "BBE", "Avg EV", "Max EV", "HH%", "Brl"]].reset_index(drop=True)
 
 
 def _render_side_detail(frame: pd.DataFrame, board: pd.DataFrame) -> None:
