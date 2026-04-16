@@ -18,6 +18,7 @@ WINDOWS = [1, 3, 5, 10, 15, 25]
 SORT_DEPTH = 20
 EVENT_LOG_LIMIT = 250
 REMOTE_EXIT_VELO_LOOKBACK_DAYS = 75
+EXIT_VELO_SOURCE_CACHE_VERSION = "2026-04-14-source-v2"
 EXIT_VELO_EVENT_COLUMNS = [
     "game_date", "game_pk", "away_team", "home_team", "inning_topbot", "batter", "batter_name", "pitcher_name",
     "player_name", "team", "opponent", "game_label", "at_bat_number", "pitch_number", "pitch_type", "pitch_name",
@@ -183,7 +184,7 @@ def _shape_exit_velo_events(events: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def _load_remote_exit_velo_events_cached(base_url: str, end_date_value: str | None) -> pd.DataFrame:
+def _load_remote_exit_velo_events_cached(base_url: str, end_date_value: str | None, cache_version: str) -> pd.DataFrame:
     end = date.fromisoformat(end_date_value) if end_date_value else date.today()
     days = [end - timedelta(days=offset) for offset in range(REMOTE_EXIT_VELO_LOOKBACK_DAYS)]
     frames: list[pd.DataFrame] = []
@@ -208,6 +209,26 @@ def _load_remote_exit_velo_events_cached(base_url: str, end_date_value: str | No
     if not frames:
         return pd.DataFrame(columns=EXIT_VELO_EVENT_COLUMNS)
     return _shape_exit_velo_events(pd.concat(frames, ignore_index=True, sort=False))
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def _probe_remote_exit_velo_date_cached(base_url: str, probe_date_value: str, cache_version: str) -> tuple[int, str]:
+    probe_date = date.fromisoformat(probe_date_value)
+    try:
+        frame = load_remote_parquet(
+            f"{base_url.rstrip('/')}/sources/statcast_events/year={probe_date.year}",
+            f"game_date={probe_date.isoformat()}.parquet",
+            columns=["game_date", "launch_speed", "launch_angle"],
+        )
+    except Exception as exc:
+        return 0, f"error:{type(exc).__name__}"
+    tracked = int(
+        (
+            pd.to_numeric(frame.get("launch_speed"), errors="coerce").notna()
+            & pd.to_numeric(frame.get("launch_angle"), errors="coerce").notna()
+        ).sum()
+    )
+    return int(len(frame)), f"tracked={tracked}"
 
 
 def _max_event_date_label(frame: pd.DataFrame) -> str:
@@ -728,7 +749,11 @@ def main() -> None:
     local_error: Exception | None = None
     if base_url:
         try:
-            remote_raw = _load_remote_exit_velo_events_cached(base_url, end_date.isoformat() if use_end_date else None)
+            remote_raw = _load_remote_exit_velo_events_cached(
+                base_url,
+                end_date.isoformat() if use_end_date else None,
+                EXIT_VELO_SOURCE_CACHE_VERSION,
+            )
             raw = remote_raw
             source_used = "published"
         except Exception as exc:
@@ -747,13 +772,20 @@ def main() -> None:
             local_raw = _load_exit_velo_events_cached(end_date.isoformat() if use_end_date else None)
         except Exception:
             local_raw = pd.DataFrame()
+    probe_rows, probe_status = (
+        _probe_remote_exit_velo_date_cached(base_url, "2026-04-14", EXIT_VELO_SOURCE_CACHE_VERSION)
+        if base_url
+        else (0, "base_url_missing")
+    )
     st.caption(
         "EV source diagnostic: "
         f"source={source_used}; "
         f"base_url={'set' if base_url else 'missing'}; "
         f"published_max={_max_event_date_label(remote_raw)}; "
         f"local_max={_max_event_date_label(local_raw)}; "
-        f"rows={len(raw):,}"
+        f"rows={len(raw):,}; "
+        f"probe_2026_04_14_rows={probe_rows:,}; "
+        f"probe_2026_04_14={probe_status}"
     )
     if raw.empty and local_error is not None:
         st.error(f"Unable to load hitter exit velocity results from local Statcast files: {local_error}")
