@@ -12,6 +12,7 @@ from .config import AppConfig
 from .local_store import read_hitter_exit_velo_events, read_recent_batter_name_lookup
 from .dashboard_views import latest_built_date
 from .query_engine import StatcastQueryEngine, load_remote_parquet
+from .team_logos import team_logo_data_uri, team_logo_img_html
 from .ui_components import render_custom_metric_table, render_exit_velo_summary_grid
 
 
@@ -67,7 +68,7 @@ def _hosted_base_url() -> str:
 
 
 def _empty_board() -> pd.DataFrame:
-    return pd.DataFrame(columns=["Player", "Team"])
+    return pd.DataFrame(columns=["Player", "Team", "team_logo"])
 
 
 def _normalize_name(value: object) -> str:
@@ -538,7 +539,7 @@ def _checkbox_flag(series: pd.Series) -> pd.Series:
 
 def _build_event_log(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
-        return pd.DataFrame(columns=["Batter", "Team", "Game", "Date", "PA", "isHH", "isBarrel", "Result", "Exit Velo", "LA", "Pitch Velo"])
+        return pd.DataFrame(columns=["Batter", "Team", "Game", "team_logo", "away_logo", "matchup_at", "home_logo", "Date", "PA", "isHH", "isBarrel", "Result", "Exit Velo", "LA", "Pitch Velo"])
     ordered = frame.sort_values(
         ["game_date", "game_pk", "at_bat_number", "pitch_number"],
         ascending=[False, False, False, False],
@@ -547,6 +548,17 @@ def _build_event_log(frame: pd.DataFrame) -> pd.DataFrame:
     ordered["Batter"] = ordered["player_name"].fillna("")
     ordered["Team"] = ordered["team"].fillna("")
     ordered["Game"] = ordered["game_label"].fillna("")
+    ordered["team_logo"] = [team_logo_data_uri(team) for team in ordered["Team"]]
+    game_parts = ordered["Game"].fillna("").astype(str).str.split("@", n=1, expand=True)
+    if game_parts.shape[1] >= 2:
+        away = game_parts[0].str.strip()
+        home = game_parts[1].str.strip()
+    else:
+        away = pd.Series("", index=ordered.index)
+        home = pd.Series("", index=ordered.index)
+    ordered["away_logo"] = [team_logo_data_uri(team) for team in away]
+    ordered["matchup_at"] = "@"
+    ordered["home_logo"] = [team_logo_data_uri(team) for team in home]
     ordered["Date"] = ordered["game_date"].dt.date.astype(str)
     ordered["PA"] = pd.to_numeric(ordered["at_bat_number"], errors="coerce").fillna(0).astype(int)
     ordered["isHH"] = _checkbox_flag(ordered.get("is_hard_hit", pd.Series(False, index=ordered.index)))
@@ -555,7 +567,14 @@ def _build_event_log(frame: pd.DataFrame) -> pd.DataFrame:
     ordered["Exit Velo"] = pd.to_numeric(ordered["launch_speed"], errors="coerce").round(1)
     ordered["LA"] = pd.to_numeric(ordered["launch_angle"], errors="coerce").round(1)
     ordered["Pitch Velo"] = pd.to_numeric(ordered["release_speed"], errors="coerce").round(1)
-    return ordered[["Batter", "Team", "Game", "Date", "PA", "isHH", "isBarrel", "Result", "Exit Velo", "LA", "Pitch Velo"]].reset_index(drop=True)
+    return ordered[["Batter", "Team", "Game", "team_logo", "away_logo", "matchup_at", "home_logo", "Date", "PA", "isHH", "isBarrel", "Result", "Exit Velo", "LA", "Pitch Velo"]].reset_index(drop=True)
+
+
+def _event_log_display(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    columns = ["Batter", "team_logo", "away_logo", "matchup_at", "home_logo", "Date", "PA", "isHH", "isBarrel", "Result", "Exit Velo", "LA", "Pitch Velo"]
+    return frame[[column for column in columns if column in frame.columns]].copy()
 
 
 def _sort_event_log(frame: pd.DataFrame, sort_mode: str) -> pd.DataFrame:
@@ -619,6 +638,7 @@ def _build_player_summary(frame: pd.DataFrame) -> pd.DataFrame:
         .first()[["batter", "player_name", "team"]]
         .rename(columns={"player_name": "Player", "team": "Team"})
     )
+    base["team_logo"] = [team_logo_data_uri(team) for team in base["Team"]]
     summaries: list[pd.DataFrame] = []
     for window in WINDOWS:
         subset = frame.loc[frame["recent_game_rank"] <= window].copy()
@@ -675,7 +695,7 @@ def _select_summary_columns(frame: pd.DataFrame, selected_windows: list[str]) ->
     if frame.empty:
         return frame
     selected = selected_windows or ["L1", "L5"]
-    columns = ["Player", "Team", "batter"]
+    columns = ["Player", "team_logo", "batter"]
     metric_suffixes = ["BBE", "Avg EV", "Max EV", "PFB%", "FB%", "HH%", "Brl"]
     for window in selected:
         for suffix in metric_suffixes:
@@ -687,7 +707,7 @@ def _select_summary_columns(frame: pd.DataFrame, selected_windows: list[str]) ->
 
 def _format_detail_table(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
-        return pd.DataFrame(columns=["Date", "Game", "PA", "isHH", "isBarrel", "Result", "EV", "LA", "Pitch Velo", "Brl"])
+        return pd.DataFrame(columns=["Date", "away_logo", "matchup_at", "home_logo", "PA", "isHH", "isBarrel", "Result", "EV", "LA", "Pitch Velo", "Brl"])
     detail = frame.sort_values(
         ["game_date", "game_pk", "at_bat_number", "pitch_number"],
         ascending=[False, False, False, False],
@@ -695,6 +715,16 @@ def _format_detail_table(frame: pd.DataFrame) -> pd.DataFrame:
     ).copy()
     detail["Date"] = pd.to_datetime(detail["game_date"], errors="coerce").dt.date.astype(str)
     detail["Game"] = detail["game_label"].fillna("")
+    game_parts = detail["Game"].fillna("").astype(str).str.split("@", n=1, expand=True)
+    if game_parts.shape[1] >= 2:
+        away = game_parts[0].str.strip()
+        home = game_parts[1].str.strip()
+    else:
+        away = pd.Series("", index=detail.index)
+        home = pd.Series("", index=detail.index)
+    detail["away_logo"] = [team_logo_data_uri(team) for team in away]
+    detail["matchup_at"] = "@"
+    detail["home_logo"] = [team_logo_data_uri(team) for team in home]
     detail["PA"] = pd.to_numeric(detail["at_bat_number"], errors="coerce").fillna(0).astype(int)
     detail["isHH"] = _checkbox_flag(detail.get("is_hard_hit", pd.Series(False, index=detail.index)))
     detail["isBarrel"] = _checkbox_flag(detail.get("is_barrel", pd.Series(False, index=detail.index)))
@@ -703,12 +733,12 @@ def _format_detail_table(frame: pd.DataFrame) -> pd.DataFrame:
     detail["LA"] = pd.to_numeric(detail["launch_angle"], errors="coerce").round(1)
     detail["Pitch Velo"] = pd.to_numeric(detail["release_speed"], errors="coerce").round(1)
     detail["Brl"] = pd.to_numeric(detail.get("barrel_count"), errors="coerce").fillna(0).astype(int)
-    return detail[["Date", "Game", "PA", "isHH", "isBarrel", "Result", "EV", "LA", "Pitch Velo", "Brl"]].reset_index(drop=True)
+    return detail[["Date", "away_logo", "matchup_at", "home_logo", "PA", "isHH", "isBarrel", "Result", "EV", "LA", "Pitch Velo", "Brl"]].reset_index(drop=True)
 
 
 def _build_detail_rollup(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
-        return pd.DataFrame(columns=["Date", "Game", "BBE", "Avg EV", "Max EV", "HH%", "Brl"])
+        return pd.DataFrame(columns=["Date", "away_logo", "matchup_at", "home_logo", "BBE", "Avg EV", "Max EV", "HH%", "Brl"])
     grouped = (
         frame.groupby(["game_date", "game_pk", "game_label"], as_index=False)
         .agg(
@@ -722,6 +752,16 @@ def _build_detail_rollup(frame: pd.DataFrame) -> pd.DataFrame:
     grouped = grouped.sort_values(["game_date", "game_pk"], ascending=[False, False], na_position="last").copy()
     grouped["Date"] = pd.to_datetime(grouped["game_date"], errors="coerce").dt.date.astype(str)
     grouped["Game"] = grouped["game_label"].fillna("")
+    game_parts = grouped["Game"].fillna("").astype(str).str.split("@", n=1, expand=True)
+    if game_parts.shape[1] >= 2:
+        away = game_parts[0].str.strip()
+        home = game_parts[1].str.strip()
+    else:
+        away = pd.Series("", index=grouped.index)
+        home = pd.Series("", index=grouped.index)
+    grouped["away_logo"] = [team_logo_data_uri(team) for team in away]
+    grouped["matchup_at"] = "@"
+    grouped["home_logo"] = [team_logo_data_uri(team) for team in home]
     grouped["BBE"] = pd.to_numeric(grouped["bbe"], errors="coerce").fillna(0).astype(int)
     grouped["Avg EV"] = pd.to_numeric(grouped["avg_ev"], errors="coerce").round(1)
     grouped["Max EV"] = pd.to_numeric(grouped["max_ev"], errors="coerce").round(1)
@@ -729,7 +769,7 @@ def _build_detail_rollup(frame: pd.DataFrame) -> pd.DataFrame:
         (pd.to_numeric(grouped["hard_hits"], errors="coerce").fillna(0) / grouped["BBE"].replace(0, pd.NA)) * 100.0
     ).round(0)
     grouped["Brl"] = pd.to_numeric(grouped["barrel_count"], errors="coerce").fillna(0).astype(int)
-    return grouped[["Date", "Game", "BBE", "Avg EV", "Max EV", "HH%", "Brl"]].reset_index(drop=True)
+    return grouped[["Date", "away_logo", "matchup_at", "home_logo", "BBE", "Avg EV", "Max EV", "HH%", "Brl"]].reset_index(drop=True)
 
 
 def _render_side_detail(frame: pd.DataFrame, board: pd.DataFrame) -> None:
@@ -738,12 +778,21 @@ def _render_side_detail(frame: pd.DataFrame, board: pd.DataFrame) -> None:
         st.info("No hitter EV results are available for the current filters.")
         return
     options = board[["Player", "Team", "batter"]].copy()
-    options["label"] = options["Player"].fillna("").astype(str) + " (" + options["Team"].fillna("").astype(str) + ")"
+    options["label"] = options["Player"].fillna("").astype(str)
+    duplicate_labels = options["label"].duplicated(keep=False)
+    options.loc[duplicate_labels, "label"] = (
+        options.loc[duplicate_labels, "label"]
+        + " #"
+        + options.loc[duplicate_labels, "batter"].astype(str)
+    )
     labels = options["label"].tolist()
     selected_label = st.selectbox("Select hitter", labels, index=0, key="exit-velo-player")
     selected = options.loc[options["label"] == selected_label].iloc[0]
     player_frame = frame.loc[frame["batter"] == int(selected["batter"])].copy()
-    st.caption(f"{selected['Player']} | {selected['Team']}")
+    st.markdown(
+        f"<div style='display:flex;align-items:center;gap:8px;color:#6b7280;font-size:0.95rem;'>{selected['Player']} {team_logo_img_html(str(selected['Team']), size=24)}</div>",
+        unsafe_allow_html=True,
+    )
     tabs = st.tabs([f"Last {window}" for window in WINDOWS])
     for tab, window in zip(tabs, WINDOWS):
         with tab:
@@ -844,7 +893,7 @@ def main() -> None:
         )
         event_log = _sort_event_log(event_log, str(sort_mode or "Default"))
         st.caption(f"{len(event_log):,} recent tracked batted-ball events")
-        render_custom_metric_table(event_log, key="exit-velo-event-log", height=520, metric_styles=EXIT_VELO_METRIC_STYLES)
+        render_custom_metric_table(_event_log_display(event_log), key="exit-velo-event-log", height=520, metric_styles=EXIT_VELO_METRIC_STYLES)
     with right:
         _render_side_detail(filtered, summary_board)
     st.subheader("Player Summary")

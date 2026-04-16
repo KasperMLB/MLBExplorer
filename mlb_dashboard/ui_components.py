@@ -124,13 +124,15 @@ HITTER_CONFIDENCE_COLORS = {
     "Thin": "#b45309",
     "Very Thin": "#b91c1c",
 }
-LOGO_COLUMNS = {"away_logo", "home_logo"}
+LOGO_COLUMNS = {"away_logo", "home_logo", "team_logo"}
 SLATE_SUMMARY_SELECTION = "__slate_summary__"
 DISPLAY_LABELS = {
     "away_logo": "Away",
     "matchup_at": "@",
     "home_logo": "Home",
+    "team_logo": "Team",
     "game": "Game",
+    "game_label": "Game",
     "split_label": "Split",
     "hitter_name": "Hitter",
     "pitcher_name": "Pitcher",
@@ -435,6 +437,17 @@ def _display_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.rename(columns=DISPLAY_LABELS)
 
 
+def _split_matchup_labels(series: pd.Series) -> tuple[pd.Series, pd.Series] | None:
+    parts = series.fillna("").astype(str).str.split("@", n=1, expand=True)
+    if parts.shape[1] < 2:
+        return None
+    away = parts[0].str.strip()
+    home = parts[1].str.strip()
+    if not (away.ne("").any() and home.ne("").any()):
+        return None
+    return away, home
+
+
 def _visible_grid_columns(frame: pd.DataFrame, hidden_columns: set[str] | None = None) -> list[str]:
     hidden = hidden_columns or set()
     return [
@@ -495,7 +508,25 @@ def _build_lightweight_grid_payload(
 
     for column in visible_columns:
         display_column = DISPLAY_LABELS.get(column, column)
-        display_frame[display_column] = [_format_value(column, value) for value in work[column]]
+        if column == "team":
+            display_frame[display_column] = [
+                team_logo_data_uri(value) or ""
+                for value in work[column]
+            ]
+        elif column in {"game", "game_label"} and not {"away_logo", "home_logo"}.issubset(set(visible_columns)):
+            matchup_parts = _split_matchup_labels(work[column])
+            if matchup_parts is not None:
+                away, home = matchup_parts
+                display_frame["Away"] = [team_logo_data_uri(value) or "" for value in away]
+                display_frame["@"] = "@"
+                display_frame["Home"] = [team_logo_data_uri(value) or "" for value in home]
+                for logo_display_column in ("Away", "@", "Home"):
+                    if logo_display_column not in styles.columns:
+                        styles[logo_display_column] = ""
+                continue
+            display_frame[display_column] = [_format_value(column, value) for value in work[column]]
+        else:
+            display_frame[display_column] = [_format_value(column, value) for value in work[column]]
         if column == "hr_form" and HR_FORM_PCT_COLUMN in work.columns:
             styles[display_column] = [
                 f"background-color: {background}; color: #1f1f1f" if background else ""
@@ -518,6 +549,7 @@ def _build_lightweight_grid_payload(
                 f"color: {color}; font-weight: 650" if color else ""
                 for color in work[HITTER_CONFIDENCE_COLOR_COLUMN]
             ]
+    styles = styles.reindex(index=display_frame.index, columns=display_frame.columns, fill_value="")
     return display_frame, styles
 
 
@@ -564,11 +596,18 @@ def render_custom_metric_table(
             style_values.append(f"background-color: {background}; color: #1f1f1f")
         styles[column] = style_values
 
+    display_frame = display_frame.rename(columns=DISPLAY_LABELS)
+    styles = styles.rename(columns=DISPLAY_LABELS)
     st.dataframe(
         display_frame.style.apply(lambda _: styles, axis=None),
         hide_index=True,
         use_container_width=True,
         height=height,
+        column_config={
+            column: st.column_config.ImageColumn(column, width="small")
+            for column in display_frame.columns
+            if column in {DISPLAY_LABELS.get(logo_column, logo_column) for logo_column in LOGO_COLUMNS}
+        },
     )
     return frame
 
@@ -607,15 +646,16 @@ def render_exit_velo_summary_grid(
     }
     brl_high_map = {"L1": 1.0, "L3": 2.0, "L5": 3.0, "L10": 4.0, "L15": 5.0, "L25": 6.0}
     present_windows: list[str] = []
+    logo_display_labels = {DISPLAY_LABELS.get(logo_column, logo_column) for logo_column in LOGO_COLUMNS}
     for column in display_frame.columns:
-        if column in {"Player", "Team"}:
+        if column in ({"Player", "Team"} | LOGO_COLUMNS):
             continue
         parts = str(column).split(" ", 1)
         if len(parts) == 2 and parts[0] not in present_windows:
             present_windows.append(parts[0])
 
     for column in display_frame.columns:
-        if column in {"Player", "Team"}:
+        if column in ({"Player", "Team"} | LOGO_COLUMNS):
             continue
         if column.endswith("Brl"):
             window = str(column).split(" ", 1)[0]
@@ -659,6 +699,8 @@ def render_exit_velo_summary_grid(
             multi_columns.append(("Player", ""))
         elif column == "Team":
             multi_columns.append(("Team", ""))
+        elif column in LOGO_COLUMNS:
+            multi_columns.append((DISPLAY_LABELS.get(column, column), ""))
         else:
             parts = str(column).split(" ", 1)
             multi_columns.append((parts[0], parts[1] if len(parts) == 2 else column))
@@ -667,7 +709,7 @@ def render_exit_velo_summary_grid(
 
     formatters: dict[tuple[str, str], object] = {}
     for column in display_frame.columns:
-        if column[0] in {"Player", "Team"}:
+        if column[0] in ({"Player", "Team"} | logo_display_labels):
             continue
         metric_name = column[1]
         if metric_name in {"BBE", "Brl"}:
@@ -685,6 +727,11 @@ def render_exit_velo_summary_grid(
         hide_index=True,
         use_container_width=True,
         height=height,
+        column_config={
+            column: st.column_config.ImageColumn(column[0], width="small")
+            for column in display_frame.columns
+            if column[0] in {DISPLAY_LABELS.get(logo_column, logo_column) for logo_column in LOGO_COLUMNS}
+        },
     )
     return frame
 
@@ -829,12 +876,12 @@ def render_metric_grid(
             use_container_width=True,
             height=height,
             column_config={
-                DISPLAY_LABELS.get(column, column): st.column_config.ImageColumn(
-                    DISPLAY_LABELS.get(column, column),
+                column: st.column_config.ImageColumn(
+                    column,
                     width="small",
                 )
-                for column in frame.columns
-                if column in LOGO_COLUMNS
+                for column in display_frame.columns
+                if column in {DISPLAY_LABELS.get(logo_column, logo_column) for logo_column in LOGO_COLUMNS}
             },
         )
         return frame
