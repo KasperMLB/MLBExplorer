@@ -286,10 +286,10 @@ function stickySelectorStyles() {
       white-space: nowrap;
     }
     .section-chip.is-active {
-      border-color: #1f2937;
+      border-color: #E866FE;
       background: #eef3f8;
       color: #111827;
-      box-shadow: inset 0 0 0 1px rgba(31, 41, 55, 0.16);
+      box-shadow: inset 0 0 0 1px rgba(232, 102, 254, 0.30);
     }
     .section-chip:disabled {
       cursor: default;
@@ -382,10 +382,10 @@ function stickySelectorStyles() {
       white-space: nowrap;
     }
     .sticky-game-chip.is-active {
-      border-color: #1f2937;
+      border-color: #E866FE;
       background: #eef3f8;
       color: #111827;
-      box-shadow: inset 0 0 0 1px rgba(31, 41, 55, 0.16);
+      box-shadow: inset 0 0 0 1px rgba(232, 102, 254, 0.30);
     }
     .sticky-section-chip.is-active {
       border-color: #E866FE;
