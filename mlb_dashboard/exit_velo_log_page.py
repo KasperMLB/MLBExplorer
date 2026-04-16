@@ -210,6 +210,15 @@ def _load_remote_exit_velo_events_cached(base_url: str, end_date_value: str | No
     return _shape_exit_velo_events(pd.concat(frames, ignore_index=True, sort=False))
 
 
+def _max_event_date_label(frame: pd.DataFrame) -> str:
+    if frame.empty or "game_date" not in frame.columns:
+        return "-"
+    max_date = pd.to_datetime(frame["game_date"], errors="coerce").max()
+    if pd.isna(max_date):
+        return "-"
+    return max_date.date().isoformat()
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def _load_recent_batter_names_cached(end_date_value: str | None) -> pd.DataFrame:
     config = AppConfig()
@@ -713,17 +722,39 @@ def main() -> None:
     end_date = st.sidebar.date_input("End date", value=date.today(), disabled=not use_end_date)
     base_url = _hosted_base_url()
     raw = pd.DataFrame()
+    local_raw = pd.DataFrame()
+    remote_raw = pd.DataFrame()
+    source_used = "local"
     local_error: Exception | None = None
     if base_url:
         try:
-            raw = _load_remote_exit_velo_events_cached(base_url, end_date.isoformat() if use_end_date else None)
+            remote_raw = _load_remote_exit_velo_events_cached(base_url, end_date.isoformat() if use_end_date else None)
+            raw = remote_raw
+            source_used = "published"
         except Exception as exc:
             st.warning(f"Published Statcast source could not be loaded; trying local files. Detail: {exc}")
     if raw.empty:
         try:
-            raw = _load_exit_velo_events_cached(end_date.isoformat() if use_end_date else None)
+            local_raw = _load_exit_velo_events_cached(end_date.isoformat() if use_end_date else None)
+            raw = local_raw
+            source_used = "local"
         except Exception as exc:
             local_error = exc
+    elif not base_url:
+        local_raw = raw
+    if base_url and remote_raw.empty and local_raw.empty:
+        try:
+            local_raw = _load_exit_velo_events_cached(end_date.isoformat() if use_end_date else None)
+        except Exception:
+            local_raw = pd.DataFrame()
+    st.caption(
+        "EV source diagnostic: "
+        f"source={source_used}; "
+        f"base_url={'set' if base_url else 'missing'}; "
+        f"published_max={_max_event_date_label(remote_raw)}; "
+        f"local_max={_max_event_date_label(local_raw)}; "
+        f"rows={len(raw):,}"
+    )
     if raw.empty and local_error is not None:
         st.error(f"Unable to load hitter exit velocity results from local Statcast files: {local_error}")
         return
