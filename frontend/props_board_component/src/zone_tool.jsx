@@ -143,6 +143,9 @@ function zoneStyles() {
       box-shadow: 0 18px 28px rgba(0, 0, 0, 0.28);
       z-index: 5;
     }
+    .tooltip.tooltip-below {
+      transform: translate(-50%, 12px);
+    }
     .tooltip-zone {
       font-size: 11px;
       text-transform: uppercase;
@@ -320,7 +323,7 @@ export function ZoneTool({ args }) {
               <div className="zone-layout">
                 <div style={{ position: "relative" }}>
                   {activeZone ? (
-                    <div className="tooltip" style={{ left: `${tooltipLeft}px`, top: `${tooltipTop}px` }}>
+                    <div className={`tooltip${activeZone.below ? " tooltip-below" : ""}`} style={{ left: `${tooltipLeft}px`, top: `${tooltipTop}px` }}>
                       <div className="tooltip-zone">Zone {activeZone.zone}</div>
                       <div className="tooltip-label">{valueLabel(mapKind)}</div>
                       <div className="tooltip-value">{displayValue(activeZone.row, valueMode)}</div>
@@ -343,16 +346,17 @@ export function ZoneTool({ args }) {
                       const width = rect.w * cellSize + (rect.w - 1) * gap;
                       const height = rect.h * cellSize + (rect.h - 1) * gap;
                       const active = activeZone?.zone === zone;
+                      const below = y < 150;
                       return (
                         <g
                           key={zone}
-                          onMouseEnter={() => setHoveredZone({ zone, row, tooltipLeft: x + width / 2, tooltipTop: y })}
+                          onMouseEnter={() => setHoveredZone({ zone, row, tooltipLeft: x + width / 2, tooltipTop: below ? y + height : y, below })}
                           onMouseLeave={() => setHoveredZone((current) => (current?.zone === zone ? null : current))}
-                          onClick={() => setLockedZone((current) => (current?.zone === zone ? null : { zone, row, tooltipLeft: x + width / 2, tooltipTop: y }))}
+                          onClick={() => setLockedZone((current) => (current?.zone === zone ? null : { zone, row, tooltipLeft: x + width / 2, tooltipTop: below ? y + height : y, below }))}
                           style={{ cursor: "pointer" }}
                         >
                           <rect x={x + 2} y={y + 3} width={width} height={height} rx="10" fill="#081218" opacity="0.72" />
-                          <rect x={x} y={y} width={width} height={height} rx="10" fill={fillFor(row.zone_value)} stroke={active ? "#ffffff" : "#edf4f7"} strokeWidth={active ? 3 : 2} />
+                          <rect x={x} y={y} width={width} height={height} rx="10" fill={fillFor(row.zone_value)} stroke={active ? "#ffffff" : "#edf4f7"} strokeWidth={active ? 3 : 2} style={{ transition: "fill 0.3s ease, stroke 0.15s ease" }} />
                           {row && row.sample_size !== null && row.sample_size !== undefined ? (
                             <>
                               <text x={x + width / 2} y={y + 13} textAnchor="middle" fontSize="8" fontWeight="800" fill="#24363d">

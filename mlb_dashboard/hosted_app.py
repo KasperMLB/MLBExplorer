@@ -1114,6 +1114,24 @@ def main() -> None:
     )
 
 
+_SKELETON_HTML = (
+    "<style>"
+    "@keyframes kasper-shimmer{0%{background-position:-400px 0}100%{background-position:400px 0}}"
+    ".kasper-skel{background:linear-gradient(90deg,#e8f0f4 25%,#d0dce2 50%,#e8f0f4 75%);"
+    "background-size:800px 100%;animation:kasper-shimmer 1.4s infinite linear;"
+    "border-radius:8px;height:18px;margin:4px 0;}"
+    ".kasper-skel-row{display:flex;gap:8px;margin-bottom:10px;}"
+    ".kasper-skel-lg{height:80px;border-radius:12px;}"
+    "</style>"
+    "<div class='kasper-skel-row'>"
+    "<div class='kasper-skel' style='width:35%'></div>"
+    "<div class='kasper-skel' style='width:25%'></div>"
+    "</div>"
+    "<div class='kasper-skel kasper-skel-lg'></div>"
+    "<div class='kasper-skel' style='width:60%;margin-top:8px'></div>"
+)
+
+
 @st.fragment
 def _render_hosted_selected_game_area(
     base_url: str,
@@ -1174,6 +1192,8 @@ def _render_hosted_selected_game_area(
             st.info("No top matchup board rows are available for this slate summary.")
         _render_perf(perf_events)
         return
+    skel_ph = st.empty()
+    skel_ph.markdown(_SKELETON_HTML, unsafe_allow_html=True)
     try:
         load_start = perf_counter()
         resolved_date, artifacts = _load_artifacts_with_fallback(base_url, target_date)
@@ -1326,6 +1346,7 @@ def _render_hosted_selected_game_area(
             scored_pitchers_by_id.get(game.get("home_probable_pitcher_id"), filtered_pitchers.head(0)).copy(),
         )
     _record_perf(perf_events, "game prep", game_loop_start)
+    skel_ph.empty()
 
     _render_perf(perf_events)
     hitter_columns = hitter_columns_for_preset(hitter_preset)
@@ -1369,42 +1390,42 @@ def _render_hosted_selected_game_area(
                 else:
                     st.info("No matchup rows available for this game.")
 
-                st.markdown("#### Pitchers")
-                pitcher_cols = st.columns(2)
-                with pitcher_cols[0]:
-                    st.markdown(f"##### {team_logo_img_html(game['away_team'], size=24)} Starter", unsafe_allow_html=True)
-                    away_export_sections = _render_pitcher_tab(
-                        game["game_pk"],
-                        game["away_team"],
-                        away_summary_by_hand,
-                        away_arsenal,
-                        away_by_hand,
-                        away_count,
-                        away_pitcher,
-                        away_movement,
-                        away_family_context,
-                        home_hitters,
-                        batter_family_zone_profiles,
-                        filtered_family_context,
-                        mobile_safe,
-                    )
-                with pitcher_cols[1]:
-                    st.markdown(f"##### {team_logo_img_html(game['home_team'], size=24)} Starter", unsafe_allow_html=True)
-                    home_export_sections = _render_pitcher_tab(
-                        game["game_pk"],
-                        game["home_team"],
-                        home_summary_by_hand,
-                        home_arsenal,
-                        home_by_hand,
-                        home_count,
-                        home_pitcher,
-                        home_movement,
-                        home_family_context,
-                        away_hitters,
-                        batter_family_zone_profiles,
-                        filtered_family_context,
-                        mobile_safe,
-                    )
+                with st.expander("Pitchers", expanded=True):
+                    pitcher_cols = st.columns(2)
+                    with pitcher_cols[0]:
+                        st.markdown(f"##### {team_logo_img_html(game['away_team'], size=24)} Starter", unsafe_allow_html=True)
+                        away_export_sections = _render_pitcher_tab(
+                            game["game_pk"],
+                            game["away_team"],
+                            away_summary_by_hand,
+                            away_arsenal,
+                            away_by_hand,
+                            away_count,
+                            away_pitcher,
+                            away_movement,
+                            away_family_context,
+                            home_hitters,
+                            batter_family_zone_profiles,
+                            filtered_family_context,
+                            mobile_safe,
+                        )
+                    with pitcher_cols[1]:
+                        st.markdown(f"##### {team_logo_img_html(game['home_team'], size=24)} Starter", unsafe_allow_html=True)
+                        home_export_sections = _render_pitcher_tab(
+                            game["game_pk"],
+                            game["home_team"],
+                            home_summary_by_hand,
+                            home_arsenal,
+                            home_by_hand,
+                            home_count,
+                            home_pitcher,
+                            home_movement,
+                            home_family_context,
+                            away_hitters,
+                            batter_family_zone_profiles,
+                            filtered_family_context,
+                            mobile_safe,
+                        )
 
                 st.markdown("#### Hitters")
                 st.markdown(f"{team_logo_img_html(game['away_team'], size=22)} vs {game.get('home_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)

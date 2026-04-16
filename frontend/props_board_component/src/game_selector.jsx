@@ -381,12 +381,17 @@ function stickySelectorStyles() {
       padding: 5px 9px;
       white-space: nowrap;
     }
-    .sticky-game-chip.is-active,
-    .sticky-section-chip.is-active {
+    .sticky-game-chip.is-active {
       border-color: #1f2937;
       background: #eef3f8;
       color: #111827;
       box-shadow: inset 0 0 0 1px rgba(31, 41, 55, 0.16);
+    }
+    .sticky-section-chip.is-active {
+      border-color: #E866FE;
+      background: #eef3f8;
+      color: #111827;
+      box-shadow: inset 0 0 0 1px rgba(232, 102, 254, 0.30);
     }
     .sticky-game-chip.summary-chip {
       min-width: 116px;
@@ -413,6 +418,13 @@ function stickySelectorStyles() {
       font-weight: 700;
       line-height: 1;
       letter-spacing: 0.03em;
+    }
+    @keyframes kasper-live-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .sticky-chip-status-badge.is-live {
+      animation: kasper-live-pulse 1.6s ease-in-out infinite;
     }
     .sticky-section-chip {
       appearance: none;
@@ -598,7 +610,10 @@ function StickyPortalBar({ parentDocument, visible, cards, selectedKey, selected
                         <TeamLogo src={card?.homeLogo} team={card?.homeTeam} />
                       </span>
                       {badge ? (
-                        <span className="sticky-chip-status-badge" style={{ color: badge.color }}>
+                        <span
+                          className={`sticky-chip-status-badge${badge.label === "Live" ? " is-live" : ""}`}
+                          style={{ color: badge.color }}
+                        >
                           {badge.label}
                         </span>
                       ) : null}
