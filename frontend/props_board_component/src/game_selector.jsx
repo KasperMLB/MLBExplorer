@@ -289,6 +289,13 @@ function stickySelectorStyles() {
       box-shadow: 0 10px 26px rgba(15, 23, 42, 0.10);
       padding: 8px 16px 10px 16px;
       backdrop-filter: blur(10px);
+      transform: translateY(-110%);
+      transition: transform 0.22s ease;
+      pointer-events: none;
+    }
+    .kasper-sticky-nav.is-visible {
+      transform: translateY(0);
+      pointer-events: auto;
     }
     .kasper-sticky-inner {
       max-width: 1760px;
@@ -403,7 +410,7 @@ function SectionRow({ sections, selectedSection, disabled, onSelect }) {
   );
 }
 
-function StickyPortalBar({ parentDocument, cards, selectedKey, selectedSection, sections, onGameSelect, onSectionSelect }) {
+function StickyPortalBar({ parentDocument, visible, cards, selectedKey, selectedSection, sections, onGameSelect, onSectionSelect }) {
   if (!parentDocument) {
     return null;
   }
@@ -411,7 +418,7 @@ function StickyPortalBar({ parentDocument, cards, selectedKey, selectedSection, 
   return createPortal(
     <>
       <style>{stickySelectorStyles()}</style>
-      <div className="kasper-sticky-nav">
+      <div className={`kasper-sticky-nav${visible ? " is-visible" : ""}`}>
         <div className="kasper-sticky-inner">
           <div className="sticky-game-chip-row" aria-label="Sticky game selector">
             {cards.map((card) => {
@@ -575,9 +582,10 @@ export function StickyGameNav({ args }) {
           />
         ) : null}
       </div>
-      {stickyVisible ? (
+      {parentDocument ? (
         <StickyPortalBar
           parentDocument={parentDocument}
+          visible={stickyVisible}
           cards={cards}
           selectedKey={selectedKey}
           selectedSection={selectedSection}
