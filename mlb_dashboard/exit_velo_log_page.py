@@ -73,6 +73,12 @@ def _normalize_name(value: object) -> str:
     return " ".join(text.strip().split())
 
 
+def _normalize_name_series(series: pd.Series) -> pd.Series:
+    safe = pd.Series(series, index=series.index, dtype="object")
+    safe = safe.where(pd.notna(safe), None)
+    return safe.map(_normalize_name)
+
+
 def _normalize_pitch_label(pitch_name: object, pitch_type: object) -> str:
     name = _normalize_name(pitch_name)
     if name.casefold() == "fastball":
@@ -312,7 +318,7 @@ def _load_hitter_artifact_names(config: AppConfig, end_date: date | None) -> pd.
     if lookup.empty:
         return pd.DataFrame(columns=["batter", "team", "player_name"])
     lookup["batter"] = lookup["batter"].astype(int)
-    lookup["player_name"] = lookup["player_name"].map(_normalize_name)
+    lookup["player_name"] = _normalize_name_series(lookup["player_name"])
     lookup["team"] = lookup.get("team", pd.Series("", index=lookup.index)).fillna("").astype(str).str.strip().str.upper()
     lookup = lookup.loc[lookup["player_name"].ne("")].drop_duplicates(["batter", "team"])
     return lookup.reset_index(drop=True)
@@ -327,7 +333,7 @@ def _prepare_name_lookup(frame: pd.DataFrame, *, id_column: str, team_column: st
     if lookup.empty:
         return pd.DataFrame(columns=["batter", "team", "player_name"])
     lookup["batter"] = lookup["batter"].astype(int)
-    lookup["player_name"] = lookup[name_column].map(_normalize_name)
+    lookup["player_name"] = _normalize_name_series(lookup[name_column])
     lookup["team"] = ""
     if team_column and team_column in lookup.columns:
         lookup["team"] = lookup[team_column].fillna("").astype(str).str.strip().str.upper()
@@ -340,16 +346,16 @@ def _apply_name_source(work: pd.DataFrame, lookup: pd.DataFrame, *, source_label
         return work
     merged = work.merge(lookup, on=["batter", "team"], how="left", suffixes=("", "_candidate"))
     unresolved = merged["resolved_name"].eq("")
-    candidate = merged["player_name_candidate"].fillna("").map(_normalize_name)
+    candidate = _normalize_name_series(merged["player_name_candidate"])
     merged.loc[unresolved & candidate.ne(""), "resolved_name"] = candidate[unresolved & candidate.ne("")]
     merged.loc[unresolved & candidate.ne(""), "name_source"] = source_label
     merged = merged.drop(columns=["player_name_candidate"], errors="ignore")
     unresolved = merged["resolved_name"].eq("")
     if unresolved.any():
-        teamless = lookup.loc[lookup["player_name"].map(_normalize_name).ne("") & lookup["team"].eq(""), ["batter", "player_name"]].drop_duplicates("batter")
+        teamless = lookup.loc[_normalize_name_series(lookup["player_name"]).ne("") & lookup["team"].eq(""), ["batter", "player_name"]].drop_duplicates("batter")
         if not teamless.empty:
             merged = merged.merge(teamless, on="batter", how="left", suffixes=("", "_teamless"))
-            fallback = merged["player_name_teamless"].fillna("").map(_normalize_name)
+            fallback = _normalize_name_series(merged["player_name_teamless"])
             mask = merged["resolved_name"].eq("") & fallback.ne("")
             merged.loc[mask, "resolved_name"] = fallback[mask]
             merged.loc[mask, "name_source"] = source_label
@@ -371,7 +377,7 @@ def _apply_layered_names(
     work["name_source"] = ""
 
     if "batter_name" in work.columns:
-        canonical = work["batter_name"].fillna("").map(_normalize_name)
+        canonical = _normalize_name_series(work["batter_name"])
         mask = canonical.ne("")
         work.loc[mask, "resolved_name"] = canonical[mask]
         work.loc[mask, "name_source"] = "event"
