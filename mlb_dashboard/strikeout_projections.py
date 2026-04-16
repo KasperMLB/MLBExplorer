@@ -421,10 +421,12 @@ def build_slate_projections(
         ]:
             pitcher_id = game.get(pitcher_id_key)
             pitcher_name = game.get(pitcher_name_key, "TBD") or "TBD"
-            if not pitcher_id:
+            try:
+                if pitcher_id is None or pitcher_id != pitcher_id:  # NaN != NaN
+                    continue
+                pitcher_id = int(pitcher_id)
+            except (TypeError, ValueError):
                 continue
-
-            pitcher_id = int(pitcher_id)
             metrics_row = metrics_by_id.get(pitcher_id, pd.Series({
                 "pitcher_id": pitcher_id,
                 "pitcher_name": pitcher_name,
