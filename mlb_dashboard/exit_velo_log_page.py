@@ -182,6 +182,15 @@ def _shape_exit_velo_events(events: pd.DataFrame) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
+def _max_event_date(frame: pd.DataFrame) -> date | None:
+    if frame.empty or "game_date" not in frame.columns:
+        return None
+    max_date = pd.to_datetime(frame["game_date"], errors="coerce").max()
+    if pd.isna(max_date):
+        return None
+    return max_date.date()
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def _load_remote_exit_velo_events_cached(base_url: str, end_date_value: str | None) -> pd.DataFrame:
     end = date.fromisoformat(end_date_value) if end_date_value else date.today()
@@ -716,12 +725,16 @@ def main() -> None:
     except Exception as exc:
         st.error(f"Unable to load hitter exit velocity results from local Statcast files: {exc}")
         return
-    if raw.empty and _hosted_base_url():
+    if _hosted_base_url():
         try:
-            raw = _load_remote_exit_velo_events_cached(_hosted_base_url(), end_date.isoformat() if use_end_date else None)
+            remote_raw = _load_remote_exit_velo_events_cached(_hosted_base_url(), end_date.isoformat() if use_end_date else None)
         except Exception as exc:
-            st.error(f"Unable to load hitter exit velocity results from published Statcast files: {exc}")
-            return
+            if raw.empty:
+                st.error(f"Unable to load hitter exit velocity results from published Statcast files: {exc}")
+                return
+            remote_raw = pd.DataFrame()
+        if not remote_raw.empty and (raw.empty or (_max_event_date(remote_raw) or date.min) > (_max_event_date(raw) or date.min)):
+            raw = remote_raw
     if raw.empty:
         st.info("No hitter exit velocity results were found in the local or published Statcast event source.")
         return
