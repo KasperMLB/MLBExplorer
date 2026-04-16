@@ -1674,27 +1674,24 @@ def _render_local_selected_game_area(
                     )
 
                 st.markdown("#### Hitters")
-                hitter_cols = st.columns(2)
-                with hitter_cols[0]:
-                    st.markdown(f"{team_logo_img_html(game['away_team'], size=22)} vs {game.get('home_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
-                    away_hitter_columns, away_hitter_hidden = _hitter_table_columns(away_hitters, hitter_columns)
-                    away_hitters = render_metric_grid(
-                        away_hitters[away_hitter_columns],
-                        key=f"away-hitters-{game['game_pk']}",
-                        height=360,
-                        hidden_columns=away_hitter_hidden,
-                        use_lightweight=True,
-                    )
-                with hitter_cols[1]:
-                    st.markdown(f"{team_logo_img_html(game['home_team'], size=22)} vs {game.get('away_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
-                    home_hitter_columns, home_hitter_hidden = _hitter_table_columns(home_hitters, hitter_columns)
-                    home_hitters = render_metric_grid(
-                        home_hitters[home_hitter_columns],
-                        key=f"home-hitters-{game['game_pk']}",
-                        height=360,
-                        hidden_columns=home_hitter_hidden,
-                        use_lightweight=True,
-                    )
+                st.markdown(f"{team_logo_img_html(game['away_team'], size=22)} vs {game.get('home_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
+                away_hitter_columns, away_hitter_hidden = _hitter_table_columns(away_hitters, hitter_columns)
+                away_hitters = render_metric_grid(
+                    away_hitters[away_hitter_columns],
+                    key=f"away-hitters-{game['game_pk']}",
+                    height=360,
+                    hidden_columns=away_hitter_hidden,
+                    use_lightweight=True,
+                )
+                st.markdown(f"{team_logo_img_html(game['home_team'], size=22)} vs {game.get('away_probable_pitcher_name') or 'opposing starter'}", unsafe_allow_html=True)
+                home_hitter_columns, home_hitter_hidden = _hitter_table_columns(home_hitters, hitter_columns)
+                home_hitters = render_metric_grid(
+                    home_hitters[home_hitter_columns],
+                    key=f"home-hitters-{game['game_pk']}",
+                    height=360,
+                    hidden_columns=home_hitter_hidden,
+                    use_lightweight=True,
+                )
 
             elif active_section == "Rolling":
                 roll_tabs = st.tabs(["Rolling 5", "Rolling 10", "Rolling 15"])
