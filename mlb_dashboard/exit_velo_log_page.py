@@ -240,6 +240,16 @@ def _max_event_date_label(frame: pd.DataFrame) -> str:
     return max_date.date().isoformat()
 
 
+def _diagnostic_base_url_label(base_url: str) -> str:
+    if not base_url:
+        return "-"
+    text = base_url.rstrip("/")
+    marker = "huggingface.co/"
+    if marker in text:
+        return text.split(marker, 1)[1]
+    return text[-80:]
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def _load_recent_batter_names_cached(end_date_value: str | None) -> pd.DataFrame:
     config = AppConfig()
@@ -781,6 +791,7 @@ def main() -> None:
         "EV source diagnostic: "
         f"source={source_used}; "
         f"base_url={'set' if base_url else 'missing'}; "
+        f"base={_diagnostic_base_url_label(base_url)}; "
         f"published_max={_max_event_date_label(remote_raw)}; "
         f"local_max={_max_event_date_label(local_raw)}; "
         f"rows={len(raw):,}; "
