@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import date, timedelta
+from html import escape
 from time import perf_counter
 
 import pandas as pd
@@ -49,10 +50,9 @@ from .team_logos import add_matchup_logo_columns, team_logo_img_html
 from .ui_components import (
     build_pitcher_summary_table,
     render_export_hub,
-    render_logo_game_selector,
-    render_matchup_header,
     render_metric_grid,
     render_slate_export_controls,
+    render_sticky_logo_game_nav,
     render_zone_heatmap,
 )
 
@@ -227,6 +227,8 @@ MOVEMENT_REQUIRED_COLUMNS = _sorted_unique(
         "pitcher_id",
     ]
 )
+
+GAME_SECTION_OPTIONS = ["Matchup", "Rolling", "Pitcher Zones", "Hitter Zones", "Exports"]
 
 HITTER_ROLLING_REQUIRED_COLUMNS = _sorted_unique(
     [
@@ -577,8 +579,131 @@ def _load_slate_with_fallback(
     raise RuntimeError("No published hosted slate artifacts were found.")
 
 
-def _game_selection(slate: list[dict]) -> tuple[str, list[dict]]:
-    return render_logo_game_selector(slate, key_prefix="game-selector-hosted")
+def _game_selection(slate: list[dict]) -> tuple[str, list[dict], str]:
+    return render_sticky_logo_game_nav(
+        slate,
+        key_prefix="game-selector-hosted",
+        sections=GAME_SECTION_OPTIONS,
+    )
+
+
+def _render_slate_status_strip(
+    target_date: date,
+    resolved_date: date,
+    split: str,
+    recent_window: str,
+    weighted_mode: str,
+    hitter_preset: str,
+) -> None:
+    items = [
+        ("Slate", target_date.isoformat()),
+        ("Published", resolved_date.isoformat()),
+        ("Split", split),
+        ("Window", recent_window),
+        ("Mode", weighted_mode),
+        ("View", hitter_preset),
+    ]
+    chips = "".join(
+        f"<span class='kasper-status-chip'><strong>{escape(label)}:</strong> {escape(str(value))}</span>"
+        for label, value in items
+    )
+    st.markdown(
+        f"""
+        <style>
+        .kasper-status-strip {{
+            display:flex;
+            flex-wrap:wrap;
+            gap:8px;
+            margin: 4px 0 14px 0;
+        }}
+        .kasper-status-chip {{
+            display:inline-flex;
+            align-items:center;
+            border:1px solid rgba(31,41,55,0.14);
+            border-radius:8px;
+            background:#f8fafc;
+            color:#374151;
+            font-size:0.82rem;
+            gap:4px;
+            padding:5px 8px;
+            white-space:nowrap;
+        }}
+        .kasper-status-chip strong {{
+            color:#111827;
+        }}
+        </style>
+        <div class="kasper-status-strip">{chips}</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_selected_game_mini_header(game: dict) -> None:
+    away_team = str(game.get("away_team", "") or "")
+    home_team = str(game.get("home_team", "") or "")
+    away_pitcher = escape(str(game.get("away_probable_pitcher_name") or "Away starter TBD"))
+    home_pitcher = escape(str(game.get("home_probable_pitcher_name") or "Home starter TBD"))
+    status = escape(str(game.get("game_status") or "Scheduled"))
+    game_pk = escape(str(game.get("game_pk") or ""))
+    st.markdown(
+        f"""
+        <style>
+        .selected-game-mini-header {{
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:16px;
+            border:1px solid rgba(31,41,55,0.14);
+            border-radius:8px;
+            background:#f8fafc;
+            margin: 8px 0 14px 0;
+            padding:12px 14px;
+        }}
+        .selected-game-logos {{
+            display:flex;
+            align-items:center;
+            gap:10px;
+            font-size:1.05rem;
+            font-weight:800;
+            min-width:120px;
+        }}
+        .selected-game-meta {{
+            display:flex;
+            flex-wrap:wrap;
+            gap:8px 14px;
+            justify-content:flex-end;
+            color:#4b5563;
+            font-size:0.9rem;
+        }}
+        .selected-game-meta strong {{
+            color:#111827;
+        }}
+        @media (max-width: 760px) {{
+            .selected-game-mini-header {{
+                align-items:flex-start;
+                flex-direction:column;
+            }}
+            .selected-game-meta {{
+                justify-content:flex-start;
+            }}
+        }}
+        </style>
+        <div class="selected-game-mini-header">
+            <div class="selected-game-logos">
+                {team_logo_img_html(away_team, size=34)}
+                <span>@</span>
+                {team_logo_img_html(home_team, size=34)}
+            </div>
+            <div class="selected-game-meta">
+                <span><strong>{escape(away_team)} starter:</strong> {away_pitcher}</span>
+                <span><strong>{escape(home_team)} starter:</strong> {home_pitcher}</span>
+                <span><strong>Status:</strong> {status}</span>
+                <span><strong>Game PK:</strong> {game_pk}</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _filter_top_board(frame: pd.DataFrame, split: str, recent_window: str, weighted_mode: str) -> pd.DataFrame:
@@ -958,6 +1083,7 @@ def main() -> None:
             f"No published artifacts were found for {target_date.isoformat()}. "
             f"Showing the latest available published slate from {resolved_date.isoformat()} instead."
         )
+    _render_slate_status_strip(target_date, resolved_date, split, recent_window, weighted_mode, hitter_preset)
     all_games = slate.to_dict(orient="records")
     top_hitters = pd.DataFrame()
     top_pitchers = pd.DataFrame()
@@ -1006,7 +1132,7 @@ def _render_hosted_selected_game_area(
     mobile_safe: bool,
 ) -> None:
     st.divider()
-    selected_label, selected_games = _game_selection(all_games)
+    selected_label, selected_games, selected_section = _game_selection(all_games)
     st.caption(f"{'Slate summary' if selected_label == 'Slate Summary' else 'Selected game'} | {len(all_games)} games on slate")
     if selected_label == "Slate Summary":
         st.header("Slate Summary")
@@ -1068,7 +1194,7 @@ def _render_hosted_selected_game_area(
     except Exception as exc:  # pragma: no cover
         st.error(f"Unable to load hosted artifacts for {target_date.isoformat()}: {exc}")
         return
-    active_sections = {st.session_state.get(f"section-{game['game_pk']}", "Matchup") for game in selected_games}
+    active_sections = {selected_section}
     batter_join_col = "batter_id" if "batter_id" in batter_zone_profiles.columns else "batter"
     pitcher_join_col = "pitcher_id" if "pitcher_id" in pitcher_zone_profiles.columns else "pitcher"
     valid_teams = tuple(sorted({game["away_team"] for game in all_games} | {game["home_team"] for game in all_games}))
@@ -1224,14 +1350,8 @@ def _render_hosted_selected_game_area(
         best_matchups = best_matchups_by_game.get(game["game_pk"], pd.DataFrame()).copy()
 
         with st.container():
-            render_matchup_header(game)
-            active_section = st.radio(
-                "Section",
-                ["Matchup", "Rolling", "Pitcher Zones", "Hitter Zones", "Exports"],
-                horizontal=True,
-                key=f"section-{game['game_pk']}",
-                label_visibility="collapsed",
-            )
+            _render_selected_game_mini_header(game)
+            active_section = selected_section
             if active_section == "Matchup":
                 st.markdown("#### Best Matchups")
                 matchup_columns = _present_columns(best_matchups, BEST_MATCHUP_COLUMNS)

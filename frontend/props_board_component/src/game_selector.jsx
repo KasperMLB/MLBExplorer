@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Streamlit } from "streamlit-component-lib";
 
 function safeArray(value) {
@@ -225,6 +226,364 @@ export function GameSelector({ args }) {
           />
         ))}
       </div>
+    </>
+  );
+}
+
+function stickySelectorStyles() {
+  return `
+    :root {
+      color-scheme: light;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      background: transparent;
+      color: #1f2937;
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    .sticky-game-nav-frame {
+      width: 100%;
+    }
+    .sticky-section-row {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 10px 0 0 0;
+      scrollbar-width: thin;
+    }
+    .section-chip {
+      appearance: none;
+      border: 1px solid rgba(31, 41, 55, 0.16);
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #374151;
+      cursor: pointer;
+      flex: 0 0 auto;
+      font: inherit;
+      font-size: 0.9rem;
+      font-weight: 650;
+      padding: 8px 12px;
+      white-space: nowrap;
+    }
+    .section-chip.is-active {
+      border-color: #1f2937;
+      background: #eef3f8;
+      color: #111827;
+      box-shadow: inset 0 0 0 1px rgba(31, 41, 55, 0.16);
+    }
+    .section-chip:disabled {
+      cursor: default;
+      opacity: 0.45;
+    }
+    .kasper-sticky-nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 999999;
+      background: rgba(255, 255, 252, 0.96);
+      border-bottom: 1px solid rgba(31, 41, 55, 0.14);
+      box-shadow: 0 10px 26px rgba(15, 23, 42, 0.10);
+      padding: 8px 16px 10px 16px;
+      backdrop-filter: blur(10px);
+    }
+    .kasper-sticky-inner {
+      max-width: 1760px;
+      margin: 0 auto;
+    }
+    .sticky-game-chip-row,
+    .sticky-section-chip-row {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+      scrollbar-width: thin;
+    }
+    .sticky-section-chip-row {
+      margin-top: 7px;
+    }
+    .sticky-game-chip {
+      appearance: none;
+      border: 1px solid rgba(31, 41, 55, 0.16);
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #1f2937;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      font: inherit;
+      font-weight: 750;
+      gap: 6px;
+      min-height: 44px;
+      min-width: 86px;
+      padding: 5px 9px;
+      white-space: nowrap;
+    }
+    .sticky-game-chip.is-active,
+    .sticky-section-chip.is-active {
+      border-color: #1f2937;
+      background: #eef3f8;
+      color: #111827;
+      box-shadow: inset 0 0 0 1px rgba(31, 41, 55, 0.16);
+    }
+    .sticky-game-chip.summary-chip {
+      min-width: 116px;
+      font-size: 0.9rem;
+    }
+    .sticky-game-chip .team-logo-img {
+      width: 28px;
+      height: 28px;
+    }
+    .sticky-game-chip .matchup-at {
+      font-size: 0.88rem;
+    }
+    .sticky-game-chip .team-logo-fallback {
+      min-width: 22px;
+      font-size: 0.68rem;
+    }
+    .sticky-section-chip {
+      appearance: none;
+      border: 1px solid rgba(31, 41, 55, 0.16);
+      border-radius: 8px;
+      background: #ffffff;
+      color: #374151;
+      cursor: pointer;
+      flex: 0 0 auto;
+      font: inherit;
+      font-size: 0.82rem;
+      font-weight: 700;
+      min-height: 34px;
+      padding: 6px 10px;
+      white-space: nowrap;
+    }
+    @media (max-width: 760px) {
+      .kasper-sticky-nav {
+        padding: 7px 10px 8px 10px;
+      }
+      .sticky-game-chip {
+        min-height: 40px;
+        min-width: 74px;
+        padding: 4px 7px;
+      }
+      .sticky-game-chip.summary-chip {
+        min-width: 104px;
+      }
+      .sticky-game-chip .team-logo-img {
+        width: 24px;
+        height: 24px;
+      }
+      .sticky-section-chip {
+        font-size: 0.78rem;
+        min-height: 32px;
+      }
+    }
+  `;
+}
+
+function SectionRow({ sections, selectedSection, disabled, onSelect }) {
+  return (
+    <div className="sticky-section-row" aria-label="Section">
+      {sections.map((section) => (
+        <button
+          type="button"
+          className={`section-chip${section === selectedSection ? " is-active" : ""}`}
+          disabled={disabled}
+          onClick={() => onSelect(section)}
+          key={section}
+        >
+          {section}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function StickyPortalBar({ parentDocument, cards, selectedKey, selectedSection, sections, onGameSelect, onSectionSelect }) {
+  if (!parentDocument) {
+    return null;
+  }
+  const selectedIsSummary = selectedKey === "__slate_summary__";
+  return createPortal(
+    <>
+      <style>{stickySelectorStyles()}</style>
+      <div className="kasper-sticky-nav">
+        <div className="kasper-sticky-inner">
+          <div className="sticky-game-chip-row" aria-label="Sticky game selector">
+            {cards.map((card) => {
+              const active = String(card.selectionKey) === selectedKey;
+              if (card?.isSummary) {
+                return (
+                  <button
+                    type="button"
+                    className={`sticky-game-chip summary-chip${active ? " is-active" : ""}`}
+                    onClick={() => onGameSelect(card.selectionKey)}
+                    key={card.selectionKey}
+                  >
+                    Slate Summary
+                  </button>
+                );
+              }
+              return (
+                <button
+                  type="button"
+                  className={`sticky-game-chip${active ? " is-active" : ""}`}
+                  onClick={() => onGameSelect(card.selectionKey)}
+                  aria-label={`${card?.awayTeam || ""} at ${card?.homeTeam || ""}`}
+                  key={card.selectionKey}
+                >
+                  <TeamLogo src={card?.awayLogo} team={card?.awayTeam} />
+                  <span className="matchup-at">@</span>
+                  <TeamLogo src={card?.homeLogo} team={card?.homeTeam} />
+                </button>
+              );
+            })}
+          </div>
+          {!selectedIsSummary ? (
+            <div className="sticky-section-chip-row" aria-label="Sticky section selector">
+              {sections.map((section) => (
+                <button
+                  type="button"
+                  className={`sticky-section-chip${section === selectedSection ? " is-active" : ""}`}
+                  onClick={() => onSectionSelect(section)}
+                  key={section}
+                >
+                  {section}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </>,
+    parentDocument.body
+  );
+}
+
+export function StickyGameNav({ args }) {
+  const cards = useMemo(() => safeArray(args?.cards), [args?.cards]);
+  const sections = useMemo(() => safeArray(args?.sections).map(String), [args?.sections]);
+  const initialSelectedKey = String(args?.selectedKey || cards[0]?.selectionKey || "");
+  const initialSection = String(args?.selectedSection || sections[0] || "");
+  const [selectedKey, setSelectedKey] = useState(initialSelectedKey);
+  const [selectedSection, setSelectedSection] = useState(initialSection);
+  const [stickyVisible, setStickyVisible] = useState(false);
+  const [parentDocument, setParentDocument] = useState(null);
+
+  useEffect(() => {
+    setSelectedKey(initialSelectedKey);
+  }, [initialSelectedKey]);
+
+  useEffect(() => {
+    setSelectedSection(initialSection);
+  }, [initialSection]);
+
+  useEffect(() => {
+    try {
+      setParentDocument(window.parent?.document || null);
+    } catch {
+      setParentDocument(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      Streamlit.setFrameHeight(document.documentElement.scrollHeight);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [cards.length, selectedKey, selectedSection, sections.length]);
+
+  useEffect(() => {
+    let parentWindow = null;
+    try {
+      parentWindow = window.parent || null;
+    } catch {
+      parentWindow = null;
+    }
+    if (!parentWindow || !window.frameElement) {
+      return undefined;
+    }
+    const updateSticky = () => {
+      const rect = window.frameElement.getBoundingClientRect();
+      setStickyVisible(rect.top < -18);
+    };
+    updateSticky();
+    parentWindow.addEventListener("scroll", updateSticky, { passive: true });
+    parentWindow.addEventListener("resize", updateSticky);
+    return () => {
+      parentWindow.removeEventListener("scroll", updateSticky);
+      parentWindow.removeEventListener("resize", updateSticky);
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      setStickyVisible(false);
+    };
+  }, []);
+
+  const emitSelection = (nextKey, nextSection) => {
+    Streamlit.setComponentValue({
+      selectionKey: String(nextKey || selectedKey),
+      section: String(nextSection || selectedSection || sections[0] || ""),
+    });
+  };
+
+  const onGameSelect = (selectionKey) => {
+    if (!selectionKey) return;
+    const next = String(selectionKey);
+    setSelectedKey(next);
+    emitSelection(next, selectedSection);
+  };
+
+  const onSectionSelect = (section) => {
+    if (!section) return;
+    const next = String(section);
+    setSelectedSection(next);
+    emitSelection(selectedKey, next);
+  };
+
+  const selectedIsSummary = selectedKey === "__slate_summary__";
+
+  return (
+    <>
+      <style>{`${selectorStyles()}\n${stickySelectorStyles()}`}</style>
+      <div className="sticky-game-nav-frame">
+        <div className="game-logo-selector-label">Game</div>
+        <div className="game-logo-selector-grid">
+          {cards.map((card) => (
+            <SelectorCard
+              key={card.selectionKey}
+              card={card}
+              active={String(card.selectionKey) === selectedKey}
+              onSelect={onGameSelect}
+            />
+          ))}
+        </div>
+        {!selectedIsSummary ? (
+          <SectionRow
+            sections={sections}
+            selectedSection={selectedSection}
+            disabled={false}
+            onSelect={onSectionSelect}
+          />
+        ) : null}
+      </div>
+      {stickyVisible ? (
+        <StickyPortalBar
+          parentDocument={parentDocument}
+          cards={cards}
+          selectedKey={selectedKey}
+          selectedSection={selectedSection}
+          sections={sections}
+          onGameSelect={onGameSelect}
+          onSectionSelect={onSectionSelect}
+        />
+      ) : null}
     </>
   );
 }

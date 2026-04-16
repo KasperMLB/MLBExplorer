@@ -8,7 +8,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
 import streamlit as st
-from .components import render_game_selector
+from .components import render_game_selector, render_sticky_game_nav
 from .components import render_zone_tool as render_zone_tool_component
 from .team_logos import matchup_logo_html, team_logo_data_uri
 
@@ -1068,6 +1068,83 @@ def render_logo_game_selector(slate: list[dict], *, key_prefix: str) -> tuple[st
         st.session_state[state_key] = str(component_selection)
 
     return resolve_logo_game_selection(slate, st.session_state.get(state_key))
+
+
+def render_sticky_logo_game_nav(
+    slate: list[dict],
+    *,
+    key_prefix: str,
+    sections: list[str],
+    default_section: str = "Matchup",
+) -> tuple[str, list[dict], str]:
+    if not slate:
+        return "Slate Summary", [], default_section
+
+    state_key = f"{key_prefix}-selected-game-pk"
+    component_key = f"{key_prefix}-sticky-component"
+    valid_keys = [str(game.get("game_pk")) for game in slate if game.get("game_pk") is not None]
+    valid_selection_keys = {SLATE_SUMMARY_SELECTION, *valid_keys}
+    valid_sections = set(sections)
+
+    def _apply_component_value(value: object) -> None:
+        if not isinstance(value, dict):
+            return
+        selection = value.get("selectionKey")
+        section = value.get("section")
+        if selection in valid_selection_keys:
+            st.session_state[state_key] = str(selection)
+        if selection in valid_keys and section in valid_sections:
+            st.session_state[f"section-{selection}"] = str(section)
+
+    _apply_component_value(st.session_state.get(component_key))
+    if state_key not in st.session_state or st.session_state[state_key] not in valid_selection_keys:
+        st.session_state[state_key] = valid_keys[0] if valid_keys else SLATE_SUMMARY_SELECTION
+
+    selected = str(st.session_state[state_key])
+    selected_section = default_section
+    if selected in valid_keys:
+        section_key = f"section-{selected}"
+        if st.session_state.get(section_key) not in valid_sections:
+            st.session_state[section_key] = default_section
+        selected_section = str(st.session_state[section_key])
+
+    cards: list[dict[str, object]] = [
+        {
+            "selectionKey": SLATE_SUMMARY_SELECTION,
+            "isSummary": True,
+        }
+    ]
+    for game in slate:
+        game_key = str(game.get("game_pk"))
+        away_team = str(game.get("away_team", "") or "")
+        home_team = str(game.get("home_team", "") or "")
+        cards.append(
+            {
+                "selectionKey": game_key,
+                "awayTeam": away_team,
+                "homeTeam": home_team,
+                "awayLogo": team_logo_data_uri(away_team),
+                "homeLogo": team_logo_data_uri(home_team),
+                "status": str(game.get("game_status", "") or ""),
+            }
+        )
+
+    component_selection = render_sticky_game_nav(
+        cards,
+        selected_key=selected,
+        sections=sections,
+        selected_section=selected_section,
+        key=component_key,
+        height=270,
+    )
+    _apply_component_value(component_selection)
+
+    selected_label, selected_games = resolve_logo_game_selection(slate, st.session_state.get(state_key))
+    selected = str(st.session_state.get(state_key))
+    selected_section = default_section
+    if selected in valid_keys:
+        selected_section = str(st.session_state.get(f"section-{selected}", default_section))
+    return selected_label, selected_games, selected_section
 
 
 def build_pitcher_summary_table(pitcher_summary_by_hand: pd.DataFrame) -> pd.DataFrame:

@@ -1,7 +1,7 @@
 import React from "react";
 import { PropsBoard } from "./props_board.jsx";
 import { DataTable } from "./data_table.jsx";
-import { GameSelector } from "./game_selector.jsx";
+import { GameSelector, StickyGameNav } from "./game_selector.jsx";
 import { ZoneTool } from "./zone_tool.jsx";
 
 export function App({ args }) {
@@ -13,6 +13,9 @@ export function App({ args }) {
   }
   if (args?.componentType === "game_selector") {
     return <GameSelector args={args} />;
+  }
+  if (args?.componentType === "sticky_game_nav") {
+    return <StickyGameNav args={args} />;
   }
   return <PropsBoard args={args} />;
 }

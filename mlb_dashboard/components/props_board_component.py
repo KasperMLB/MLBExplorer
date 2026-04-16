@@ -131,6 +131,27 @@ def render_game_selector(
     )
 
 
+def render_sticky_game_nav(
+    cards: list[dict[str, Any]],
+    selected_key: str,
+    sections: list[str],
+    selected_section: str,
+    key: str,
+    height: int = 260,
+) -> dict[str, Any] | None:
+    value = _component_func(
+        componentType="sticky_game_nav",
+        cards=_normalize_component_value(cards),
+        selectedKey=str(selected_key),
+        sections=_normalize_component_value(sections),
+        selectedSection=str(selected_section),
+        default=_normalize_component_value({"selectionKey": str(selected_key), "section": str(selected_section)}),
+        key=key,
+        height=height,
+    )
+    return value if isinstance(value, dict) else None
+
+
 def render_zone_tool(
     zone_rows: pd.DataFrame,
     key: str,
