@@ -17,7 +17,7 @@ from .dashboard_views import latest_built_date
 from .query_engine import StatcastQueryEngine, QueryFilters
 from .strikeout_projections import build_slate_projections
 from .team_logos import team_logo_img_html
-from .ui_components import render_metric_grid
+from .ui_components import render_metric_grid, render_sticky_logo_game_nav
 
 try:
     import altair as alt
@@ -523,6 +523,7 @@ def _render_game_detail(
     outcomes: pd.DataFrame,
     pitcher_fzc: pd.DataFrame,
     hitters_by_team: dict[str, pd.DataFrame],
+    section: str = "Matchup",
 ) -> None:
     game_pk = game.get("game_pk")
     game_rows = projections.loc[projections["game_pk"] == game_pk].to_dict("records") if "game_pk" in projections.columns else []
@@ -532,22 +533,12 @@ def _render_game_detail(
         return
 
     for prow in game_rows:
-        pitcher_id = prow.get("pitcher_id", 0)
-        opp_team = prow.get("opp_team", "")
-
-        hitter_k_probs = prow.get("_hitter_k_probs", [])
-
-        tab_matchup, tab_trend, tab_arsenal = st.tabs(["Matchup Breakdown", "K/BB Trend", "Arsenal K Drivers"])
-
-        with tab_matchup:
-            _render_matchup_breakdown(prow, hitter_k_probs)
-
-        with tab_trend:
+        if section == "Matchup":
+            _render_matchup_breakdown(prow, prow.get("_hitter_k_probs", []))
+        elif section == "Trend":
             _render_trend_chart(prow, outcomes)
-
-        with tab_arsenal:
+        elif section == "Arsenal":
             _render_arsenal_k_drivers(prow, pitcher_fzc)
-
         st.divider()
 
 
@@ -618,38 +609,30 @@ def main() -> None:
         st.info("No projections could be built for this slate.")
         return
 
-    # --- Section 1: Slate summary ---
+    # --- Section 1: Slate summary (always shown) ---
     _render_slate_summary(projections)
 
-    st.divider()
-
-    # --- Game navigation ---
-    game_options = {
-        f"{g.get('away_team','?')} @ {g.get('home_team','?')}": g
-        for g in games
-        if g.get("game_pk") is not None
-    }
-    if len(game_options) > 1:
-        selected_label = st.selectbox("Select game", list(game_options.keys()), key="so-game-select")
-        selected_game = game_options[selected_label]
-    elif game_options:
-        selected_game = next(iter(game_options.values()))
-    else:
-        st.info("No games with game_pk available.")
-        return
-
-    # --- Section 2: Projection cards for selected game ---
-    st.markdown("### Projection Cards")
-    _render_game_cards(selected_game, projections)
-
-    st.divider()
-
-    # --- Sections 3–5: Matchup, trend, arsenal ---
-    st.markdown("### Detailed Breakdown")
-    _render_game_detail(
-        selected_game,
-        projections,
-        outcomes_frame,
-        pitcher_fzc,
-        hitters_by_team,
+    # --- Sticky game navigator ---
+    selected_label, selected_games, selected_section = render_sticky_logo_game_nav(
+        games,
+        key_prefix="so-game-nav",
+        sections=["Projection", "Matchup", "Trend", "Arsenal"],
+        default_section="Projection",
     )
+
+    if not selected_games:
+        return  # "Slate Summary" card selected — summary table above is sufficient
+
+    selected_game = selected_games[0]
+
+    if selected_section == "Projection":
+        _render_game_cards(selected_game, projections)
+    else:
+        _render_game_detail(
+            selected_game,
+            projections,
+            outcomes_frame,
+            pitcher_fzc,
+            hitters_by_team,
+            section=selected_section,
+        )
