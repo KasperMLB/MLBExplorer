@@ -573,7 +573,7 @@ def _build_event_log(frame: pd.DataFrame) -> pd.DataFrame:
 def _event_log_display(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame
-    columns = ["Batter", "team_logo", "away_logo", "matchup_at", "home_logo", "Date", "PA", "isHH", "isBarrel", "Result", "Exit Velo", "LA", "Pitch Velo"]
+    columns = ["Batter", "team_logo", "Date", "PA", "isHH", "isBarrel", "Result", "Exit Velo", "LA", "Pitch Velo"]
     return frame[[column for column in columns if column in frame.columns]].copy()
 
 
