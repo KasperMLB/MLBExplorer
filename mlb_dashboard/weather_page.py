@@ -9,6 +9,7 @@ from .branding import apply_branding_head, page_icon_path
 from .config import AppConfig
 from .dashboard_views import latest_built_date
 from .query_engine import StatcastQueryEngine
+from .team_logos import team_logo_img_html
 from .ui_components import render_metric_grid, render_weather_field
 from .weather_service import build_slate_weather_rows
 
@@ -136,7 +137,16 @@ def _render_cards(frame: pd.DataFrame) -> None:
                 )
                 info_col, field_col = st.columns([1.0, 1.05], vertical_alignment="top")
                 with info_col:
-                    st.markdown(f"<div style='font-size:1.0rem; color:#666; margin-bottom:18px;'>{row.get('game', '')}</div>", unsafe_allow_html=True)
+                    away_team = str(row.get("away_team", "") or "").strip()
+                    home_team_val = str(row.get("home_team", "") or "").strip()
+                    matchup_html = (
+                        f"<div style='display:inline-flex;align-items:center;gap:6px;margin-bottom:18px'>"
+                        f"{team_logo_img_html(away_team, size=24)}"
+                        f"<span style='color:#666;font-size:0.85rem;font-weight:600'>@</span>"
+                        f"{team_logo_img_html(home_team_val, size=24)}"
+                        f"</div>"
+                    )
+                    st.markdown(matchup_html, unsafe_allow_html=True)
                     venue = str(row.get("venue", "") or "Unknown venue")
                     location = str(row.get("location", "") or "")
                     conditions = str(row.get("conditions", "Unavailable") or "Unavailable")
@@ -194,7 +204,6 @@ def _display_table(frame: pd.DataFrame) -> pd.DataFrame:
         ]
     ].rename(
         columns={
-            "game": "Game",
             "venue": "Venue",
             "location": "Location",
             "wind_direction": "Wind Direction",

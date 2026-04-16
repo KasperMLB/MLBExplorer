@@ -464,6 +464,7 @@ def _empty_pitcher_outcome_frame(snapshot_pitchers: pd.DataFrame, target_date: d
     empty["earned_runs"] = pd.NA
     empty["walks"] = pd.NA
     empty["strikeouts"] = pd.NA
+    empty["pitch_count"] = pd.NA
     empty["outcome_complete"] = False
     empty["outcome_status"] = status
     empty["source_max_event_date"] = source_max_event_date
@@ -2570,7 +2571,7 @@ def _build_pitcher_game_outcomes(
     source_max_event_date: date | None,
 ) -> pd.DataFrame:
     if snapshots.empty:
-        return pd.DataFrame(columns=["slate_date", "game_pk", "team", "pitcher_id", "pitcher_name", "had_pitch", "started", "outs_recorded", "batters_faced", "hits_allowed", "home_runs_allowed", "runs_allowed", "earned_runs", "walks", "strikeouts", "outcome_complete", "outcome_status", "source_max_event_date", "last_updated_at"])
+        return pd.DataFrame(columns=["slate_date", "game_pk", "team", "pitcher_id", "pitcher_name", "had_pitch", "started", "outs_recorded", "batters_faced", "hits_allowed", "home_runs_allowed", "runs_allowed", "earned_runs", "walks", "strikeouts", "pitch_count", "outcome_complete", "outcome_status", "source_max_event_date", "last_updated_at"])
     snapshot_pitchers = snapshots[["slate_date", "game_pk", "team", "pitcher_id", "pitcher_name"]].drop_duplicates(["slate_date", "game_pk", "pitcher_id"]).copy()
     day_frame = raw_statcast.loc[pd.to_datetime(raw_statcast["game_date"]).dt.date == target_date].copy()
     if day_frame.empty:
@@ -2607,6 +2608,16 @@ def _build_pitcher_game_outcomes(
             runs_allowed=("runs_allowed_delta", lambda s: pd.to_numeric(s, errors="coerce").clip(lower=0).sum() if s.notna().any() else None),
         )
     )
+    pitch_counts = (
+        day_frame.groupby(["game_pk", "pitcher"], as_index=False)
+        .size()
+        .rename(columns={"size": "pitch_count", "pitcher": "pitcher_for_merge"})
+    )
+    outcomes = outcomes.merge(
+        pitch_counts.rename(columns={"pitcher_for_merge": "pitcher"}),
+        on=["game_pk", "pitcher"],
+        how="left",
+    )
     names = snapshots[["game_pk", "pitcher_id", "pitcher_name"]].drop_duplicates(["game_pk", "pitcher_id"]).rename(columns={"pitcher_id": "pitcher"})
     outcomes = outcomes.merge(names, on=["game_pk", "pitcher"], how="left")
     outcomes["slate_date"] = target_date
@@ -2636,6 +2647,7 @@ def _build_pitcher_game_outcomes(
             "earned_runs",
             "walks",
             "strikeouts",
+            "pitch_count",
             "outcome_complete",
             "outcome_status",
             "source_max_event_date",
@@ -2647,7 +2659,7 @@ def _build_pitcher_game_outcomes(
         on=["slate_date", "game_pk", "team", "pitcher_id", "pitcher_name"],
         how="left",
     )
-    for column in ["batters_faced", "hits_allowed", "home_runs_allowed", "walks", "strikeouts"]:
+    for column in ["batters_faced", "hits_allowed", "home_runs_allowed", "walks", "strikeouts", "pitch_count"]:
         full_outcomes[column] = pd.to_numeric(full_outcomes[column], errors="coerce").fillna(0).astype(int)
     full_outcomes["had_pitch"] = full_outcomes["had_pitch"].fillna(False)
     full_outcomes["started"] = full_outcomes["started"].fillna(False)
@@ -2672,6 +2684,7 @@ def _build_pitcher_game_outcomes(
             "earned_runs",
             "walks",
             "strikeouts",
+            "pitch_count",
             "outcome_complete",
             "outcome_status",
             "source_max_event_date",

@@ -98,6 +98,34 @@ class StatcastQueryEngine:
             return pd.DataFrame(columns=["player_id", "exclude_from_hitter_tables"])
         return pd.read_parquet(path)
 
+    def load_pitcher_game_outcomes_for_projections(
+        self,
+        pitcher_ids: list[int],
+        n_starts: int = 30,
+    ) -> pd.DataFrame:
+        """Load historical game outcomes for the given pitchers, most recent n_starts per pitcher.
+
+        Returns rows with columns including batters_faced, strikeouts, walks, pitch_count
+        (pitch_count may be 0 for starts before it was added to the build pipeline).
+        """
+        path = self.config.tracking_dir / "pitcher_game_outcomes.parquet"
+        if not path.exists():
+            return pd.DataFrame()
+        frame = pd.read_parquet(path)
+        if frame.empty or "pitcher_id" not in frame.columns:
+            return pd.DataFrame()
+        frame = frame.loc[
+            frame["pitcher_id"].isin(pitcher_ids)
+            & frame.get("started", pd.Series(True, index=frame.index)).fillna(False)
+        ].copy()
+        if frame.empty:
+            return frame
+        if "slate_date" in frame.columns:
+            frame["slate_date"] = pd.to_datetime(frame["slate_date"], errors="coerce")
+            frame = frame.sort_values(["pitcher_id", "slate_date"], ascending=[True, False])
+            frame = frame.groupby("pitcher_id", group_keys=False).head(n_starts)
+        return frame.reset_index(drop=True)
+
     def load_daily_top_slate_hitters(self, target_date: date) -> pd.DataFrame:
         path = self.config.daily_dir / target_date.isoformat() / "top_slate_hitters.parquet"
         if not path.exists():

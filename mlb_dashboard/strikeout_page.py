@@ -1,0 +1,611 @@
+"""Strikeouts & Walks projection page for Kasper.
+
+Projects K and BB totals for each day's starting pitchers using a transparent
+pitch-count → batters-faced → K/BB chain, enriched with pitch-mix + zone-aware
+matchup breakdowns and per-start trend charts.
+"""
+from __future__ import annotations
+
+from datetime import date, timedelta
+
+import pandas as pd
+import streamlit as st
+
+from .branding import apply_branding_head, page_icon_path
+from .config import AppConfig
+from .dashboard_views import latest_built_date
+from .query_engine import StatcastQueryEngine, QueryFilters
+from .strikeout_projections import build_slate_projections
+from .team_logos import team_logo_img_html
+from .ui_components import render_metric_grid
+
+try:
+    import altair as alt
+
+    HAS_ALTAIR = True
+except ImportError:  # pragma: no cover
+    alt = None
+    HAS_ALTAIR = False
+
+
+# --------------------------------------------------------------------------- #
+# Auth                                                                          #
+# --------------------------------------------------------------------------- #
+
+def _require_admin_password() -> bool:
+    required = st.secrets.get("ADMIN_PASSWORD")
+    if not required:
+        st.error("Strikeouts is locked. Add ADMIN_PASSWORD to Streamlit secrets to enable this page.")
+        return False
+    entry = st.text_input("Strikeouts page password", type="password")
+    if not entry:
+        st.info("Enter the Strikeouts password to view this page.")
+        return False
+    if str(entry) != str(required):
+        st.error("Incorrect password.")
+        return False
+    return True
+
+
+# --------------------------------------------------------------------------- #
+# Data loading                                                                  #
+# --------------------------------------------------------------------------- #
+
+def _hosted_base_url() -> str:
+    import os
+    return os.getenv("MLB_HOSTED_BASE_URL", "").rstrip("/")
+
+
+def _default_date(config: AppConfig) -> date:
+    latest = latest_built_date(config.daily_dir)
+    return latest or date.today()
+
+
+@st.cache_data(show_spinner=False)
+def _load_remote_slate(base_url: str, target_date: date) -> pd.DataFrame:
+    return pd.read_parquet(f"{base_url}/daily/{target_date.isoformat()}/slate.parquet")
+
+
+def _load_slate(config: AppConfig, target_date: date) -> tuple[list[dict], str, date]:
+    local_path = config.daily_dir / target_date.isoformat() / "slate.json"
+    if local_path.exists():
+        engine = StatcastQueryEngine(config)
+        return engine.load_daily_slate(target_date), "local", target_date
+    base_url = _hosted_base_url()
+    if not base_url:
+        return [], "none", target_date
+    last_error: Exception | None = None
+    for offset in range(8):
+        candidate = target_date - timedelta(days=offset)
+        try:
+            df = _load_remote_slate(base_url, candidate)
+            return df.to_dict("records"), "hosted", candidate
+        except Exception as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    return [], "none", target_date
+
+
+@st.cache_data(show_spinner=False)
+def _load_all_data(
+    target_date: date,
+    pitcher_ids: tuple[int, ...],
+    team_list: tuple[str, ...],
+    split: str,
+    recent_window: str,
+    weighted_mode: str,
+) -> dict:
+    """Load all data needed for projections; cached by date + pitcher IDs."""
+    config = AppConfig()
+    engine = StatcastQueryEngine(config)
+    filters = QueryFilters(split=split, recent_window=recent_window, weighted_mode=weighted_mode)
+
+    pitcher_metrics = engine.get_pitcher_cards(list(pitcher_ids), filters) if pitcher_ids else pd.DataFrame()
+    outcomes = engine.load_pitcher_game_outcomes_for_projections(list(pitcher_ids), n_starts=30)
+    pitcher_fzc = engine.load_daily_pitcher_family_zone_context(target_date)
+    batter_fzp = engine.load_daily_batter_family_zone_profiles(target_date)
+
+    hitters_by_team: dict[str, list] = {}
+    for team in team_list:
+        pool = engine.get_team_hitter_pool(team, None, filters)
+        hitters_by_team[team] = pool.to_dict("records") if not pool.empty else []
+
+    return {
+        "pitcher_metrics": pitcher_metrics.to_dict("records") if not pitcher_metrics.empty else [],
+        "outcomes": outcomes.to_dict("records") if not outcomes.empty else [],
+        "pitcher_fzc": pitcher_fzc.to_dict("records") if not pitcher_fzc.empty else [],
+        "batter_fzp": batter_fzp.to_dict("records") if not batter_fzp.empty else [],
+        "hitters_by_team": hitters_by_team,
+    }
+
+
+def _pitcher_ids_from_games(games: list[dict]) -> list[int]:
+    ids = []
+    for g in games:
+        for key in ("away_probable_pitcher_id", "home_probable_pitcher_id"):
+            pid = g.get(key)
+            if pid:
+                ids.append(int(pid))
+    return ids
+
+
+def _teams_from_games(games: list[dict]) -> list[str]:
+    teams = set()
+    for g in games:
+        for key in ("away_team", "home_team"):
+            t = g.get(key)
+            if t:
+                teams.add(str(t))
+    return sorted(teams)
+
+
+# --------------------------------------------------------------------------- #
+# Formatting helpers                                                            #
+# --------------------------------------------------------------------------- #
+
+def _fmt_pct(v: object) -> str:
+    if v is None or pd.isna(v):
+        return "--"
+    return f"{float(v) * 100:.1f}%"
+
+
+def _confidence_color(conf: str) -> str:
+    return {"High": "#14532d", "Medium": "#715400", "Low": "#8b1e1e"}.get(conf, "#52606d")
+
+
+def _confidence_bg(conf: str) -> str:
+    return {"High": "#cfeeda", "Medium": "#ffefad", "Low": "#f8d4d4"}.get(conf, "#eef2f7")
+
+
+def _pill(text: str, bg: str, color: str) -> str:
+    return (
+        f"<span style='background:{bg};color:{color};padding:3px 9px;"
+        f"border-radius:999px;font-size:0.72rem;font-weight:700;"
+        f"white-space:nowrap;display:inline-block'>{text}</span>"
+    )
+
+
+def _chain_text(row: dict) -> str:
+    pc = row.get("avg_pitch_count", 88.0)
+    ppbf = row.get("avg_p_per_bf", 3.88)
+    bf = row.get("projected_bf", 0)
+    k = row.get("projected_k", 0)
+    bb = row.get("projected_bb", 0)
+    proxy_note = " (proxy)" if row.get("using_proxy") else ""
+    return (
+        f"~{pc:.0f} pitches ÷ {ppbf:.2f} P/PA "
+        f"→ **{bf:.1f} BF** → **{k:.1f} K** / **{bb:.1f} BB**{proxy_note}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Section 1: Slate summary table                                               #
+# --------------------------------------------------------------------------- #
+
+def _render_slate_summary(projections: pd.DataFrame) -> None:
+    st.markdown("### Slate Summary")
+    if projections.empty:
+        st.info("No projection data available.")
+        return
+
+    display_cols = [
+        "pitcher_name", "team", "opp_team", "p_throws",
+        "projected_k", "projected_bb", "projected_bf",
+        "avg_pitch_count", "avg_p_per_bf",
+        "pitcher_k_rate", "lineup_k_rate", "blended_k_rate",
+        "pitcher_bb_rate", "pitcher_mix_whiff",
+        "weighted_starts", "confidence",
+    ]
+    display_cols = [c for c in display_cols if c in projections.columns]
+    display = projections[display_cols].copy().rename(columns={
+        "pitcher_name": "Pitcher",
+        "team": "Team",
+        "opp_team": "Opp",
+        "p_throws": "Hand",
+        "projected_k": "Proj K",
+        "projected_bb": "Proj BB",
+        "projected_bf": "Proj BF",
+        "avg_pitch_count": "Avg Pitches",
+        "avg_p_per_bf": "P/PA",
+        "pitcher_k_rate": "K Rate",
+        "lineup_k_rate": "Lineup K%",
+        "blended_k_rate": "Blend K%",
+        "pitcher_bb_rate": "BB Rate",
+        "pitcher_mix_whiff": "Mix Whiff",
+        "weighted_starts": "W. Starts",
+        "confidence": "Confidence",
+    })
+
+    render_metric_grid(
+        display,
+        key="so-slate-summary",
+        height=420,
+        use_lightweight=True,
+        higher_is_better={"Proj K", "K Rate", "Lineup K%", "Blend K%", "Mix Whiff"},
+        lower_is_better={"BB Rate", "Proj BB"},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Section 2: Per-game projection cards                                          #
+# --------------------------------------------------------------------------- #
+
+def _render_projection_card(row: dict) -> None:
+    conf = str(row.get("confidence", "Low"))
+    bg = _confidence_bg(conf)
+    color = _confidence_color(conf)
+
+    pitcher_name = row.get("pitcher_name", "TBD")
+    team = row.get("team", "")
+    hand = row.get("p_throws", "R")
+    proj_k = row.get("projected_k", 0.0)
+    proj_bb = row.get("projected_bb", 0.0)
+    sample = row.get("sample_starts", 0)
+    w_starts = row.get("weighted_starts", 0.0)
+
+    logo_html = team_logo_img_html(team, size=28) if team else ""
+    st.markdown(
+        f"""
+        <div style='display:flex;align-items:center;gap:8px;margin-bottom:4px'>
+            {logo_html}
+            <span style='font-size:1.1rem;font-weight:700'>{pitcher_name}</span>
+            <span style='font-size:0.85rem;color:#666'>({hand}HP)</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    k_col, bb_col = st.columns(2)
+    with k_col:
+        st.metric("Proj K", f"{proj_k:.1f}")
+    with bb_col:
+        st.metric("Proj BB", f"{proj_bb:.1f}")
+
+    # Transparent chain
+    st.markdown(_chain_text(row))
+
+    # Rate breakdown
+    pk_rate = row.get("pitcher_k_rate", 0)
+    lk_rate = row.get("lineup_k_rate", 0)
+    mix_whiff = row.get("pitcher_mix_whiff", 0)
+    st.markdown(
+        f"Pitcher K rate: **{pk_rate:.1%}** | "
+        f"Lineup K rate: **{lk_rate:.1%}** | "
+        f"Mix whiff: **{mix_whiff:.1%}**"
+    )
+
+    # Confidence pill
+    pill_html = _pill(f"Confidence: {conf}", bg, color)
+    sample_note = f"({sample} starts, {w_starts:.1f} wtd.)"
+    st.markdown(f"{pill_html} {sample_note}", unsafe_allow_html=True)
+
+
+def _render_game_cards(game: dict, projections: pd.DataFrame) -> None:
+    game_pk = game.get("game_pk")
+    away_team = str(game.get("away_team", "") or "")
+    home_team = str(game.get("home_team", "") or "")
+    game_rows = projections.loc[projections["game_pk"] == game_pk] if "game_pk" in projections.columns else pd.DataFrame()
+
+    away_logo = team_logo_img_html(away_team, size=22) if away_team else away_team
+    home_logo = team_logo_img_html(home_team, size=22) if home_team else home_team
+    title_html = (
+        f"<div style='display:inline-flex;align-items:center;gap:6px'>"
+        f"{away_logo}"
+        f"<span style='color:#666;font-weight:600'>@</span>"
+        f"{home_logo}"
+        f"</div>"
+    )
+    with st.expander(f"{away_team} @ {home_team}", expanded=True):
+        st.markdown(title_html, unsafe_allow_html=True)
+        if game_rows.empty:
+            st.caption("No probable pitchers found for this game.")
+            return
+        cols = st.columns(2)
+        for idx, (_, prow) in enumerate(game_rows.iterrows()):
+            with cols[idx % 2]:
+                with st.container(border=True):
+                    _render_projection_card(prow.to_dict())
+
+
+# --------------------------------------------------------------------------- #
+# Section 3: Matchup breakdown                                                  #
+# --------------------------------------------------------------------------- #
+
+def _render_matchup_breakdown(pitcher_row: dict, hitter_k_probs: list[dict]) -> None:
+    pitcher_name = pitcher_row.get("pitcher_name", "")
+    st.markdown(f"#### {pitcher_name} — Per-Hitter Matchup")
+    if not hitter_k_probs:
+        st.caption("No lineup hitter data available for this pitcher.")
+        return
+    df = pd.DataFrame(hitter_k_probs)
+    display = df.rename(columns={
+        "hitter_name": "Hitter",
+        "team": "Team",
+        "bats": "Bats",
+        "swstr_pct": "SwStr%",
+        "swstr_scale": "SwStr Scale",
+        "family_vuln": "Pitch-Mix Vuln",
+        "k_prob": "K Prob",
+    })
+    if "SwStr%" in display.columns:
+        display["SwStr%"] = pd.to_numeric(display["SwStr%"], errors="coerce").map(lambda v: f"{v:.1%}" if pd.notna(v) else "--")
+    if "K Prob" in display.columns:
+        display["K Prob"] = pd.to_numeric(display["K Prob"], errors="coerce").map(lambda v: f"{v:.1%}" if pd.notna(v) else "--")
+    render_metric_grid(
+        display,
+        key=f"so-matchup-{pitcher_row.get('pitcher_id', 0)}",
+        height=320,
+        use_lightweight=True,
+        higher_is_better={"Pitch-Mix Vuln", "K Prob", "SwStr Scale"},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Section 4: K/BB trend chart                                                   #
+# --------------------------------------------------------------------------- #
+
+def _render_trend_chart(pitcher_row: dict, outcomes: pd.DataFrame) -> None:
+    pitcher_name = pitcher_row.get("pitcher_name", "")
+    pitcher_id = pitcher_row.get("pitcher_id", 0)
+    proj_k = pitcher_row.get("projected_k", None)
+
+    st.markdown(f"#### {pitcher_name} — Recent Start Trend")
+
+    pid_outcomes = outcomes.loc[outcomes["pitcher_id"] == pitcher_id].copy() if not outcomes.empty and "pitcher_id" in outcomes.columns else pd.DataFrame()
+
+    if pid_outcomes.empty:
+        st.caption("No historical start data available.")
+        return
+
+    if "slate_date" in pid_outcomes.columns:
+        pid_outcomes["slate_date"] = pd.to_datetime(pid_outcomes["slate_date"], errors="coerce")
+        pid_outcomes = pid_outcomes.sort_values("slate_date").tail(15)
+
+    chart_data: list[dict] = []
+    for _, row in pid_outcomes.iterrows():
+        d = row.get("slate_date")
+        label = pd.Timestamp(d).strftime("%m/%d") if pd.notna(d) else "?"
+        chart_data.append({
+            "Start": label,
+            "Strikeouts": int(row.get("strikeouts", 0) or 0),
+            "Walks": int(row.get("walks", 0) or 0),
+        })
+
+    if not chart_data:
+        st.caption("No starts to chart.")
+        return
+
+    chart_df = pd.DataFrame(chart_data)
+
+    if HAS_ALTAIR and alt is not None:
+        long = chart_df.melt("Start", value_vars=["Strikeouts", "Walks"], var_name="Stat", value_name="Count")
+        color_scale = alt.Scale(domain=["Strikeouts", "Walks"], range=["#2563eb", "#d97706"])
+        bars = (
+            alt.Chart(long)
+            .mark_bar(opacity=0.85)
+            .encode(
+                x=alt.X("Start:N", sort=None, title="Start"),
+                y=alt.Y("Count:Q", title="Count"),
+                color=alt.Color("Stat:N", scale=color_scale),
+                xOffset="Stat:N",
+                tooltip=["Start", "Stat", "Count"],
+            )
+        )
+        chart = bars
+        if proj_k is not None:
+            ref_df = pd.DataFrame([{"proj_k": proj_k}])
+            ref_line = (
+                alt.Chart(ref_df)
+                .mark_rule(strokeDash=[6, 3], color="#1e40af", strokeWidth=2)
+                .encode(y="proj_k:Q")
+            )
+            chart = bars + ref_line
+        st.altair_chart(
+            chart.properties(height=280, title=f"Last {len(chart_df)} Starts — K (blue) & BB (amber) | Dashed = Proj K"),
+            use_container_width=True,
+        )
+    else:
+        st.bar_chart(chart_df.set_index("Start")[["Strikeouts", "Walks"]])
+
+
+# --------------------------------------------------------------------------- #
+# Section 5: Arsenal K drivers                                                  #
+# --------------------------------------------------------------------------- #
+
+def _render_arsenal_k_drivers(pitcher_row: dict, pitcher_fzc: pd.DataFrame) -> None:
+    pitcher_name = pitcher_row.get("pitcher_name", "")
+    pitcher_id = pitcher_row.get("pitcher_id", 0)
+    st.markdown(f"#### {pitcher_name} — Arsenal K Drivers")
+
+    if pitcher_fzc.empty or "pitcher_id" not in pitcher_fzc.columns:
+        st.caption("No family-zone context available.")
+        return
+
+    rows = pitcher_fzc.loc[pitcher_fzc["pitcher_id"] == pitcher_id].copy()
+    if rows.empty:
+        st.caption("No family-zone data for this pitcher.")
+        return
+
+    display_cols = [c for c in ["pitch_family", "zone_bucket", "usage_rate_overall", "whiff_rate"] if c in rows.columns]
+    display = rows[display_cols].copy().rename(columns={
+        "pitch_family": "Family",
+        "zone_bucket": "Zone",
+        "usage_rate_overall": "Usage%",
+        "whiff_rate": "Whiff Rate",
+    })
+    if "Usage%" in display.columns:
+        display["Usage%"] = pd.to_numeric(display["Usage%"], errors="coerce").map(lambda v: f"{v:.1%}" if pd.notna(v) else "--")
+    if "Whiff Rate" in display.columns:
+        display["Whiff Rate"] = pd.to_numeric(display["Whiff Rate"], errors="coerce").map(lambda v: f"{v:.1%}" if pd.notna(v) else "--")
+    if "Family" in display.columns:
+        display = display.sort_values(["Family", "Zone"])
+
+    render_metric_grid(
+        display,
+        key=f"so-arsenal-{pitcher_id}",
+        height=260,
+        use_lightweight=True,
+        higher_is_better={"Whiff Rate"},
+    )
+
+    # Altair: grouped horizontal bars by family + zone
+    if HAS_ALTAIR and alt is not None and not rows.empty:
+        chart_rows = rows.copy()
+        chart_rows["label"] = chart_rows["pitch_family"].str.capitalize() + " / " + chart_rows["zone_bucket"].str.capitalize()
+        chart_rows["whiff_pct"] = pd.to_numeric(chart_rows.get("whiff_rate", 0), errors="coerce").fillna(0)
+        zone_color = alt.Scale(domain=["heart", "shadow"], range=["#60a5fa", "#1e40af"])
+        bar = (
+            alt.Chart(chart_rows)
+            .mark_bar()
+            .encode(
+                y=alt.Y("label:N", sort="-x", title="Family / Zone"),
+                x=alt.X("whiff_pct:Q", title="Whiff Rate", axis=alt.Axis(format=".0%")),
+                color=alt.Color("zone_bucket:N", scale=zone_color, title="Zone"),
+                tooltip=["pitch_family", "zone_bucket", alt.Tooltip("whiff_pct:Q", format=".1%"), alt.Tooltip("usage_rate_overall:Q", format=".1%", title="Usage%")],
+            )
+            .properties(height=220, title="Whiff Rate by Family × Zone")
+        )
+        st.altair_chart(bar, use_container_width=True)
+
+
+# --------------------------------------------------------------------------- #
+# Per-game detail (sections 3-5 for a selected game)                           #
+# --------------------------------------------------------------------------- #
+
+def _render_game_detail(
+    game: dict,
+    projections: pd.DataFrame,
+    outcomes: pd.DataFrame,
+    pitcher_fzc: pd.DataFrame,
+    hitters_by_team: dict[str, pd.DataFrame],
+) -> None:
+    game_pk = game.get("game_pk")
+    game_rows = projections.loc[projections["game_pk"] == game_pk].to_dict("records") if "game_pk" in projections.columns else []
+
+    if not game_rows:
+        st.info("No projection data for this game.")
+        return
+
+    for prow in game_rows:
+        pitcher_id = prow.get("pitcher_id", 0)
+        opp_team = prow.get("opp_team", "")
+
+        hitter_k_probs = prow.get("_hitter_k_probs", [])
+
+        tab_matchup, tab_trend, tab_arsenal = st.tabs(["Matchup Breakdown", "K/BB Trend", "Arsenal K Drivers"])
+
+        with tab_matchup:
+            _render_matchup_breakdown(prow, hitter_k_probs)
+
+        with tab_trend:
+            _render_trend_chart(prow, outcomes)
+
+        with tab_arsenal:
+            _render_arsenal_k_drivers(prow, pitcher_fzc)
+
+        st.divider()
+
+
+# --------------------------------------------------------------------------- #
+# Main entry point                                                              #
+# --------------------------------------------------------------------------- #
+
+def main() -> None:
+    st.set_page_config(page_title="Strikeouts", page_icon=page_icon_path(), layout="wide")
+    apply_branding_head()
+    st.title("Strikeouts & Walks")
+    st.caption(
+        "Projects K and BB totals via a transparent chain: avg pitch count → pitches-per-batter "
+        "→ batters faced → K/BB. Matchup blend: 70% pitcher historical rate + 30% pitch-mix/zone-aware lineup."
+    )
+
+    if not _require_admin_password():
+        return
+
+    config = AppConfig()
+    target_date = st.sidebar.date_input("Slate date", value=_default_date(config))
+
+    split = st.sidebar.selectbox("Split", ["overall", "vs_rhp", "vs_lhp"], index=0)
+    recent_window = st.sidebar.selectbox("Window", ["season", "last_30", "last_15"], index=0)
+    weighted_mode = st.sidebar.selectbox("Weighted mode", ["weighted", "unweighted"], index=0)
+
+    games, source, loaded_date = _load_slate(config, target_date)
+    if source == "none" or not games:
+        st.error("No slate data found for this date.")
+        return
+    if loaded_date != target_date:
+        st.caption(f"Using most recent available slate: {loaded_date.isoformat()}")
+
+    pitcher_ids = _pitcher_ids_from_games(games)
+    team_list = _teams_from_games(games)
+
+    if not pitcher_ids:
+        st.info("No probable pitchers found on today's slate.")
+        return
+
+    with st.spinner("Loading projections..."):
+        raw = _load_all_data(
+            loaded_date,
+            tuple(sorted(set(pitcher_ids))),
+            tuple(sorted(set(team_list))),
+            split,
+            recent_window,
+            weighted_mode,
+        )
+
+    pitcher_metrics = pd.DataFrame(raw["pitcher_metrics"])
+    outcomes_frame = pd.DataFrame(raw["outcomes"])
+    pitcher_fzc = pd.DataFrame(raw["pitcher_fzc"])
+    batter_fzp = pd.DataFrame(raw["batter_fzp"])
+    hitters_by_team_raw = raw["hitters_by_team"]
+    hitters_by_team = {team: pd.DataFrame(rows) for team, rows in hitters_by_team_raw.items()}
+
+    projections = build_slate_projections(
+        games,
+        pitcher_metrics,
+        outcomes_frame,
+        hitters_by_team,
+        pitcher_fzc,
+        batter_fzp,
+    )
+
+    if projections.empty:
+        st.info("No projections could be built for this slate.")
+        return
+
+    # --- Section 1: Slate summary ---
+    _render_slate_summary(projections)
+
+    st.divider()
+
+    # --- Game navigation ---
+    game_options = {
+        f"{g.get('away_team','?')} @ {g.get('home_team','?')}": g
+        for g in games
+        if g.get("game_pk") is not None
+    }
+    if len(game_options) > 1:
+        selected_label = st.selectbox("Select game", list(game_options.keys()), key="so-game-select")
+        selected_game = game_options[selected_label]
+    elif game_options:
+        selected_game = next(iter(game_options.values()))
+    else:
+        st.info("No games with game_pk available.")
+        return
+
+    # --- Section 2: Projection cards for selected game ---
+    st.markdown("### Projection Cards")
+    _render_game_cards(selected_game, projections)
+
+    st.divider()
+
+    # --- Sections 3–5: Matchup, trend, arsenal ---
+    st.markdown("### Detailed Breakdown")
+    _render_game_detail(
+        selected_game,
+        projections,
+        outcomes_frame,
+        pitcher_fzc,
+        hitters_by_team,
+    )

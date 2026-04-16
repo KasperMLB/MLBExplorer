@@ -846,6 +846,112 @@ def _build_react_table_payload(
     return columns, rows
 
 
+def _render_sticky_html_table(
+    display_frame: pd.DataFrame,
+    styles: pd.DataFrame,
+    height: int,
+) -> None:
+    """Render display_frame as a scrollable HTML table with the first column sticky."""
+    import html as _html
+    import streamlit.components.v1 as _c
+
+    _LOGO_COLS = {"Away", "Home", "Team"}
+    _NON_NUMERIC = {
+        "Hitter", "Pitcher", "Player", "Away", "Home", "Team", "@",
+        "Pitch", "Throws", "Split", "Pitch Type", "Family", "Zone",
+        "Window", "Game", "Lineup Source",
+    }
+
+    cols = list(display_frame.columns)
+
+    def _parse_style(s: str):
+        bg = fg = None
+        if not s:
+            return bg, fg
+        for part in s.split(";"):
+            p = part.strip()
+            if p.startswith("background-color:"):
+                bg = p[len("background-color:"):].strip()
+            elif p.startswith("color:"):
+                fg = p[len("color:"):].strip()
+        return bg, fg
+
+    hdr = []
+    for i, col in enumerate(cols):
+        sticky = ' class="sc"' if i == 0 else ""
+        align = "center" if col in _LOGO_COLS else ("right" if col not in _NON_NUMERIC else "left")
+        hdr.append(f'<th{sticky} style="text-align:{align}">{_html.escape(str(col))}</th>')
+
+    body = []
+    for ri in range(len(display_frame)):
+        cells = []
+        for ci, col in enumerate(cols):
+            val = display_frame.iloc[ri][col]
+            style_str = styles.iloc[ri][col] if col in styles.columns else ""
+            bg, fg = _parse_style(style_str)
+            is_logo = col in _LOGO_COLS
+            align = "center" if is_logo else ("right" if col not in _NON_NUMERIC else "left")
+
+            if ci == 0:
+                color_attr = f";color:{fg}" if fg else ""
+                cells.append(
+                    f'<td class="sc" style="font-weight:700{color_attr}">'
+                    f'{_html.escape(str(val) if val is not None else "")}</td>'
+                )
+            elif is_logo and val:
+                cells.append(
+                    f'<td style="text-align:center">'
+                    f'<img src="{val}" style="height:20px;width:20px;object-fit:contain;vertical-align:middle"/>'
+                    f'</td>'
+                )
+            elif bg:
+                cells.append(
+                    f'<td style="text-align:{align}">'
+                    f'<span style="display:inline-block;background:{_html.escape(bg)};border-radius:7px;'
+                    f'padding:3px 8px;font-weight:700;color:#1f1f1f;min-width:52px;text-align:right">'
+                    f'{_html.escape(str(val) if val is not None else "")}</span></td>'
+                )
+            else:
+                cells.append(
+                    f'<td style="text-align:{align}">'
+                    f'{_html.escape(str(val) if val is not None else "")}</td>'
+                )
+        body.append(f'<tr>{"".join(cells)}</tr>')
+
+    html_out = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:transparent;font-family:"Segoe UI",system-ui,sans-serif;font-size:11.5px;color:#1f1f1f}}
+.wrap{{height:{height}px;overflow:auto;border:1px solid #e6dcc8;border-radius:12px;background:#fbf7ef;
+scrollbar-width:thin;scrollbar-color:#c8b99d #f8f2e6}}
+.wrap::-webkit-scrollbar{{width:8px;height:8px}}
+.wrap::-webkit-scrollbar-thumb{{background:#cfbea2;border-radius:999px;border:2px solid #f7f1e6}}
+.wrap::-webkit-scrollbar-track{{background:#f7f1e6}}
+table{{border-collapse:collapse;table-layout:auto}}
+th{{position:sticky;top:0;z-index:2;background:linear-gradient(180deg,#21385d 0%,#182b48 100%);
+color:#f8f7f3;font-size:10px;text-transform:uppercase;letter-spacing:0.07em;
+padding:8px 10px;border-bottom:1px solid #30456c;white-space:nowrap;user-select:none}}
+td{{padding:7px 10px;border-bottom:1px solid rgba(230,220,200,0.85);white-space:nowrap;
+vertical-align:middle;font-variant-numeric:tabular-nums}}
+tr:last-child td{{border-bottom:none}}
+tr:hover td{{background:rgba(242,239,231,0.9)!important}}
+tr:nth-child(even) td{{background:rgba(251,247,239,0.6)}}
+.sc{{position:sticky;left:0;z-index:3;background:#faf6ee;min-width:120px}}
+th.sc{{z-index:4;background:linear-gradient(180deg,#21385d 0%,#182b48 100%)}}
+tr:nth-child(even) .sc{{background:#f3efe7}}
+tr:hover .sc{{background:#ede9e0!important}}
+</style></head><body>
+<div class="wrap">
+<table>
+<thead><tr>{"".join(hdr)}</tr></thead>
+<tbody>{"".join(body)}</tbody>
+</table>
+</div>
+</body></html>"""
+
+    _c.html(html_out, height=height + 4)
+
+
 def render_metric_grid(
     frame: pd.DataFrame,
     key: str,
@@ -872,20 +978,24 @@ def render_metric_grid(
             tuple(sorted(hidden)),
             color_hitter_confidence,
         )
-        st.dataframe(
-            display_frame.style.apply(lambda _: styles, axis=None),
-            hide_index=True,
-            use_container_width=True,
-            height=height,
-            column_config={
-                column: st.column_config.ImageColumn(
-                    column,
-                    width="small",
-                )
-                for column in display_frame.columns
-                if column in {DISPLAY_LABELS.get(logo_column, logo_column) for logo_column in LOGO_COLUMNS}
-            },
-        )
+        _first_col = display_frame.columns[0] if len(display_frame.columns) > 0 else None
+        if _first_col in {"Hitter", "Pitcher"}:
+            _render_sticky_html_table(display_frame, styles, height)
+        else:
+            st.dataframe(
+                display_frame.style.apply(lambda _: styles, axis=None),
+                hide_index=True,
+                use_container_width=True,
+                height=height,
+                column_config={
+                    column: st.column_config.ImageColumn(
+                        column,
+                        width="small",
+                    )
+                    for column in display_frame.columns
+                    if column in {DISPLAY_LABELS.get(logo_column, logo_column) for logo_column in LOGO_COLUMNS}
+                },
+            )
         return frame
 
     if not HAS_AGGRID:
