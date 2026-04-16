@@ -693,38 +693,6 @@ def render_exit_velo_summary_grid(
     for column in group_ends:
         style_frame[column] = style_frame[column].fillna("").astype(str) + f"; {divider_css}"
 
-    present_logo_columns = [column for column in display_frame.columns if column in LOGO_COLUMNS]
-    if present_logo_columns:
-        flat_display = display_frame.rename(columns=DISPLAY_LABELS)
-        flat_styles = style_frame.rename(columns=DISPLAY_LABELS).reindex(columns=flat_display.columns, fill_value="")
-        flat_logo_labels = {DISPLAY_LABELS.get(column, column) for column in present_logo_columns}
-        formatters: dict[str, object] = {}
-        for column in flat_display.columns:
-            if column in {"Player", "Team", *flat_logo_labels}:
-                continue
-            metric_name = str(column).split(" ", 1)[1] if " " in str(column) else str(column)
-            if metric_name in {"BBE", "Brl"}:
-                formatters[column] = lambda value: "" if pd.isna(value) else f"{int(value)}"
-            else:
-                formatters[column] = lambda value: "" if pd.isna(value) else f"{float(value):.2f}"
-        styler = (
-            flat_display.style
-            .apply(lambda _: flat_styles, axis=None)
-            .format(formatters, na_rep="")
-        )
-        st.dataframe(
-            styler,
-            hide_index=True,
-            use_container_width=True,
-            height=height,
-            column_config={
-                column: st.column_config.ImageColumn(column, width="small")
-                for column in flat_display.columns
-                if column in flat_logo_labels
-            },
-        )
-        return frame
-
     multi_columns: list[tuple[str, str]] = []
     for column in display_frame.columns:
         if column == "Player":
@@ -760,7 +728,7 @@ def render_exit_velo_summary_grid(
         use_container_width=True,
         height=height,
         column_config={
-            column: st.column_config.ImageColumn(column[0], width="small")
+            column[0]: st.column_config.ImageColumn(column[0], width="small")
             for column in display_frame.columns
             if column[0] in {DISPLAY_LABELS.get(logo_column, logo_column) for logo_column in LOGO_COLUMNS}
         },
