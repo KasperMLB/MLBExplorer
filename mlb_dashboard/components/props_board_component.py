@@ -115,6 +115,22 @@ def render_react_data_table(
     )
 
 
+def render_game_selector(
+    cards: list[dict[str, Any]],
+    selected_key: str,
+    key: str,
+    height: int = 250,
+) -> str | None:
+    return _component_func(
+        componentType="game_selector",
+        cards=_normalize_component_value(cards),
+        selectedKey=str(selected_key),
+        default=str(selected_key),
+        key=key,
+        height=height,
+    )
+
+
 def render_zone_tool(
     zone_rows: pd.DataFrame,
     key: str,
