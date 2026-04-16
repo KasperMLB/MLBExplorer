@@ -16,7 +16,7 @@ from .config import AppConfig
 from .dashboard_views import latest_built_date
 from .query_engine import StatcastQueryEngine, QueryFilters
 from .strikeout_projections import build_slate_projections
-from .team_logos import team_logo_img_html
+from .team_logos import team_logo_data_uri, team_logo_img_html
 from .ui_components import render_metric_grid, render_sticky_logo_game_nav
 
 try:
@@ -244,7 +244,6 @@ def _render_slate_summary(projections: pd.DataFrame) -> None:
     display_cols = [c for c in display_cols if c in projections.columns]
     display = projections[display_cols].copy().rename(columns={
         "pitcher_name": "Pitcher",
-        "team": "Tm",
         "opp_team": "Opp",
         "p_throws": "Hand",
         "projected_k": "Proj K",
@@ -260,6 +259,9 @@ def _render_slate_summary(projections: pd.DataFrame) -> None:
         "weighted_starts": "W. Starts",
         "confidence": "Confidence",
     })
+    # Replace team abbreviation column with data URIs so sticky table renders logos
+    if "team" in display.columns:
+        display.insert(1, "Team", display.pop("team").map(lambda t: team_logo_data_uri(str(t)) or str(t)))
 
     render_metric_grid(
         display,
@@ -365,13 +367,15 @@ def _render_matchup_breakdown(pitcher_row: dict, hitter_k_probs: list[dict]) -> 
     df = pd.DataFrame(hitter_k_probs)
     display = df.rename(columns={
         "hitter_name": "Hitter",
-        "team": "Tm",
         "bats": "Bats",
         "swstr_pct": "SwStr%",
         "swstr_scale": "SwStr Scale",
         "family_vuln": "Pitch-Mix Vuln",
         "k_prob": "K Prob",
     })
+    # Insert Team logo column after Hitter
+    if "team" in display.columns:
+        display.insert(1, "Team", display.pop("team").map(lambda t: team_logo_data_uri(str(t)) or str(t)))
     if "SwStr%" in display.columns:
         display["SwStr%"] = pd.to_numeric(display["SwStr%"], errors="coerce").map(lambda v: f"{v:.1%}" if pd.notna(v) else "--")
     if "K Prob" in display.columns:
