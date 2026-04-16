@@ -498,26 +498,28 @@ export function StickyGameNav({ args }) {
   }, [cards.length, selectedKey, selectedSection, sections.length]);
 
   useEffect(() => {
-    let parentWindow = null;
+    let frameEl = null;
     try {
-      parentWindow = window.parent || null;
+      frameEl = window.frameElement || null;
     } catch {
-      parentWindow = null;
+      frameEl = null;
     }
-    if (!parentWindow || !window.frameElement) {
-      return undefined;
+    if (!frameEl) return undefined;
+    let ParentIO = null;
+    try {
+      ParentIO = window.parent?.IntersectionObserver || null;
+    } catch {
+      ParentIO = null;
     }
-    const updateSticky = () => {
-      const rect = window.frameElement.getBoundingClientRect();
-      setStickyVisible(rect.top < -18);
-    };
-    updateSticky();
-    parentWindow.addEventListener("scroll", updateSticky, { passive: true });
-    parentWindow.addEventListener("resize", updateSticky);
-    return () => {
-      parentWindow.removeEventListener("scroll", updateSticky);
-      parentWindow.removeEventListener("resize", updateSticky);
-    };
+    if (!ParentIO) return undefined;
+    const observer = new ParentIO(
+      ([entry]) => {
+        setStickyVisible(!entry.isIntersecting);
+      },
+      { threshold: 0 }
+    );
+    observer.observe(frameEl);
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
