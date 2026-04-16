@@ -211,45 +211,6 @@ def _load_remote_exit_velo_events_cached(base_url: str, end_date_value: str | No
     return _shape_exit_velo_events(pd.concat(frames, ignore_index=True, sort=False))
 
 
-@st.cache_data(show_spinner=False, ttl=60)
-def _probe_remote_exit_velo_date_cached(base_url: str, probe_date_value: str, cache_version: str) -> tuple[int, str]:
-    probe_date = date.fromisoformat(probe_date_value)
-    try:
-        frame = load_remote_parquet(
-            f"{base_url.rstrip('/')}/sources/statcast_events/year={probe_date.year}",
-            f"game_date={probe_date.isoformat()}.parquet",
-            columns=["game_date", "launch_speed", "launch_angle"],
-        )
-    except Exception as exc:
-        return 0, f"error:{type(exc).__name__}"
-    tracked = int(
-        (
-            pd.to_numeric(frame.get("launch_speed"), errors="coerce").notna()
-            & pd.to_numeric(frame.get("launch_angle"), errors="coerce").notna()
-        ).sum()
-    )
-    return int(len(frame)), f"tracked={tracked}"
-
-
-def _max_event_date_label(frame: pd.DataFrame) -> str:
-    if frame.empty or "game_date" not in frame.columns:
-        return "-"
-    max_date = pd.to_datetime(frame["game_date"], errors="coerce").max()
-    if pd.isna(max_date):
-        return "-"
-    return max_date.date().isoformat()
-
-
-def _diagnostic_base_url_label(base_url: str) -> str:
-    if not base_url:
-        return "-"
-    text = base_url.rstrip("/")
-    marker = "huggingface.co/"
-    if marker in text:
-        return text.split(marker, 1)[1]
-    return text[-80:]
-
-
 @st.cache_data(show_spinner=False, ttl=300)
 def _load_recent_batter_names_cached(end_date_value: str | None) -> pd.DataFrame:
     config = AppConfig()
@@ -431,6 +392,30 @@ def _apply_layered_names(
     work = _apply_name_source(work, recent_live_names, source_label="live")
 
     unresolved = work["resolved_name"].eq("")
+    if unresolved.any():
+        event_player = _normalize_name_series(work.get("player_name", pd.Series(index=work.index)))
+        pitcher_name = _normalize_name_series(work.get("pitcher_name", pd.Series(index=work.index)))
+        mask = unresolved & event_player.ne("") & event_player.ne(pitcher_name)
+        work.loc[mask, "resolved_name"] = event_player[mask]
+        work.loc[mask, "name_source"] = "event_player"
+        unresolved = work["resolved_name"].eq("")
+    if unresolved.any():
+        combined_lookup = pd.concat([roster_lookup, hitter_artifact_names, recent_live_names], ignore_index=True, sort=False)
+        if not combined_lookup.empty:
+            combined_lookup = combined_lookup.loc[_normalize_name_series(combined_lookup["player_name"]).ne("")].copy()
+            combined_lookup["team_rank"] = combined_lookup.get("team", pd.Series("", index=combined_lookup.index)).fillna("").astype(str).ne("").astype(int)
+            batter_lookup = (
+                combined_lookup.sort_values(["batter", "team_rank"], ascending=[True, False])
+                .drop_duplicates("batter")
+                [["batter", "player_name"]]
+            )
+            work = work.merge(batter_lookup, on="batter", how="left", suffixes=("", "_batter_lookup"))
+            fallback = _normalize_name_series(work["player_name_batter_lookup"])
+            mask = work["resolved_name"].eq("") & fallback.ne("")
+            work.loc[mask, "resolved_name"] = fallback[mask]
+            work.loc[mask, "name_source"] = "id_lookup"
+            work = work.drop(columns=["player_name_batter_lookup"], errors="ignore")
+            unresolved = work["resolved_name"].eq("")
     work.loc[unresolved, "resolved_name"] = work.loc[unresolved, "batter"].apply(lambda value: f"ID {int(value)}" if pd.notna(value) else "Unknown")
     work.loc[unresolved, "name_source"] = "id"
     work["player_name"] = work["resolved_name"]
@@ -753,51 +738,21 @@ def main() -> None:
     end_date = st.sidebar.date_input("End date", value=date.today(), disabled=not use_end_date)
     base_url = _hosted_base_url()
     raw = pd.DataFrame()
-    local_raw = pd.DataFrame()
-    remote_raw = pd.DataFrame()
-    source_used = "local"
     local_error: Exception | None = None
     if base_url:
         try:
-            remote_raw = _load_remote_exit_velo_events_cached(
+            raw = _load_remote_exit_velo_events_cached(
                 base_url,
                 end_date.isoformat() if use_end_date else None,
                 EXIT_VELO_SOURCE_CACHE_VERSION,
             )
-            raw = remote_raw
-            source_used = "published"
         except Exception as exc:
             st.warning(f"Published Statcast source could not be loaded; trying local files. Detail: {exc}")
     if raw.empty:
         try:
-            local_raw = _load_exit_velo_events_cached(end_date.isoformat() if use_end_date else None)
-            raw = local_raw
-            source_used = "local"
+            raw = _load_exit_velo_events_cached(end_date.isoformat() if use_end_date else None)
         except Exception as exc:
             local_error = exc
-    elif not base_url:
-        local_raw = raw
-    if base_url and remote_raw.empty and local_raw.empty:
-        try:
-            local_raw = _load_exit_velo_events_cached(end_date.isoformat() if use_end_date else None)
-        except Exception:
-            local_raw = pd.DataFrame()
-    probe_rows, probe_status = (
-        _probe_remote_exit_velo_date_cached(base_url, "2026-04-14", EXIT_VELO_SOURCE_CACHE_VERSION)
-        if base_url
-        else (0, "base_url_missing")
-    )
-    st.caption(
-        "EV source diagnostic: "
-        f"source={source_used}; "
-        f"base_url={'set' if base_url else 'missing'}; "
-        f"base={_diagnostic_base_url_label(base_url)}; "
-        f"published_max={_max_event_date_label(remote_raw)}; "
-        f"local_max={_max_event_date_label(local_raw)}; "
-        f"rows={len(raw):,}; "
-        f"probe_2026_04_14_rows={probe_rows:,}; "
-        f"probe_2026_04_14={probe_status}"
-    )
     if raw.empty and local_error is not None:
         st.error(f"Unable to load hitter exit velocity results from local Statcast files: {local_error}")
         return
