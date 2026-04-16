@@ -50,6 +50,17 @@ PERCENT_COLUMNS = {
     "Two-strike",
     "Pre two-strike",
     "Full count",
+    # Strikeout page display columns
+    "K Rate",
+    "BB Rate",
+    "Lineup K%",
+    "Blend K%",
+    "Mix Whiff",
+    "P/PA",
+    "SwStr%",
+    "SwStr Scale",
+    "Pitch-Mix Vuln",
+    "K Prob",
 }
 RATE_COLUMNS = {
     "xwoba",
@@ -81,6 +92,12 @@ RATE_COLUMNS = {
     "zone_fit_score",
     "siera",
     "fit_score",
+    # Strikeout page display columns
+    "Proj K",
+    "Proj BB",
+    "Proj BF",
+    "Avg Pitches",
+    "W. Starts",
 }
 LOWER_IS_BETTER = {"swstr_pct", "siera", "opponent_lineup_quality", "opponent_contact_threat", "opponent_family_fit_allowed"}
 HIGHER_IS_BETTER = {
