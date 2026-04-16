@@ -244,7 +244,7 @@ def _render_slate_summary(projections: pd.DataFrame) -> None:
     display_cols = [c for c in display_cols if c in projections.columns]
     display = projections[display_cols].copy().rename(columns={
         "pitcher_name": "Pitcher",
-        "team": "Team",
+        "team": "Tm",
         "opp_team": "Opp",
         "p_throws": "Hand",
         "projected_k": "Proj K",
@@ -365,7 +365,7 @@ def _render_matchup_breakdown(pitcher_row: dict, hitter_k_probs: list[dict]) -> 
     df = pd.DataFrame(hitter_k_probs)
     display = df.rename(columns={
         "hitter_name": "Hitter",
-        "team": "Team",
+        "team": "Tm",
         "bats": "Bats",
         "swstr_pct": "SwStr%",
         "swstr_scale": "SwStr Scale",
