@@ -728,8 +728,8 @@ def render_exit_velo_summary_grid(
         use_container_width=True,
         height=height,
         column_config={
-            str(column): st.column_config.ImageColumn(column[0], width="small")
-            for column in display_frame.columns
+            index: st.column_config.ImageColumn(column[0], width="small")
+            for index, column in enumerate(display_frame.columns)
             if column[0] in {DISPLAY_LABELS.get(logo_column, logo_column) for logo_column in LOGO_COLUMNS}
         },
     )
