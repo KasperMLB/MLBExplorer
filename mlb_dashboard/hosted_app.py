@@ -7,6 +7,7 @@ from time import perf_counter
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as st_components
 
 from .branding import apply_branding_head, page_icon_path, render_kasper_header
 from .dashboard_views import (
@@ -758,6 +759,10 @@ def _render_top_board_sections(
                 column for column in preset_columns if column in display_hitters.columns and column != "game"
             ],
         )
+        _logo_cols = {"away_logo", "matchup_at", "home_logo"}
+        top_hitter_columns = [c for c in top_hitter_columns if c not in _logo_cols]
+        if "hitter_name" in top_hitter_columns:
+            top_hitter_columns = ["hitter_name"] + [c for c in top_hitter_columns if c != "hitter_name"]
         _render_hitter_confidence_legend()
         _render_hosted_grid(
             display_hitters[top_hitter_columns].head(10),
@@ -1167,6 +1172,38 @@ def _render_hosted_selected_game_area(
         st.query_params.pop("game", None)
         st.query_params.pop("section", None)
     st.caption(f"{'Slate summary' if selected_label == 'Slate Summary' else 'Selected game'} | {len(all_games)} games on slate")
+    if selected_games:
+        st_components.html(
+            """
+            <style>
+              *{box-sizing:border-box;margin:0}
+              body{background:transparent;font-family:"Segoe UI",system-ui,sans-serif}
+              #share-btn{appearance:none;background:#f8fafc;border:1px solid rgba(31,41,55,0.18);
+                border-radius:999px;color:#374151;cursor:pointer;font-size:11px;font-weight:600;
+                padding:4px 10px;line-height:1.4}
+              #share-btn:active{background:#eef3f8}
+            </style>
+            <button id="share-btn">\U0001f517 Copy Link</button>
+            <script>
+              document.getElementById("share-btn").addEventListener("click",function(){
+                var btn=this,url=window.parent.location.href;
+                if(navigator.clipboard){
+                  navigator.clipboard.writeText(url).then(function(){
+                    btn.textContent="\u2713 Copied!";
+                    setTimeout(function(){btn.textContent="\U0001f517 Copy Link"},2000);
+                  });
+                }else{
+                  var ta=document.createElement("textarea");
+                  ta.value=url;document.body.appendChild(ta);ta.select();
+                  document.execCommand("copy");document.body.removeChild(ta);
+                  btn.textContent="\u2713 Copied!";
+                  setTimeout(function(){btn.textContent="\U0001f517 Copy Link"},2000);
+                }
+              });
+            </script>
+            """,
+            height=34,
+        )
     if selected_label == "Slate Summary":
         st.header("Slate Summary")
         slate_summary = pd.DataFrame(all_games)
