@@ -72,9 +72,9 @@ function selectorStyles() {
       outline-offset: 2px;
     }
     .game-logo-card.is-active {
-      border-color: #1f2937;
+      border-color: #E866FE;
       background: #eef3f8;
-      box-shadow: inset 0 0 0 1px rgba(31, 41, 55, 0.20);
+      box-shadow: inset 0 0 0 1px rgba(232, 102, 254, 0.30);
     }
     .matchup-logo-row {
       display: flex;
