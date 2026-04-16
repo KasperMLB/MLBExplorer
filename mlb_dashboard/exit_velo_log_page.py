@@ -5,6 +5,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
+import requests
 
 from .branding import apply_branding_head, page_icon_path
 from .config import AppConfig
@@ -72,6 +73,11 @@ def _empty_board() -> pd.DataFrame:
 def _normalize_name(value: object) -> str:
     text = "" if value is None else str(value)
     return " ".join(text.strip().split())
+
+
+def _is_numeric_name(value: object) -> bool:
+    text = _normalize_name(value)
+    return bool(text) and text.isdigit()
 
 
 def _normalize_name_series(series: pd.Series) -> pd.Series:
@@ -218,6 +224,35 @@ def _load_recent_batter_names_cached(end_date_value: str | None) -> pd.DataFrame
     return read_recent_batter_name_lookup(config, end_date=parsed_end_date)
 
 
+@st.cache_data(show_spinner=False, ttl=86400)
+def _load_mlb_people_names_cached(batter_ids: tuple[int, ...]) -> pd.DataFrame:
+    ids = [int(value) for value in batter_ids if pd.notna(value)]
+    if not ids:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    rows: list[dict[str, object]] = []
+    for start in range(0, len(ids), 100):
+        chunk = ids[start:start + 100]
+        try:
+            response = requests.get(
+                "https://statsapi.mlb.com/api/v1/people",
+                params={"personIds": ",".join(str(value) for value in chunk)},
+                timeout=20,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            continue
+        for person in payload.get("people", []):
+            player_id = pd.to_numeric(pd.Series([person.get("id")]), errors="coerce").iloc[0]
+            name = _normalize_name(person.get("fullName"))
+            if pd.isna(player_id) or not name or _is_numeric_name(name):
+                continue
+            rows.append({"batter": int(player_id), "team": "", "player_name": name})
+    if not rows:
+        return pd.DataFrame(columns=["batter", "team", "player_name"])
+    return pd.DataFrame(rows).drop_duplicates("batter").reset_index(drop=True)
+
+
 def _prepare_events(events: pd.DataFrame) -> pd.DataFrame:
     if events.empty:
         return events
@@ -321,7 +356,7 @@ def _load_hitter_artifact_names(config: AppConfig, end_date: date | None) -> pd.
     lookup["batter"] = lookup["batter"].astype(int)
     lookup["player_name"] = _normalize_name_series(lookup["player_name"])
     lookup["team"] = lookup.get("team", pd.Series("", index=lookup.index)).fillna("").astype(str).str.strip().str.upper()
-    lookup = lookup.loc[lookup["player_name"].ne("")].drop_duplicates(["batter", "team"])
+    lookup = lookup.loc[lookup["player_name"].ne("") & ~lookup["player_name"].map(_is_numeric_name)].drop_duplicates(["batter", "team"])
     return lookup.reset_index(drop=True)
 
 
@@ -338,7 +373,7 @@ def _prepare_name_lookup(frame: pd.DataFrame, *, id_column: str, team_column: st
     lookup["team"] = ""
     if team_column and team_column in lookup.columns:
         lookup["team"] = lookup[team_column].fillna("").astype(str).str.strip().str.upper()
-    lookup = lookup.loc[lookup["player_name"].ne("")][["batter", "team", "player_name"]]
+    lookup = lookup.loc[lookup["player_name"].ne("") & ~lookup["player_name"].map(_is_numeric_name)][["batter", "team", "player_name"]]
     return lookup.drop_duplicates(["batter", "team"])
 
 
@@ -369,6 +404,7 @@ def _apply_layered_names(
     rosters: pd.DataFrame,
     hitter_artifact_names: pd.DataFrame,
     recent_live_names: pd.DataFrame,
+    mlb_people_names: pd.DataFrame,
 ) -> pd.DataFrame:
     if events.empty:
         return events
@@ -390,19 +426,21 @@ def _apply_layered_names(
     work = _apply_name_source(work, roster_lookup, source_label="roster")
     work = _apply_name_source(work, hitter_artifact_names, source_label="artifact")
     work = _apply_name_source(work, recent_live_names, source_label="live")
+    work = _apply_name_source(work, mlb_people_names, source_label="mlb_people")
 
     unresolved = work["resolved_name"].eq("")
     if unresolved.any():
         event_player = _normalize_name_series(work.get("player_name", pd.Series(index=work.index)))
         pitcher_name = _normalize_name_series(work.get("pitcher_name", pd.Series(index=work.index)))
-        mask = unresolved & event_player.ne("") & event_player.ne(pitcher_name)
+        mask = unresolved & event_player.ne("") & event_player.ne(pitcher_name) & ~event_player.map(_is_numeric_name)
         work.loc[mask, "resolved_name"] = event_player[mask]
         work.loc[mask, "name_source"] = "event_player"
         unresolved = work["resolved_name"].eq("")
     if unresolved.any():
-        combined_lookup = pd.concat([roster_lookup, hitter_artifact_names, recent_live_names], ignore_index=True, sort=False)
+        combined_lookup = pd.concat([roster_lookup, hitter_artifact_names, recent_live_names, mlb_people_names], ignore_index=True, sort=False)
         if not combined_lookup.empty:
-            combined_lookup = combined_lookup.loc[_normalize_name_series(combined_lookup["player_name"]).ne("")].copy()
+            normalized_lookup_names = _normalize_name_series(combined_lookup["player_name"])
+            combined_lookup = combined_lookup.loc[normalized_lookup_names.ne("") & ~normalized_lookup_names.map(_is_numeric_name)].copy()
             combined_lookup["team_rank"] = combined_lookup.get("team", pd.Series("", index=combined_lookup.index)).fillna("").astype(str).ne("").astype(int)
             batter_lookup = (
                 combined_lookup.sort_values(["batter", "team_rank"], ascending=[True, False])
@@ -762,7 +800,14 @@ def main() -> None:
     rosters = _load_rosters(config, end_date if use_end_date else None)
     hitter_artifact_names = _load_hitter_artifact_names(config, end_date if use_end_date else None)
     recent_live_names = _load_recent_batter_names_cached(end_date.isoformat() if use_end_date else None)
-    raw = _apply_layered_names(raw, rosters, hitter_artifact_names, recent_live_names)
+    batter_ids = tuple(
+        sorted(
+            int(value)
+            for value in pd.to_numeric(raw.get("batter", pd.Series(dtype=object)), errors="coerce").dropna().unique().tolist()
+        )
+    )
+    mlb_people_names = _load_mlb_people_names_cached(batter_ids)
+    raw = _apply_layered_names(raw, rosters, hitter_artifact_names, recent_live_names, mlb_people_names)
 
     latest_tracked = pd.to_datetime(raw["game_date"], errors="coerce").max()
     if pd.notna(latest_tracked):
