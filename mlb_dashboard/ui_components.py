@@ -728,7 +728,9 @@ def render_exit_velo_summary_grid(
         use_container_width=True,
         height=height,
         column_config={
-            index: st.column_config.ImageColumn(column[0], width="small")
+            # Streamlit positional column config counts the hidden index at 0,
+            # so visible dataframe columns are one-based here.
+            index + 1: st.column_config.ImageColumn(column[0], width="small")
             for index, column in enumerate(display_frame.columns)
             if column[0] in {DISPLAY_LABELS.get(logo_column, logo_column) for logo_column in LOGO_COLUMNS}
         },
