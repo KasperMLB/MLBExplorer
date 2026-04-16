@@ -1126,6 +1126,7 @@ def render_sticky_logo_game_nav(
                 "awayLogo": team_logo_data_uri(away_team),
                 "homeLogo": team_logo_data_uri(home_team),
                 "status": str(game.get("status", "") or game.get("game_status", "") or ""),
+                "gameDate": str(game.get("game_date", "") or ""),
             }
         )
 
@@ -1328,17 +1329,28 @@ def render_zone_heatmap(title: str, subtitle: str, zone_map: pd.DataFrame, value
     st.image(_build_zone_heatmap_image(title, subtitle, zone_map, value_mode=value_mode), use_container_width=False)
 
 
-def render_zone_tool(title: str, subtitle: str, zone_map: pd.DataFrame, key: str, value_mode: str = "percent", map_kind: str = "zone") -> None:
+def render_zone_tool(
+    title: str,
+    subtitle: str,
+    zone_map: pd.DataFrame,
+    key: str,
+    value_mode: str = "percent",
+    map_kind: str = "zone",
+    overlay_zone_map: pd.DataFrame | None = None,
+) -> None:
     if zone_map.empty:
         st.info("No zone heatmap data available.")
         return
+    zone_cols = ["zone", "sample_size", "zone_value", "display_value"]
+    overlay_rows = overlay_zone_map[[c for c in zone_cols if c in overlay_zone_map.columns]] if overlay_zone_map is not None and not overlay_zone_map.empty else None
     render_zone_tool_component(
-        zone_rows=zone_map[["zone", "sample_size", "zone_value", "display_value"]],
+        zone_rows=zone_map[[c for c in zone_cols if c in zone_map.columns]],
         key=key,
         title=title,
         subtitle=subtitle,
         value_mode=value_mode,
         map_kind=map_kind,
+        overlay_zone_rows=overlay_rows,
     )
 
 

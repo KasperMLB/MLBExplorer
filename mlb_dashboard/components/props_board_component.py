@@ -160,10 +160,12 @@ def render_zone_tool(
     height: int = 560,
     value_mode: str = "percent",
     map_kind: str = "zone",
+    overlay_zone_rows: pd.DataFrame | None = None,
 ) -> None:
     _component_func(
         componentType="zone_tool",
         zoneRows=_records(zone_rows),
+        overlayZoneRows=_records(overlay_zone_rows) if overlay_zone_rows is not None else None,
         title=title,
         subtitle=subtitle,
         valueMode=value_mode,

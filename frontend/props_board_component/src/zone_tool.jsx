@@ -80,6 +80,30 @@ function zoneStyles() {
       color: #edf4f7;
       font-weight: 700;
     }
+    .zone-head-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+    }
+    .zone-overlay-toggle {
+      appearance: none;
+      background: rgba(255,255,255,0.10);
+      border: 1px solid rgba(186, 205, 217, 0.28);
+      border-radius: 999px;
+      color: #edf4f7;
+      cursor: pointer;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      padding: 4px 9px;
+      text-transform: uppercase;
+    }
+    .zone-overlay-toggle.is-active {
+      background: rgba(232, 102, 254, 0.18);
+      border-color: rgba(232, 102, 254, 0.55);
+      color: #f3b8ff;
+    }
     .zone-body {
       position: relative;
       padding: 9px 9px 8px;
@@ -219,12 +243,14 @@ function kindLabel(mapKind) {
 
 export function ZoneTool({ args }) {
   const rows = args?.zoneRows || [];
+  const overlayRows = args?.overlayZoneRows || [];
   const title = args?.title || "Zone Tool";
   const subtitle = args?.subtitle || "";
   const valueMode = args?.valueMode || "percent";
   const mapKind = args?.mapKind || "zone";
   const [hoveredZone, setHoveredZone] = useState(null);
   const [lockedZone, setLockedZone] = useState(null);
+  const [showOverlay, setShowOverlay] = useState(false);
   const frameRef = useRef(null);
   const scaleRef = useRef(null);
   const [frameWidth, setFrameWidth] = useState(0);
@@ -265,6 +291,16 @@ export function ZoneTool({ args }) {
     });
     return next;
   }, [rows]);
+
+  const overlayLookup = useMemo(() => {
+    const next = new Map();
+    overlayRows.forEach((row) => {
+      next.set(Number(row.zone), row);
+    });
+    return next;
+  }, [overlayRows]);
+
+  const hasOverlay = overlayRows.length > 0;
 
   const zoneValues = rows
     .map((row) => Number(row.zone_value))
@@ -317,7 +353,17 @@ export function ZoneTool({ args }) {
                 <h3 className="zone-title">{title}</h3>
                 <div className="zone-subtitle">{subtitle}</div>
               </div>
-              <div className="zone-mapkind">{kindLabel(mapKind)}</div>
+              <div className="zone-head-right">
+                <div className="zone-mapkind">{kindLabel(mapKind)}</div>
+                {hasOverlay ? (
+                  <button
+                    className={`zone-overlay-toggle${showOverlay ? " is-active" : ""}`}
+                    onClick={() => setShowOverlay((v) => !v)}
+                  >
+                    {showOverlay ? "Overlay On" : "Overlay"}
+                  </button>
+                ) : null}
+              </div>
             </div>
             <div className="zone-body">
               <div className="zone-layout">
@@ -330,7 +376,7 @@ export function ZoneTool({ args }) {
                       <div className="tooltip-meta">{pitchesLabel(activeZone.row)}</div>
                     </div>
                   ) : null}
-                  <svg className="zone-svg" viewBox={`0 0 ${boardWidth} ${boardHeight}`} role="img" aria-label={title}>
+                  <svg className="zone-svg" viewBox={`0 0 ${boardWidth} ${boardHeight}`} role="img" aria-label={title} onClick={() => { setLockedZone(null); setHoveredZone(null); }}>
                     <defs>
                       <linearGradient id="zoneBoardBg" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#112431" />
@@ -341,6 +387,7 @@ export function ZoneTool({ args }) {
                     {Object.entries(zoneRects).map(([zoneKey, rect]) => {
                       const zone = Number(zoneKey);
                       const row = zoneLookup.get(zone) || {};
+                      const overlayRow = overlayLookup.get(zone) || {};
                       const x = zoneOriginX + rect.x * (cellSize + gap);
                       const y = zoneOriginY + rect.y * (cellSize + gap);
                       const width = rect.w * cellSize + (rect.w - 1) * gap;
@@ -352,11 +399,14 @@ export function ZoneTool({ args }) {
                           key={zone}
                           onMouseEnter={() => setHoveredZone({ zone, row, tooltipLeft: x + width / 2, tooltipTop: below ? y + height : y, below })}
                           onMouseLeave={() => setHoveredZone((current) => (current?.zone === zone ? null : current))}
-                          onClick={() => setLockedZone((current) => (current?.zone === zone ? null : { zone, row, tooltipLeft: x + width / 2, tooltipTop: below ? y + height : y, below }))}
+                          onClick={(e) => { e.stopPropagation(); setLockedZone((current) => (current?.zone === zone ? null : { zone, row, tooltipLeft: x + width / 2, tooltipTop: below ? y + height : y, below })); }}
                           style={{ cursor: "pointer" }}
                         >
                           <rect x={x + 2} y={y + 3} width={width} height={height} rx="10" fill="#081218" opacity="0.72" />
                           <rect x={x} y={y} width={width} height={height} rx="10" fill={fillFor(row.zone_value)} stroke={active ? "#ffffff" : "#edf4f7"} strokeWidth={active ? 3 : 2} style={{ transition: "fill 0.3s ease, stroke 0.15s ease" }} />
+                          {showOverlay && overlayRow.zone_value !== undefined ? (
+                            <rect x={x} y={y} width={width} height={height} rx="10" fill={fillFor(overlayRow.zone_value)} opacity={0.40} style={{ transition: "fill 0.3s ease" }} />
+                          ) : null}
                           {row && row.sample_size !== null && row.sample_size !== undefined ? (
                             <>
                               <text x={x + width / 2} y={y + 13} textAnchor="middle" fontSize="8" fontWeight="800" fill="#24363d">

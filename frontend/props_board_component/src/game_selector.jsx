@@ -426,6 +426,13 @@ function stickySelectorStyles() {
     .sticky-chip-status-badge.is-live {
       animation: kasper-live-pulse 1.6s ease-in-out infinite;
     }
+    .sticky-chip-time {
+      font-size: 0.62rem;
+      font-weight: 600;
+      color: #6b7280;
+      line-height: 1;
+      letter-spacing: 0.01em;
+    }
     .sticky-section-chip {
       appearance: none;
       border: 1px solid rgba(31, 41, 55, 0.16);
@@ -615,6 +622,10 @@ function StickyPortalBar({ parentDocument, visible, cards, selectedKey, selected
                           style={{ color: badge.color }}
                         >
                           {badge.label}
+                        </span>
+                      ) : card?.gameDate ? (
+                        <span className="sticky-chip-time">
+                          {new Date(card.gameDate).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
                         </span>
                       ) : null}
                     </button>

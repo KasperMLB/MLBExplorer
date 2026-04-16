@@ -53,7 +53,7 @@ from .ui_components import (
     render_metric_grid,
     render_slate_export_controls,
     render_sticky_logo_game_nav,
-    render_zone_heatmap,
+    render_zone_tool,
 )
 
 
@@ -1096,6 +1096,15 @@ def main() -> None:
     except Exception:
         st.warning("Full-slate top board artifacts were not found. Rebuild and publish artifacts to restore full-slate top tables.")
 
+    if "url_params_initialized" not in st.session_state:
+        st.session_state["url_params_initialized"] = True
+        _game_pk_from_url = st.query_params.get("game")
+        _section_from_url = st.query_params.get("section")
+        if _game_pk_from_url:
+            st.session_state["game-selector-hosted-selected-game-pk"] = _game_pk_from_url
+        if _game_pk_from_url and _section_from_url:
+            st.session_state[f"section-{_game_pk_from_url}"] = _section_from_url
+
     _render_hosted_selected_game_area(
         base_url,
         target_date,
@@ -1151,6 +1160,12 @@ def _render_hosted_selected_game_area(
 ) -> None:
     st.divider()
     selected_label, selected_games, selected_section = _game_selection(all_games)
+    if selected_games:
+        st.query_params["game"] = str(selected_games[0]["game_pk"])
+        st.query_params["section"] = selected_section
+    else:
+        st.query_params.pop("game", None)
+        st.query_params.pop("section", None)
     st.caption(f"{'Slate summary' if selected_label == 'Slate Summary' else 'Selected game'} | {len(all_games)} games on slate")
     if selected_label == "Slate Summary":
         st.header("Slate Summary")
@@ -1514,20 +1529,14 @@ def _render_hosted_selected_game_area(
                             selected_pitch = st.selectbox("Pitch type", pitch_types, key=f"p-zone-hosted-pitch-{game['game_pk']}-{team_label}")
                             pitcher_map = aggregate_pitcher_zone_map(zone_frame, selected_pitch)
                             hitter_map = aggregate_batter_zone_map(hitter_detail, selected_pitch)
-                            overlay_map = build_zone_overlay_map(hitter_map, pitcher_map)
-                            heatmap_cols = st.columns(2)
-                            with heatmap_cols[0]:
-                                render_zone_heatmap(
-                                    f"{pitcher_row['pitcher_name'].iloc[0]} Usage",
-                                    f"{selected_pitch} | Pitcher zone attack",
-                                    pitcher_map,
-                                )
-                            with heatmap_cols[1]:
-                                render_zone_heatmap(
-                                    f"Overlay vs {selected_hitter or 'Opposing Hitter'}",
-                                    f"{selected_pitch} | Hitter damage x pitcher usage",
-                                    overlay_map,
-                                )
+                            render_zone_tool(
+                                title=f"{pitcher_row['pitcher_name'].iloc[0]} Usage",
+                                subtitle=f"{selected_pitch} | Pitcher zone attack",
+                                zone_map=pitcher_map,
+                                key=f"p-zone-react-{game['game_pk']}-{team_label}",
+                                map_kind="pitcher",
+                                overlay_zone_map=hitter_map,
+                            )
                             _render_hosted_grid(
                                 zone_frame[[column for column in PITCHER_ZONE_COLUMNS if column in zone_frame.columns]],
                                 key=f"p-zone-hosted-{game['game_pk']}-{team_label}",
@@ -1569,21 +1578,15 @@ def _render_hosted_selected_game_area(
                         selected_pitch = st.selectbox("Pitch type", pitch_types, key=f"h-zone-hosted-pitch-{game['game_pk']}-{team_label}")
                         hitter_map = aggregate_batter_zone_map(hitter_detail, selected_pitch)
                         pitcher_map = aggregate_pitcher_zone_map(pitcher_detail, selected_pitch)
-                        overlay_map = build_zone_overlay_map(hitter_map, pitcher_map)
-                        heatmap_cols = st.columns(2)
-                        with heatmap_cols[0]:
-                            render_zone_heatmap(
-                                f"{selected_hitter or team_label} Damage",
-                                f"{selected_pitch} | Hitter zone quality",
-                                hitter_map,
-                            )
-                        with heatmap_cols[1]:
-                            opposing_name = opposing_pitcher["pitcher_name"].iloc[0] if not opposing_pitcher.empty else "Opposing Pitcher"
-                            render_zone_heatmap(
-                                f"Overlay vs {opposing_name}",
-                                f"{selected_pitch} | Hitter damage x pitcher usage",
-                                overlay_map,
-                            )
+                        opposing_name = opposing_pitcher["pitcher_name"].iloc[0] if not opposing_pitcher.empty else "Opposing Pitcher"
+                        render_zone_tool(
+                            title=f"{selected_hitter or team_label} Damage",
+                            subtitle=f"{selected_pitch} | Hitter zone quality",
+                            zone_map=hitter_map,
+                            key=f"h-zone-react-{game['game_pk']}-{team_label}",
+                            map_kind="hitter",
+                            overlay_zone_map=pitcher_map,
+                        )
                         _render_hosted_grid(
                             hitter_detail[[column for column in BATTER_ZONE_COLUMNS if column in hitter_detail.columns]],
                             key=f"h-zone-hosted-{game['game_pk']}-{team_label}",

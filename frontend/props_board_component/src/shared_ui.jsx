@@ -129,6 +129,18 @@ export function sharedStyles() {
       table-layout: fixed;
       font-size: 11.5px;
     }
+    tbody td:first-child {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      background: #faf6ee;
+    }
+    thead th:first-child {
+      position: sticky;
+      left: 0;
+      z-index: 3;
+      background: linear-gradient(180deg, #21385d 0%, #182b48 100%);
+    }
     thead th {
       position: sticky;
       top: 0;

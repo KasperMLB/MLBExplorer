@@ -54,6 +54,15 @@ function tableStyles() {
     .explorer-table tbody tr:hover .metric-cell {
       box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28), 0 2px 6px rgba(16, 37, 66, 0.08);
     }
+    .explorer-table tbody tr {
+      cursor: pointer;
+    }
+    .explorer-table tbody tr.is-highlighted td {
+      background: rgba(232, 102, 254, 0.07);
+    }
+    .explorer-table tbody tr.is-highlighted td:first-child {
+      border-left: 2px solid #E866FE;
+    }
     .diagnostic {
       padding: 18px;
       color: #8a1c1c;
@@ -134,6 +143,7 @@ function DataTableInner({ args }) {
   const emptyMessage = args?.emptyMessage || "No data available for this selection.";
   const initialSort = args?.initialSort || null;
   const [sortState, setSortState] = useState(initialSort);
+  const [highlightedRowId, setHighlightedRowId] = useState(null);
   const userSortedRef = useRef(false);
 
   useEffect(() => {
@@ -203,7 +213,11 @@ function DataTableInner({ args }) {
               </thead>
               <tbody>
                 {sortedRows.map((row) => (
-                  <tr key={row.row_id}>
+                  <tr
+                    key={row.row_id}
+                    className={highlightedRowId === row.row_id ? "is-highlighted" : ""}
+                    onClick={() => setHighlightedRowId((id) => (id === row.row_id ? null : row.row_id))}
+                  >
                     {columns.map((column) => {
                       const cell = row.cells?.[column.key] || {};
                       const hasHeat = column.heat && cell.background;
