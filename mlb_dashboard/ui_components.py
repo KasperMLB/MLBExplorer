@@ -995,24 +995,20 @@ def render_metric_grid(
             tuple(sorted(hidden)),
             color_hitter_confidence,
         )
-        _first_col = display_frame.columns[0] if len(display_frame.columns) > 0 else None
-        if _first_col in {"Hitter", "Pitcher"}:
-            _render_sticky_html_table(display_frame, styles, height)
-        else:
-            st.dataframe(
-                display_frame.style.apply(lambda _: styles, axis=None),
-                hide_index=True,
-                use_container_width=True,
-                height=height,
-                column_config={
-                    column: st.column_config.ImageColumn(
-                        column,
-                        width="small",
-                    )
-                    for column in display_frame.columns
-                    if column in {DISPLAY_LABELS.get(logo_column, logo_column) for logo_column in LOGO_COLUMNS}
-                },
-            )
+        st.dataframe(
+            display_frame.style.apply(lambda _: styles, axis=None),
+            hide_index=True,
+            use_container_width=True,
+            height=height,
+            column_config={
+                column: st.column_config.ImageColumn(
+                    column,
+                    width="small",
+                )
+                for column in display_frame.columns
+                if column in {DISPLAY_LABELS.get(logo_column, logo_column) for logo_column in LOGO_COLUMNS}
+            },
+        )
         return frame
 
     if not HAS_AGGRID:
