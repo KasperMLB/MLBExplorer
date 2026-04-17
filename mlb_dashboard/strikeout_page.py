@@ -234,13 +234,6 @@ _CONF_ROW_BG = {
 }
 
 
-def _augment_cell_style(existing: str, font_weight: str, color: str) -> str:
-    """Add/replace font-weight and color in a CSS style string."""
-    parts = [p.strip() for p in existing.split(";") if p.strip()]
-    parts = [p for p in parts if not p.startswith("color:") and not p.startswith("font-weight:")]
-    parts += [f"font-weight: {font_weight}", f"color: {color}"]
-    return "; ".join(p for p in parts if p)
-
 
 def _bar_overlay(col: str, original_frame: pd.DataFrame, styles: pd.DataFrame) -> None:
     """Replace background-color on `col` with a blue-intensity 'bar' proportional to value."""
@@ -288,7 +281,7 @@ def _max_min_highlight(
     higher_best: set[str],
     lower_best: set[str],
 ) -> None:
-    """Bold + blue the best cell and bold + red the worst cell per column (direction-aware)."""
+    """Bold the best and worst cells per column; background colors from heatmap are preserved."""
     for col in higher_best | lower_best:
         if col not in original_frame.columns or col not in styles.columns:
             continue
@@ -297,9 +290,11 @@ def _max_min_highlight(
             continue
         best_idx = vals.idxmax() if col in higher_best else vals.idxmin()
         worst_idx = vals.idxmin() if col in higher_best else vals.idxmax()
-        styles.loc[best_idx, col] = _augment_cell_style(styles.loc[best_idx, col], "700", "#1e40af")
-        if best_idx != worst_idx:
-            styles.loc[worst_idx, col] = _augment_cell_style(styles.loc[worst_idx, col], "700", "#dc2626")
+        for idx in {best_idx, worst_idx}:
+            existing = styles.loc[idx, col]
+            parts = [p.strip() for p in existing.split(";") if p.strip() and not p.strip().startswith("font-weight:")]
+            parts.append("font-weight: 700")
+            styles.loc[idx, col] = "; ".join(p for p in parts if p)
 
 
 def _so_slate_post_styler(
