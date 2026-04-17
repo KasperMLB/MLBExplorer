@@ -303,7 +303,6 @@ def _so_slate_post_styler(
     styles: pd.DataFrame,
 ) -> pd.DataFrame:
     styles = styles.copy()
-    _bar_overlay("Proj K", original_frame, styles)
     _confidence_row_highlight(
         display_frame, styles, "Confidence",
         label_cols=["Pitcher", "Team", "Opp", "Hand", "Confidence"],
