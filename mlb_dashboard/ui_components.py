@@ -141,7 +141,7 @@ HITTER_CONFIDENCE_COLORS = {
     "Thin": "#b45309",
     "Very Thin": "#b91c1c",
 }
-LOGO_COLUMNS = {"away_logo", "home_logo", "team_logo"}
+LOGO_COLUMNS = {"away_logo", "home_logo", "team_logo", "Opp"}
 SLATE_SUMMARY_SELECTION = "__slate_summary__"
 DISPLAY_LABELS = {
     "away_logo": "Away",

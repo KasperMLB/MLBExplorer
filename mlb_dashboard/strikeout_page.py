@@ -366,9 +366,11 @@ def _render_slate_summary(projections: pd.DataFrame) -> None:
         "weighted_starts": "W. Starts",
         "confidence": "Confidence",
     })
-    # Replace team abbreviation column with data URIs so sticky table renders logos
+    # Replace team abbreviation columns with data URIs so table renders logos
     if "team" in display.columns:
         display.insert(1, "Team", display.pop("team").map(lambda t: team_logo_data_uri(str(t)) or str(t)))
+    if "Opp" in display.columns:
+        display["Opp"] = display["Opp"].map(lambda t: team_logo_data_uri(str(t)) or str(t))
 
     render_metric_grid(
         display,
