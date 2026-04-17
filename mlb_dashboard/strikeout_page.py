@@ -224,6 +224,119 @@ def _chain_text(row: dict) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Table enhancement helpers (options 1, 4, 6)                                 #
+# --------------------------------------------------------------------------- #
+
+_CONF_ROW_BG = {
+    "High":   "background-color: rgba(16, 185, 129, 0.18)",
+    "Medium": "background-color: rgba(245, 158, 11, 0.20)",
+    "Low":    "background-color: rgba(220, 38, 38, 0.15)",
+}
+
+
+def _augment_cell_style(existing: str, font_weight: str, color: str) -> str:
+    """Add/replace font-weight and color in a CSS style string."""
+    parts = [p.strip() for p in existing.split(";") if p.strip()]
+    parts = [p for p in parts if not p.startswith("color:") and not p.startswith("font-weight:")]
+    parts += [f"font-weight: {font_weight}", f"color: {color}"]
+    return "; ".join(p for p in parts if p)
+
+
+def _bar_overlay(col: str, original_frame: pd.DataFrame, styles: pd.DataFrame) -> None:
+    """Replace background-color on `col` with a blue-intensity 'bar' proportional to value."""
+    if col not in original_frame.columns or col not in styles.columns:
+        return
+    vals = pd.to_numeric(original_frame[col], errors="coerce")
+    vmin, vmax = vals.min(), vals.max()
+    if pd.isna(vmax) or pd.isna(vmin) or vmax <= vmin:
+        return
+    for idx in original_frame.index:
+        v = vals.loc[idx]
+        if pd.isna(v):
+            continue
+        opacity = 0.08 + ((v - vmin) / (vmax - vmin)) * 0.42  # 0.08 – 0.50
+        existing = styles.loc[idx, col]
+        parts = [p.strip() for p in existing.split(";") if p.strip() and not p.strip().startswith("background-color:")]
+        parts.append(f"background-color: rgba(37, 99, 235, {opacity:.3f})")
+        styles.loc[idx, col] = "; ".join(parts)
+
+
+def _confidence_row_highlight(
+    display_frame: pd.DataFrame,
+    styles: pd.DataFrame,
+    conf_col: str,
+    label_cols: list[str],
+) -> None:
+    """Tint label-column cells with confidence tier color."""
+    if conf_col not in display_frame.columns:
+        return
+    cols_present = [c for c in label_cols if c in styles.columns]
+    for idx in display_frame.index:
+        bg = _CONF_ROW_BG.get(str(display_frame.loc[idx, conf_col]))
+        if bg is None:
+            continue
+        for col in cols_present:
+            existing = styles.loc[idx, col]
+            parts = [p.strip() for p in existing.split(";") if p.strip() and not p.strip().startswith("background-color:")]
+            parts.append(bg)
+            styles.loc[idx, col] = "; ".join(parts)
+
+
+def _max_min_highlight(
+    original_frame: pd.DataFrame,
+    styles: pd.DataFrame,
+    higher_best: set[str],
+    lower_best: set[str],
+) -> None:
+    """Bold + blue the best cell and bold + red the worst cell per column (direction-aware)."""
+    for col in higher_best | lower_best:
+        if col not in original_frame.columns or col not in styles.columns:
+            continue
+        vals = pd.to_numeric(original_frame[col], errors="coerce").dropna()
+        if len(vals) < 2:
+            continue
+        best_idx = vals.idxmax() if col in higher_best else vals.idxmin()
+        worst_idx = vals.idxmin() if col in higher_best else vals.idxmax()
+        styles.loc[best_idx, col] = _augment_cell_style(styles.loc[best_idx, col], "700", "#1e40af")
+        if best_idx != worst_idx:
+            styles.loc[worst_idx, col] = _augment_cell_style(styles.loc[worst_idx, col], "700", "#dc2626")
+
+
+def _so_slate_post_styler(
+    display_frame: pd.DataFrame,
+    original_frame: pd.DataFrame,
+    styles: pd.DataFrame,
+) -> pd.DataFrame:
+    styles = styles.copy()
+    _bar_overlay("Proj K", original_frame, styles)
+    _confidence_row_highlight(
+        display_frame, styles, "Confidence",
+        label_cols=["Pitcher", "Team", "Opp", "Hand", "Confidence"],
+    )
+    _max_min_highlight(
+        original_frame, styles,
+        higher_best={"Proj K", "Proj BF", "Avg Pitches", "K Rate", "Lineup K%", "Blend K%", "Mix Whiff", "W. Starts"},
+        lower_best={"Proj BB", "BB Rate", "P/PA"},
+    )
+    return styles
+
+
+def _so_matchup_post_styler(
+    display_frame: pd.DataFrame,
+    original_frame: pd.DataFrame,
+    styles: pd.DataFrame,
+) -> pd.DataFrame:
+    styles = styles.copy()
+    _bar_overlay("K Prob", original_frame, styles)
+    _max_min_highlight(
+        original_frame, styles,
+        higher_best={"SwStr%", "Whiff Idx", "Mix Fit", "K Prob"},
+        lower_best=set(),
+    )
+    return styles
+
+
+# --------------------------------------------------------------------------- #
 # Section 1: Slate summary table                                               #
 # --------------------------------------------------------------------------- #
 
@@ -283,6 +396,7 @@ def _render_slate_summary(projections: pd.DataFrame) -> None:
             "BB Rate",      # lower walk rate = better command
             "P/PA",         # fewer pitches per batter = more efficient
         },
+        post_styler=_so_slate_post_styler,
     )
 
 
@@ -382,15 +496,15 @@ def _render_matchup_breakdown(pitcher_row: dict, hitter_k_probs: list[dict]) -> 
         "hitter_name": "Hitter",
         "bats": "Bats",
         "swstr_pct": "SwStr%",
-        "swstr_scale": "SwStr Scale",
-        "family_vuln": "Pitch-Mix Vuln",
+        "swstr_scale": "Whiff Idx",
+        "family_vuln": "Mix Fit",
         "k_prob": "K Prob",
     })
     # Insert Team logo column after Hitter
     if "team" in display.columns:
         display.insert(1, "Team", display.pop("team").map(lambda t: team_logo_data_uri(str(t)) or str(t)))
     # Keep numeric so _build_lightweight_grid_payload can color them
-    for col in ["SwStr%", "K Prob", "SwStr Scale", "Pitch-Mix Vuln"]:
+    for col in ["SwStr%", "K Prob", "Whiff Idx", "Mix Fit"]:
         if col in display.columns:
             display[col] = pd.to_numeric(display[col], errors="coerce")
     render_metric_grid(
@@ -398,7 +512,8 @@ def _render_matchup_breakdown(pitcher_row: dict, hitter_k_probs: list[dict]) -> 
         key=f"so-matchup-{pitcher_row.get('pitcher_id', 0)}",
         height=320,
         use_lightweight=True,
-        higher_is_better={"SwStr%", "SwStr Scale", "Pitch-Mix Vuln", "K Prob"},
+        higher_is_better={"SwStr%", "Whiff Idx", "Mix Fit", "K Prob"},
+        post_styler=_so_matchup_post_styler,
     )
 
 

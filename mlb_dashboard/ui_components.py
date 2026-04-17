@@ -56,10 +56,7 @@ PERCENT_COLUMNS = {
     "Lineup K%",
     "Blend K%",
     "Mix Whiff",
-    "P/PA",
     "SwStr%",
-    "SwStr Scale",
-    "Pitch-Mix Vuln",
     "K Prob",
 }
 RATE_COLUMNS = {
@@ -98,6 +95,9 @@ RATE_COLUMNS = {
     "Proj BF",
     "Avg Pitches",
     "W. Starts",
+    "P/PA",
+    "Whiff Idx",
+    "Mix Fit",
 }
 LOWER_IS_BETTER = {"swstr_pct", "siera", "opponent_lineup_quality", "opponent_contact_threat", "opponent_family_fit_allowed"}
 HIGHER_IS_BETTER = {
@@ -981,6 +981,7 @@ def render_metric_grid(
     subtitle: str | None = None,
     hidden_columns: set[str] | None = None,
     color_hitter_confidence: bool = False,
+    post_styler: object = None,
 ) -> pd.DataFrame:
     if frame.empty:
         st.info("No data available for this selection.")
@@ -995,6 +996,8 @@ def render_metric_grid(
             tuple(sorted(hidden)),
             color_hitter_confidence,
         )
+        if post_styler is not None:
+            styles = post_styler(display_frame, frame, styles)
         st.dataframe(
             display_frame.style.apply(lambda _: styles, axis=None),
             hide_index=True,
