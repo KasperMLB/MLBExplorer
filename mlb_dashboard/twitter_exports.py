@@ -35,6 +35,7 @@ _PANEL_MID = "#1d2947"
 _TEXT = "#f8fafc"
 _MUTED = "#cbd5e1"
 _DARK_TEXT = "#111827"
+_DARK_MUTED = "#64748b"
 _ACCENT = "#a78bfa"
 _BORDER = "#c86bf2"
 _GOOD = "#2f8f46"
@@ -44,7 +45,7 @@ _NEUTRAL = "#aeb7b4"
 _ASSET_DIR = Path(__file__).resolve().parent / "assets"
 _KASPER_LOGO = _ASSET_DIR / "kasperLogo.png"
 _MAX_HITTER_CARD_ROWS = 9
-_HITTER_ROW_HEIGHT = 94
+_HITTER_ROW_HEIGHT = 142
 _HITTER_PANEL_TOP_PAD = 92
 
 
@@ -299,8 +300,9 @@ def _hitter_panel_height(row_count: int) -> int:
 
 def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.DataFrame, team: str, top: int, left: int, width: int, height: int) -> int:
     title_font = _load_font(42, bold=True)
-    name_font = _load_font(39, bold=True)
-    metric_font = _load_font(30, bold=True)
+    name_font = _load_font(38, bold=True)
+    metric_label_font = _load_font(18, bold=True)
+    metric_value_font = _load_font(40, bold=True)
     _panel(draw, (left, top, left + width, top + height), fill=_PANEL_DARK, radius=26)
     _draw_logo(draw, image, team, (left + 24, top + 12), 52)
     _text(draw, (left + 90, top + 18), "Hitters", title_font, _TEXT, max_width=width - 114)
@@ -316,7 +318,11 @@ def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.
     metric_w = inner_right - metric_left - 10
     gap = 8
     cell_w = (metric_w - gap * 3) // 4
-    cell_h = 34
+    cell_h = 40
+    metric_rows = [
+        ["Match", "Test", "Ceil", "Zone"],
+        ["Form", "PB", "HH", "LA"],
+    ]
     for _, row in frame.head(_MAX_HITTER_CARD_ROWS).iterrows():
         draw.rounded_rectangle((left + 18, y, left + width - 18, y + row_h - 5), radius=14, fill=_PANEL)
         _center_text(
@@ -328,15 +334,17 @@ def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.
             max_width=name_w - 34,
         )
         metric_values = _metric_map(row)
-        for idx, label in enumerate(["Match", "Test", "Ceil", "Zone", "Form", "PB", "HH", "LA"]):
-            value, fill = metric_values.get(label, ("-", _NEUTRAL))
-            row_idx = idx // 4
-            col_idx = idx % 4
-            cell_x = metric_left + col_idx * (cell_w + gap)
-            cell_y = y + 10 + row_idx * (cell_h + 8)
-            cell_box = (cell_x, cell_y, cell_x + cell_w, cell_y + cell_h)
-            draw.rounded_rectangle(cell_box, radius=9, fill=fill)
-            _center_text(draw, cell_box, f"{label} {value}", metric_font, _TEXT, max_width=cell_w - 12)
+        for row_idx, labels in enumerate(metric_rows):
+            label_y = y + 8 + row_idx * 64
+            cell_y = label_y + 20
+            for col_idx, label in enumerate(labels):
+                value, fill = metric_values.get(label, ("-", _NEUTRAL))
+                cell_x = metric_left + col_idx * (cell_w + gap)
+                label_box = (cell_x, label_y, cell_x + cell_w, label_y + 18)
+                cell_box = (cell_x, cell_y, cell_x + cell_w, cell_y + cell_h)
+                _center_text(draw, label_box, label, metric_label_font, _DARK_MUTED, max_width=cell_w - 12)
+                draw.rounded_rectangle(cell_box, radius=9, fill=fill)
+                _center_text(draw, cell_box, value, metric_value_font, _TEXT, max_width=cell_w - 12)
         y += row_h
     return top + height
 
