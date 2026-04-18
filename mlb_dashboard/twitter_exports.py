@@ -44,6 +44,8 @@ _NEUTRAL = "#aeb7b4"
 _ASSET_DIR = Path(__file__).resolve().parent / "assets"
 _KASPER_LOGO = _ASSET_DIR / "kasperLogo.png"
 _MAX_HITTER_CARD_ROWS = 9
+_HITTER_ROW_HEIGHT = 86
+_HITTER_PANEL_TOP_PAD = 122
 
 
 @dataclass(frozen=True)
@@ -295,17 +297,17 @@ def _metric_map(row: pd.Series) -> dict[str, tuple[str, str]]:
 
 
 def _hitter_panel_height(row_count: int) -> int:
-    return 126 + max(int(row_count), 1) * 68
+    return _HITTER_PANEL_TOP_PAD + max(int(row_count), 1) * _HITTER_ROW_HEIGHT
 
 
 def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.DataFrame, team: str, top: int, left: int, width: int, height: int) -> int:
-    title_font = _load_font(37, bold=True)
-    header_font = _load_font(20, bold=True)
-    name_font = _load_font(31, bold=True)
-    value_font = _load_font(29, bold=True)
+    title_font = _load_font(42, bold=True)
+    header_font = _load_font(25, bold=True)
+    name_font = _load_font(42, bold=True)
+    value_font = _load_font(39, bold=True)
     _panel(draw, (left, top, left + width, top + height), fill=_PANEL_DARK, radius=26)
-    _draw_logo(draw, image, team, (left + 24, top + 12), 46)
-    _text(draw, (left + 82, top + 20), "Hitters", title_font, _TEXT, max_width=width - 106)
+    _draw_logo(draw, image, team, (left + 24, top + 12), 52)
+    _text(draw, (left + 90, top + 18), "Hitters", title_font, _TEXT, max_width=width - 114)
     if frame.empty:
         _text(draw, (left + 24, top + 92), "No hitter rows available", name_font, _MUTED)
         return top + height
@@ -330,12 +332,12 @@ def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.
         label, col_width = columns[0]
         columns[0] = (label, col_width + width_delta)
     x = left + 24
-    header_y = top + 72
+    header_y = top + 78
     for label, col_width in columns:
         _text(draw, (x + 6, header_y), label, header_font, _MUTED, max_width=col_width - 10)
         x += col_width
-    row_h = 68
-    y = top + 104
+    row_h = _HITTER_ROW_HEIGHT
+    y = top + _HITTER_PANEL_TOP_PAD - 18
     for _, row in frame.head(_MAX_HITTER_CARD_ROWS).iterrows():
         draw.rounded_rectangle((left + 18, y, left + width - 18, y + row_h - 5), radius=14, fill=_PANEL)
         metric_values = _metric_map(row)
@@ -369,7 +371,7 @@ def build_twitter_game_card(game: dict, hitters: pd.DataFrame) -> bytes:
     home = str(game.get("home_team", "") or "")
     away_hitters = top_targets.loc[top_targets.get("team", pd.Series(dtype="object")).astype(str).eq(away)].copy() if not top_targets.empty and "team" in top_targets.columns else pd.DataFrame()
     home_hitters = top_targets.loc[top_targets.get("team", pd.Series(dtype="object")).astype(str).eq(home)].copy() if not top_targets.empty and "team" in top_targets.columns else pd.DataFrame()
-    width = 1600
+    width = 2000
     away_panel_height = _hitter_panel_height(min(len(away_hitters), _MAX_HITTER_CARD_ROWS))
     home_panel_height = _hitter_panel_height(min(len(home_hitters), _MAX_HITTER_CARD_ROWS))
     height = 490 + away_panel_height + home_panel_height
