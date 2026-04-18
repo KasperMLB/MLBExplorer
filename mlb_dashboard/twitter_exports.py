@@ -43,6 +43,7 @@ _BAD = "#c94b4b"
 _NEUTRAL = "#aeb7b4"
 _ASSET_DIR = Path(__file__).resolve().parent / "assets"
 _KASPER_LOGO = _ASSET_DIR / "kasperLogo.png"
+_MAX_HITTER_CARD_ROWS = 9
 
 
 @dataclass(frozen=True)
@@ -265,6 +266,10 @@ def _metric_map(row: pd.Series) -> dict[str, tuple[str, str]]:
     return {label: (value, fill) for label, value, fill in _metric_spec(row)}
 
 
+def _hitter_panel_height(row_count: int) -> int:
+    return 126 + max(int(row_count), 1) * 68
+
+
 def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.DataFrame, team: str, top: int, left: int, width: int, height: int) -> int:
     title_font = _load_font(37, bold=True)
     header_font = _load_font(19, bold=True)
@@ -303,7 +308,7 @@ def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.
         x += col_width
     row_h = 68
     y = top + 104
-    for _, row in frame.head(5).iterrows():
+    for _, row in frame.head(_MAX_HITTER_CARD_ROWS).iterrows():
         draw.rounded_rectangle((left + 18, y, left + width - 18, y + row_h - 5), radius=14, fill=_PANEL)
         metric_values = _metric_map(row)
         x = left + 24
@@ -322,22 +327,24 @@ def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.
 def build_twitter_game_card(game: dict, hitters: pd.DataFrame) -> bytes:
     if not HAS_PILLOW:
         raise RuntimeError("Pillow is required to build Twitter export cards.")
-    width, height = 1600, 1350
-    image = Image.new("RGB", (width, height), _BG_TOP)
-    _paint_gradient(image)
-    draw = ImageDraw.Draw(image)
-    _draw_header(draw, image, game)
-    y = _draw_pitcher_strip(draw, image, game, 180, width)
     top_targets = hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last") if not hitters.empty else hitters
-    y = _draw_targets(draw, image, top_targets, y, width)
 
     away = str(game.get("away_team", "") or "")
     home = str(game.get("home_team", "") or "")
     away_hitters = top_targets.loc[top_targets.get("team", pd.Series(dtype="object")).astype(str).eq(away)].copy() if not top_targets.empty and "team" in top_targets.columns else pd.DataFrame()
     home_hitters = top_targets.loc[top_targets.get("team", pd.Series(dtype="object")).astype(str).eq(home)].copy() if not top_targets.empty and "team" in top_targets.columns else pd.DataFrame()
-    panel_height = 430
-    y = _draw_hitter_panel(draw, image, away_hitters, away, y + 4, 28, width - 56, panel_height) + 14
-    _draw_hitter_panel(draw, image, home_hitters, home, y, 28, width - 56, panel_height)
+    width = 1600
+    away_panel_height = _hitter_panel_height(min(len(away_hitters), _MAX_HITTER_CARD_ROWS))
+    home_panel_height = _hitter_panel_height(min(len(home_hitters), _MAX_HITTER_CARD_ROWS))
+    height = 490 + away_panel_height + home_panel_height
+    image = Image.new("RGB", (width, height), _BG_TOP)
+    _paint_gradient(image)
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, image, game)
+    y = _draw_pitcher_strip(draw, image, game, 180, width)
+    y = _draw_targets(draw, image, top_targets, y, width)
+    y = _draw_hitter_panel(draw, image, away_hitters, away, y + 4, 28, width - 56, away_panel_height) + 14
+    _draw_hitter_panel(draw, image, home_hitters, home, y, 28, width - 56, home_panel_height)
     _text(draw, (42, height - 28), "Generated from Kasper matchup artifacts", _load_font(18, bold=True), _MUTED)
     buffer = BytesIO()
     image.save(buffer, format="PNG")
