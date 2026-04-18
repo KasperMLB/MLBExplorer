@@ -45,8 +45,8 @@ _NEUTRAL = "#aeb7b4"
 _ASSET_DIR = Path(__file__).resolve().parent / "assets"
 _KASPER_LOGO = _ASSET_DIR / "kasperLogo.png"
 _MAX_HITTER_CARD_ROWS = 9
-_HITTER_ROW_HEIGHT = 150
-_HITTER_PANEL_TOP_PAD = 92
+_HITTER_ROW_HEIGHT = 74
+_HITTER_PANEL_TOP_PAD = 118
 
 
 @dataclass(frozen=True)
@@ -300,9 +300,9 @@ def _hitter_panel_height(row_count: int) -> int:
 
 def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.DataFrame, team: str, top: int, left: int, width: int, height: int) -> int:
     title_font = _load_font(48, bold=True)
-    name_font = _load_font(43, bold=True)
-    metric_label_font = _load_font(24, bold=True)
-    metric_value_font = _load_font(50, bold=True)
+    name_font = _load_font(34, bold=True)
+    metric_label_font = _load_font(22, bold=True)
+    metric_value_font = _load_font(34, bold=True)
     _panel(draw, (left, top, left + width, top + height), fill=_PANEL_DARK, radius=26)
     _draw_logo(draw, image, team, (left + 24, top + 12), 52)
     _text(draw, (left + 90, top + 18), "Hitters", title_font, _TEXT, max_width=width - 114)
@@ -310,19 +310,21 @@ def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.
         _text(draw, (left + 24, top + 92), "No hitter rows available", name_font, _MUTED)
         return top + height
     row_h = _HITTER_ROW_HEIGHT
-    y = top + _HITTER_PANEL_TOP_PAD - 10
-    name_w = 420
+    y = top + _HITTER_PANEL_TOP_PAD - 6
+    name_w = 300
     inner_left = left + 18
     inner_right = left + width - 18
     metric_left = inner_left + name_w + 12
     metric_w = inner_right - metric_left - 10
-    gap = 8
-    cell_w = (metric_w - gap * 3) // 4
-    cell_h = 40
-    metric_rows = [
-        ["Match", "Test", "Ceil", "Zone"],
-        ["Form", "PB", "HH", "LA"],
-    ]
+    gap = 6
+    labels = ["Match", "Test", "Ceil", "Zone", "Form", "PB", "HH", "LA"]
+    cell_w = (metric_w - gap * (len(labels) - 1)) // len(labels)
+    cell_h = 44
+    header_y = top + 82
+    _center_text(draw, (inner_left + 12, header_y, inner_left + name_w - 12, header_y + 24), "Player", metric_label_font, _MUTED, max_width=name_w - 24)
+    for col_idx, label in enumerate(labels):
+        cell_x = metric_left + col_idx * (cell_w + gap)
+        _center_text(draw, (cell_x, header_y, cell_x + cell_w, header_y + 24), label, metric_label_font, _MUTED, max_width=cell_w - 8)
     for _, row in frame.head(_MAX_HITTER_CARD_ROWS).iterrows():
         draw.rounded_rectangle((left + 18, y, left + width - 18, y + row_h - 5), radius=14, fill=_PANEL)
         _center_text(
@@ -334,17 +336,13 @@ def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.
             max_width=name_w - 34,
         )
         metric_values = _metric_map(row)
-        for row_idx, labels in enumerate(metric_rows):
-            label_y = y + 7 + row_idx * 70
-            cell_y = label_y + 25
-            for col_idx, label in enumerate(labels):
-                value, fill = metric_values.get(label, ("-", _NEUTRAL))
-                cell_x = metric_left + col_idx * (cell_w + gap)
-                label_box = (cell_x, label_y, cell_x + cell_w, label_y + 18)
-                cell_box = (cell_x, cell_y, cell_x + cell_w, cell_y + cell_h)
-                _center_text(draw, label_box, label, metric_label_font, _DARK_MUTED, max_width=cell_w - 12)
-                draw.rounded_rectangle(cell_box, radius=9, fill=fill)
-                _center_text(draw, cell_box, value, metric_value_font, _TEXT, max_width=cell_w - 12)
+        cell_y = y + 11
+        for col_idx, label in enumerate(labels):
+            value, fill = metric_values.get(label, ("-", _NEUTRAL))
+            cell_x = metric_left + col_idx * (cell_w + gap)
+            cell_box = (cell_x, cell_y, cell_x + cell_w, cell_y + cell_h)
+            draw.rounded_rectangle(cell_box, radius=9, fill=fill)
+            _center_text(draw, cell_box, value, metric_value_font, _TEXT, max_width=cell_w - 10)
         y += row_h
     return top + height
 
