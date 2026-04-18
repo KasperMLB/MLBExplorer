@@ -41,6 +41,8 @@ _GOOD = "#2f8f46"
 _MID = "#e7cf63"
 _BAD = "#c94b4b"
 _NEUTRAL = "#aeb7b4"
+_ASSET_DIR = Path(__file__).resolve().parent / "assets"
+_KASPER_LOGO = _ASSET_DIR / "kasperLogo.png"
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,23 @@ def _text(draw: ImageDraw.ImageDraw, xy: tuple[int, int], value: object, font: I
 
 def _panel(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], *, fill: str = _PANEL_DARK, outline: str = _BORDER, radius: int = 24, width: int = 2) -> None:
     draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
+
+
+def _paste_image_fit(image: Image.Image, path: Path, box: tuple[int, int, int, int]) -> bool:
+    try:
+        source = Image.open(path).convert("RGBA")
+    except Exception:
+        return False
+    bbox = source.getbbox()
+    if bbox is not None:
+        source = source.crop(bbox)
+    max_width = max(box[2] - box[0], 1)
+    max_height = max(box[3] - box[1], 1)
+    source.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+    x = box[0] + (max_width - source.width) // 2
+    y = box[1] + (max_height - source.height) // 2
+    image.paste(source, (x, y), source)
+    return True
 
 
 def _fmt_num(value: object, decimals: int = 1) -> str:
@@ -194,65 +213,68 @@ def _draw_logo(draw: ImageDraw.ImageDraw, image: Image.Image, team: str, xy: tup
 def _draw_header(draw: ImageDraw.ImageDraw, image: Image.Image, game: dict) -> None:
     away = str(game.get("away_team", "") or "")
     home = str(game.get("home_team", "") or "")
-    _panel(draw, (28, 24, image.width - 28, 150), fill=_PANEL_DARK, radius=26)
-    draw.rounded_rectangle((54, 46, 220, 82), radius=14, fill=_ACCENT)
-    _text(draw, (72, 54), "KASPER", _load_font(19, bold=True), _TEXT)
-    _text(draw, (54, 92), "HR MATCHUP CARD", _load_font(34, bold=True), _TEXT)
-    _text(draw, (54, 126), f"Game PK {game.get('game_pk', '-')}", _load_font(18, bold=True), _MUTED)
+    _panel(draw, (28, 24, image.width - 28, 162), fill=_PANEL_DARK, radius=26)
+    if not _paste_image_fit(image, _KASPER_LOGO, (54, 42, 102, 90)):
+        draw.rounded_rectangle((54, 46, 98, 86), radius=14, fill=_ACCENT)
+    _text(draw, (112, 50), "KASPER", _load_font(28, bold=True), _TEXT)
+    _text(draw, (54, 100), "HR MATCHUP CARD", _load_font(39, bold=True), _TEXT)
+    _text(draw, (54, 138), f"Game PK {game.get('game_pk', '-')}", _load_font(21, bold=True), _MUTED)
 
     center_x = image.width // 2 + 185
-    _draw_logo(draw, image, away, (center_x - 180, 38), 82)
-    _text(draw, (center_x - 50, 64), "@", _load_font(48, bold=True), _TEXT)
-    _draw_logo(draw, image, home, (center_x + 44, 38), 82)
-    _text(draw, (center_x - 210, 124), f"{away} @ {home}", _load_font(21, bold=True), _MUTED, max_width=430)
+    _draw_logo(draw, image, away, (center_x - 184, 38), 94)
+    _text(draw, (center_x - 52, 68), "@", _load_font(54, bold=True), _TEXT)
+    _draw_logo(draw, image, home, (center_x + 50, 38), 94)
 
 
-def _draw_pitcher_strip(draw: ImageDraw.ImageDraw, game: dict, top: int, width: int) -> int:
-    font = _load_font(22, bold=True)
-    small = _load_font(20, bold=True)
-    _panel(draw, (28, top, width - 28, top + 72), fill=_PANEL_MID, radius=18)
+def _draw_pitcher_strip(draw: ImageDraw.ImageDraw, image: Image.Image, game: dict, top: int, width: int) -> int:
+    font = _load_font(25, bold=True)
+    small = _load_font(23, bold=True)
+    _panel(draw, (28, top, width - 28, top + 78), fill=_PANEL_MID, radius=18)
     away = str(game.get("away_team", "") or "")
     home = str(game.get("home_team", "") or "")
     away_pitcher = str(game.get("away_probable_pitcher_name") or "Away starter TBD")
     home_pitcher = str(game.get("home_probable_pitcher_name") or "Home starter TBD")
-    _text(draw, (52, top + 15), "Probable Starters", font, _TEXT)
-    _text(draw, (300, top + 17), f"{away}: {away_pitcher}", small, _MUTED, max_width=520)
-    _text(draw, (880, top + 17), f"{home}: {home_pitcher}", small, _MUTED, max_width=520)
-    return top + 88
+    _text(draw, (52, top + 18), "Probable Starters", font, _TEXT)
+    _draw_logo(draw, image, away, (330, top + 15), 42)
+    _text(draw, (384, top + 20), away_pitcher, small, _MUTED, max_width=440)
+    _draw_logo(draw, image, home, (910, top + 15), 42)
+    _text(draw, (964, top + 20), home_pitcher, small, _MUTED, max_width=440)
+    return top + 94
 
 
-def _draw_targets(draw: ImageDraw.ImageDraw, frame: pd.DataFrame, top: int, width: int) -> int:
-    title_font = _load_font(28, bold=True)
-    row_font = _load_font(22, bold=True)
-    score_font = _load_font(24, bold=True)
-    _panel(draw, (28, top, width - 28, top + 136), fill=_PANEL_DARK, radius=20)
-    _text(draw, (52, top + 16), "Top HR Targets", title_font, _TEXT)
+def _draw_targets(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.DataFrame, top: int, width: int) -> int:
+    title_font = _load_font(32, bold=True)
+    row_font = _load_font(25, bold=True)
+    score_font = _load_font(27, bold=True)
+    _panel(draw, (28, top, width - 28, top + 148), fill=_PANEL_DARK, radius=20)
+    _text(draw, (52, top + 17), "Top HR Targets", title_font, _TEXT)
     card_w = (width - 104) // 3
-    y = top + 60
+    y = top + 66
     for idx, (_, row) in enumerate(frame.head(3).iterrows(), start=1):
         x = 52 + (idx - 1) * (card_w + 12)
-        draw.rounded_rectangle((x, y, x + card_w, y + 50), radius=13, fill=_PANEL)
-        _text(draw, (x + 14, y + 12), f"{idx}. {row.get('hitter_name', '-')}", row_font, _DARK_TEXT, max_width=card_w - 120)
-        _text(draw, (x + card_w - 104, y + 14), str(row.get("team", "-")), _load_font(18, bold=True), _DARK_TEXT, max_width=44)
+        draw.rounded_rectangle((x, y, x + card_w, y + 58), radius=13, fill=_PANEL)
+        _text(draw, (x + 14, y + 14), f"{idx}. {row.get('hitter_name', '-')}", row_font, _DARK_TEXT, max_width=card_w - 132)
+        _draw_logo(draw, image, str(row.get("team", "") or ""), (x + card_w - 116, y + 8), 42)
         score = _fmt_num(row.get("matchup_score"), 1)
-        draw.rounded_rectangle((x + card_w - 58, y + 8, x + card_w - 12, y + 42), radius=10, fill=_higher_heat(row.get("matchup_score"), 35, 90))
-        _text(draw, (x + card_w - 52, y + 11), score, score_font, _TEXT, max_width=38)
-    return top + 154
+        draw.rounded_rectangle((x + card_w - 62, y + 9, x + card_w - 12, y + 49), radius=10, fill=_higher_heat(row.get("matchup_score"), 35, 90))
+        _text(draw, (x + card_w - 56, y + 14), score, score_font, _TEXT, max_width=42)
+    return top + 166
 
 
 def _metric_map(row: pd.Series) -> dict[str, tuple[str, str]]:
     return {label: (value, fill) for label, value, fill in _metric_spec(row)}
 
 
-def _draw_hitter_panel(draw: ImageDraw.ImageDraw, frame: pd.DataFrame, title: str, top: int, left: int, width: int, height: int) -> int:
-    title_font = _load_font(29, bold=True)
-    header_font = _load_font(15, bold=True)
-    name_font = _load_font(24, bold=True)
-    value_font = _load_font(20, bold=True)
+def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.DataFrame, team: str, top: int, left: int, width: int, height: int) -> int:
+    title_font = _load_font(37, bold=True)
+    header_font = _load_font(19, bold=True)
+    name_font = _load_font(28, bold=True)
+    value_font = _load_font(25, bold=True)
     _panel(draw, (left, top, left + width, top + height), fill=_PANEL_DARK, radius=26)
-    _text(draw, (left + 24, top + 14), title, title_font, _TEXT, max_width=width - 48)
+    _draw_logo(draw, image, team, (left + 24, top + 12), 46)
+    _text(draw, (left + 82, top + 20), "Hitters", title_font, _TEXT, max_width=width - 106)
     if frame.empty:
-        _text(draw, (left + 24, top + 76), "No hitter rows available", name_font, _MUTED)
+        _text(draw, (left + 24, top + 92), "No hitter rows available", name_font, _MUTED)
         return top + height
     columns = [
         ("Player", 258),
@@ -267,26 +289,31 @@ def _draw_hitter_panel(draw: ImageDraw.ImageDraw, frame: pd.DataFrame, title: st
         ("FB%", 70),
         ("LA", 58),
     ]
-    scale = min(1.0, (width - 48) / sum(col_width for _, col_width in columns))
+    available_width = width - 48
+    scale = available_width / sum(col_width for _, col_width in columns)
     columns = [(label, max(48, int(col_width * scale))) for label, col_width in columns]
+    width_delta = available_width - sum(col_width for _, col_width in columns)
+    if columns and width_delta:
+        label, col_width = columns[0]
+        columns[0] = (label, col_width + width_delta)
     x = left + 24
-    header_y = top + 58
+    header_y = top + 72
     for label, col_width in columns:
         _text(draw, (x + 6, header_y), label, header_font, _MUTED, max_width=col_width - 10)
         x += col_width
-    row_h = 58
-    y = top + 84
+    row_h = 68
+    y = top + 104
     for _, row in frame.head(5).iterrows():
         draw.rounded_rectangle((left + 18, y, left + width - 18, y + row_h - 5), radius=14, fill=_PANEL)
         metric_values = _metric_map(row)
         x = left + 24
         for label, col_width in columns:
             if label == "Player":
-                _text(draw, (x + 8, y + 14), row.get("hitter_name", "-"), name_font, _DARK_TEXT, max_width=col_width - 14)
+                _text(draw, (x + 8, y + 17), row.get("hitter_name", "-"), name_font, _DARK_TEXT, max_width=col_width - 14)
             else:
                 value, fill = metric_values.get(label, ("-", _NEUTRAL))
-                draw.rounded_rectangle((x + 3, y + 8, x + col_width - 4, y + row_h - 13), radius=10, fill=fill)
-                _text(draw, (x + 8, y + 17), value, value_font, _TEXT, max_width=col_width - 12)
+                draw.rounded_rectangle((x + 3, y + 9, x + col_width - 4, y + row_h - 12), radius=10, fill=fill)
+                _text(draw, (x + 9, y + 19), value, value_font, _TEXT, max_width=col_width - 14)
             x += col_width
         y += row_h
     return top + height
@@ -295,23 +322,23 @@ def _draw_hitter_panel(draw: ImageDraw.ImageDraw, frame: pd.DataFrame, title: st
 def build_twitter_game_card(game: dict, hitters: pd.DataFrame) -> bytes:
     if not HAS_PILLOW:
         raise RuntimeError("Pillow is required to build Twitter export cards.")
-    width, height = 1600, 1200
+    width, height = 1600, 1350
     image = Image.new("RGB", (width, height), _BG_TOP)
     _paint_gradient(image)
     draw = ImageDraw.Draw(image)
     _draw_header(draw, image, game)
-    y = _draw_pitcher_strip(draw, game, 168, width)
+    y = _draw_pitcher_strip(draw, image, game, 180, width)
     top_targets = hitters.sort_values(["matchup_score", "xwoba"], ascending=[False, False], na_position="last") if not hitters.empty else hitters
-    y = _draw_targets(draw, top_targets, y, width)
+    y = _draw_targets(draw, image, top_targets, y, width)
 
     away = str(game.get("away_team", "") or "")
     home = str(game.get("home_team", "") or "")
     away_hitters = top_targets.loc[top_targets.get("team", pd.Series(dtype="object")).astype(str).eq(away)].copy() if not top_targets.empty and "team" in top_targets.columns else pd.DataFrame()
     home_hitters = top_targets.loc[top_targets.get("team", pd.Series(dtype="object")).astype(str).eq(home)].copy() if not top_targets.empty and "team" in top_targets.columns else pd.DataFrame()
-    panel_height = 390
-    y = _draw_hitter_panel(draw, away_hitters, f"{away} Hitters", y + 4, 28, width - 56, panel_height) + 14
-    _draw_hitter_panel(draw, home_hitters, f"{home} Hitters", y, 28, width - 56, panel_height)
-    _text(draw, (42, height - 24), "Generated from Kasper matchup artifacts", _load_font(14, bold=True), _MUTED)
+    panel_height = 430
+    y = _draw_hitter_panel(draw, image, away_hitters, away, y + 4, 28, width - 56, panel_height) + 14
+    _draw_hitter_panel(draw, image, home_hitters, home, y, 28, width - 56, panel_height)
+    _text(draw, (42, height - 28), "Generated from Kasper matchup artifacts", _load_font(18, bold=True), _MUTED)
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
