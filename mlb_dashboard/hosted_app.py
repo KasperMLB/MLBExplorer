@@ -56,6 +56,7 @@ from .ui_components import (
     render_export_hub,
     render_metric_grid,
     render_slate_export_controls,
+    render_selected_game_twitter_export,
     render_sticky_logo_game_nav,
     render_zone_tool,
 )
@@ -1684,6 +1685,12 @@ def _render_hosted_selected_game_area(
                     best_matchups=best_matchups,
                     away_sections=away_export_sections,
                     home_sections=home_export_sections,
+                    away_hitters=away_hitters,
+                    home_hitters=home_hitters,
+                )
+                render_selected_game_twitter_export(
+                    key=f"twitter-card-hosted-{game['game_pk']}",
+                    game=game,
                     away_hitters=away_hitters,
                     home_hitters=home_hitters,
                 )

@@ -11,6 +11,8 @@ import streamlit as st
 from .components import render_game_selector, render_sticky_game_nav
 from .components import render_zone_tool as render_zone_tool_component
 from .team_logos import matchup_logo_html, team_logo_data_uri
+from .twitter_exports import HAS_PILLOW as HAS_TWITTER_EXPORT_PILLOW
+from .twitter_exports import build_twitter_game_card
 
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -2872,6 +2874,33 @@ def render_export_hub(key: str, title: str, export_options: dict[str, list[dict]
                 use_container_width=True,
                 key=f"{key}-jpg-zip",
             )
+
+
+def render_selected_game_twitter_export(key: str, game: dict, away_hitters: pd.DataFrame, home_hitters: pd.DataFrame) -> None:
+    st.markdown("#### Twitter Card")
+    if not HAS_TWITTER_EXPORT_PILLOW:
+        st.caption("Install `Pillow` to enable Twitter card export.")
+        return
+    hitters = pd.concat([away_hitters, home_hitters], ignore_index=True, sort=False)
+    if hitters.empty:
+        st.info("No hitter rows are available for this Twitter card.")
+        return
+    try:
+        png_bytes = build_twitter_game_card(game, hitters)
+    except Exception as exc:
+        st.warning(f"Twitter card could not be generated for this game: {exc}")
+        return
+    away = str(game.get("away_team", "away")).replace("/", "_").replace(" ", "_")
+    home = str(game.get("home_team", "home")).replace("/", "_").replace(" ", "_")
+    game_pk = str(game.get("game_pk", "game"))
+    st.download_button(
+        label="Download Twitter Card PNG",
+        data=png_bytes,
+        file_name=f"{game_pk}_{away}_at_{home}_twitter_card.png",
+        mime="image/png",
+        use_container_width=True,
+        key=f"{key}-twitter-card-png",
+    )
 
 
 def render_slate_export_hub(key: str, title: str, sections: list[dict], heading: str = "Export Top Matchups") -> None:

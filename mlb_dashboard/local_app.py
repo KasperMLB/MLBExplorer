@@ -58,6 +58,7 @@ from .ui_components import (
     render_matchup_header,
     render_metric_grid,
     render_slate_export_controls,
+    render_selected_game_twitter_export,
     render_zone_tool,
 )
 
@@ -1856,6 +1857,12 @@ def _render_local_selected_game_area(
                     best_matchups=best_matchups,
                     away_sections=away_export_sections,
                     home_sections=home_export_sections,
+                    away_hitters=away_hitters,
+                    home_hitters=home_hitters,
+                )
+                render_selected_game_twitter_export(
+                    key=f"twitter-card-{game['game_pk']}",
+                    game=game,
                     away_hitters=away_hitters,
                     home_hitters=home_hitters,
                 )
