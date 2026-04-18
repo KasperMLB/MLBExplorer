@@ -97,6 +97,34 @@ def _text(draw: ImageDraw.ImageDraw, xy: tuple[int, int], value: object, font: I
     draw.text(xy, text, font=font, fill=fill)
 
 
+def _fit_text(draw: ImageDraw.ImageDraw, value: object, font: ImageFont.ImageFont, max_width: int) -> str:
+    text = "-" if value is None or pd.isna(value) else str(value)
+    ellipsis = "..."
+    while draw.textbbox((0, 0), text, font=font)[2] > max_width and len(text) > 3:
+        text = text[:-1]
+    if str(value) != text and len(text) > 3:
+        text = text[:-3] + ellipsis
+    return text
+
+
+def _center_text(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    value: object,
+    font: ImageFont.ImageFont,
+    fill: str,
+    *,
+    max_width: int | None = None,
+) -> None:
+    text = _fit_text(draw, value, font, max_width or max(box[2] - box[0] - 8, 1))
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    x = box[0] + (box[2] - box[0] - text_width) / 2
+    y = box[1] + (box[3] - box[1] - text_height) / 2 - bbox[1]
+    draw.text((int(x), int(y)), text, font=font, fill=fill)
+
+
 def _panel(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], *, fill: str = _PANEL_DARK, outline: str = _BORDER, radius: int = 24, width: int = 2) -> None:
     draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
 
@@ -272,9 +300,9 @@ def _hitter_panel_height(row_count: int) -> int:
 
 def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.DataFrame, team: str, top: int, left: int, width: int, height: int) -> int:
     title_font = _load_font(37, bold=True)
-    header_font = _load_font(19, bold=True)
-    name_font = _load_font(28, bold=True)
-    value_font = _load_font(25, bold=True)
+    header_font = _load_font(20, bold=True)
+    name_font = _load_font(31, bold=True)
+    value_font = _load_font(29, bold=True)
     _panel(draw, (left, top, left + width, top + height), fill=_PANEL_DARK, radius=26)
     _draw_logo(draw, image, team, (left + 24, top + 12), 46)
     _text(draw, (left + 82, top + 20), "Hitters", title_font, _TEXT, max_width=width - 106)
@@ -314,11 +342,19 @@ def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.
         x = left + 24
         for label, col_width in columns:
             if label == "Player":
-                _text(draw, (x + 8, y + 17), row.get("hitter_name", "-"), name_font, _DARK_TEXT, max_width=col_width - 14)
+                _center_text(
+                    draw,
+                    (x + 8, y + 8, x + col_width - 8, y + row_h - 13),
+                    row.get("hitter_name", "-"),
+                    name_font,
+                    _DARK_TEXT,
+                    max_width=col_width - 18,
+                )
             else:
                 value, fill = metric_values.get(label, ("-", _NEUTRAL))
-                draw.rounded_rectangle((x + 3, y + 9, x + col_width - 4, y + row_h - 12), radius=10, fill=fill)
-                _text(draw, (x + 9, y + 19), value, value_font, _TEXT, max_width=col_width - 14)
+                cell_box = (x + 3, y + 9, x + col_width - 4, y + row_h - 12)
+                draw.rounded_rectangle(cell_box, radius=10, fill=fill)
+                _center_text(draw, cell_box, value, value_font, _TEXT, max_width=col_width - 14)
             x += col_width
         y += row_h
     return top + height
