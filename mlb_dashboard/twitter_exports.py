@@ -44,8 +44,8 @@ _NEUTRAL = "#aeb7b4"
 _ASSET_DIR = Path(__file__).resolve().parent / "assets"
 _KASPER_LOGO = _ASSET_DIR / "kasperLogo.png"
 _MAX_HITTER_CARD_ROWS = 9
-_HITTER_ROW_HEIGHT = 104
-_HITTER_PANEL_TOP_PAD = 122
+_HITTER_ROW_HEIGHT = 94
+_HITTER_PANEL_TOP_PAD = 92
 
 
 @dataclass(frozen=True)
@@ -210,17 +210,14 @@ def _hr_form_heat(value: object) -> str:
 
 
 def _metric_spec(row: pd.Series) -> list[tuple[str, str, str]]:
-    barrel_value = row.get("barrel_bip_pct", row.get("barrel_bbe_pct", row.get("barrel_pct")))
     return [
-        ("Matchup", _fmt_num(row.get("matchup_score"), 1), _higher_heat(row.get("matchup_score"), 35, 90)),
+        ("Match", _fmt_num(row.get("matchup_score"), 1), _higher_heat(row.get("matchup_score"), 35, 90)),
         ("Test", _fmt_num(row.get("test_score"), 1), _higher_heat(row.get("test_score"), 35, 90)),
-        ("Ceiling", _fmt_num(row.get("ceiling_score"), 1), _higher_heat(row.get("ceiling_score"), 35, 100)),
+        ("Ceil", _fmt_num(row.get("ceiling_score"), 1), _higher_heat(row.get("ceiling_score"), 35, 100)),
         ("Zone", _fmt_num(row.get("zone_fit_score"), 3), _higher_heat(row.get("zone_fit_score"), 0.02, 0.14)),
-        ("HR Form", _safe_display(row.get("hr_form")), _hr_form_heat(row.get("hr_form"))),
-        ("PulledBarrel", _fmt_pct(row.get("pulled_barrel_pct"), 1), _higher_heat(row.get("pulled_barrel_pct"), 0.02, 0.14)),
-        ("Barrel", _fmt_pct(barrel_value, 1), _higher_heat(barrel_value, 0.04, 0.18)),
+        ("Form", _safe_display(row.get("hr_form")), _hr_form_heat(row.get("hr_form"))),
+        ("PB", _fmt_pct(row.get("pulled_barrel_pct"), 1), _higher_heat(row.get("pulled_barrel_pct"), 0.02, 0.14)),
         ("HH", _fmt_pct(row.get("hard_hit_pct"), 1), _higher_heat(row.get("hard_hit_pct"), 0.30, 0.58)),
-        ("FB%", _fmt_pct(row.get("fb_pct"), 1), _higher_heat(row.get("fb_pct"), 0.20, 0.55)),
         ("LA", _fmt_num(row.get("avg_launch_angle"), 1), _la_heat(row.get("avg_launch_angle"))),
     ]
 
@@ -302,62 +299,44 @@ def _hitter_panel_height(row_count: int) -> int:
 
 def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.DataFrame, team: str, top: int, left: int, width: int, height: int) -> int:
     title_font = _load_font(42, bold=True)
-    header_font = _load_font(30, bold=True)
-    name_font = _load_font(54, bold=True)
-    value_font = _load_font(50, bold=True)
+    name_font = _load_font(39, bold=True)
+    metric_font = _load_font(30, bold=True)
     _panel(draw, (left, top, left + width, top + height), fill=_PANEL_DARK, radius=26)
     _draw_logo(draw, image, team, (left + 24, top + 12), 52)
     _text(draw, (left + 90, top + 18), "Hitters", title_font, _TEXT, max_width=width - 114)
     if frame.empty:
         _text(draw, (left + 24, top + 92), "No hitter rows available", name_font, _MUTED)
         return top + height
-    columns = [
-        ("Player", 258),
-        ("Matchup", 86),
-        ("Test", 76),
-        ("Ceiling", 84),
-        ("Zone", 82),
-        ("HR Form", 88),
-        ("PulledBarrel", 116),
-        ("Barrel", 82),
-        ("HH", 82),
-        ("FB%", 82),
-        ("LA", 68),
-    ]
-    available_width = width - 48
-    scale = available_width / sum(col_width for _, col_width in columns)
-    columns = [(label, max(48, int(col_width * scale))) for label, col_width in columns]
-    width_delta = available_width - sum(col_width for _, col_width in columns)
-    if columns and width_delta:
-        label, col_width = columns[0]
-        columns[0] = (label, col_width + width_delta)
-    x = left + 24
-    header_y = top + 78
-    for label, col_width in columns:
-        _text(draw, (x + 6, header_y), label, header_font, _MUTED, max_width=col_width - 10)
-        x += col_width
     row_h = _HITTER_ROW_HEIGHT
-    y = top + _HITTER_PANEL_TOP_PAD - 18
+    y = top + _HITTER_PANEL_TOP_PAD - 10
+    name_w = 460
+    inner_left = left + 18
+    inner_right = left + width - 18
+    metric_left = inner_left + name_w + 12
+    metric_w = inner_right - metric_left - 10
+    gap = 8
+    cell_w = (metric_w - gap * 3) // 4
+    cell_h = 34
     for _, row in frame.head(_MAX_HITTER_CARD_ROWS).iterrows():
         draw.rounded_rectangle((left + 18, y, left + width - 18, y + row_h - 5), radius=14, fill=_PANEL)
+        _center_text(
+            draw,
+            (inner_left + 12, y + 8, inner_left + name_w - 12, y + row_h - 13),
+            row.get("hitter_name", "-"),
+            name_font,
+            _DARK_TEXT,
+            max_width=name_w - 34,
+        )
         metric_values = _metric_map(row)
-        x = left + 24
-        for label, col_width in columns:
-            if label == "Player":
-                _center_text(
-                    draw,
-                    (x + 8, y + 8, x + col_width - 8, y + row_h - 13),
-                    row.get("hitter_name", "-"),
-                    name_font,
-                    _DARK_TEXT,
-                    max_width=col_width - 18,
-                )
-            else:
-                value, fill = metric_values.get(label, ("-", _NEUTRAL))
-                cell_box = (x + 3, y + 9, x + col_width - 4, y + row_h - 12)
-                draw.rounded_rectangle(cell_box, radius=10, fill=fill)
-                _center_text(draw, cell_box, value, value_font, _TEXT, max_width=col_width - 14)
-            x += col_width
+        for idx, label in enumerate(["Match", "Test", "Ceil", "Zone", "Form", "PB", "HH", "LA"]):
+            value, fill = metric_values.get(label, ("-", _NEUTRAL))
+            row_idx = idx // 4
+            col_idx = idx % 4
+            cell_x = metric_left + col_idx * (cell_w + gap)
+            cell_y = y + 10 + row_idx * (cell_h + 8)
+            cell_box = (cell_x, cell_y, cell_x + cell_w, cell_y + cell_h)
+            draw.rounded_rectangle(cell_box, radius=9, fill=fill)
+            _center_text(draw, cell_box, f"{label} {value}", metric_font, _TEXT, max_width=cell_w - 12)
         y += row_h
     return top + height
 
@@ -371,16 +350,15 @@ def build_twitter_game_card(game: dict, hitters: pd.DataFrame) -> bytes:
     home = str(game.get("home_team", "") or "")
     away_hitters = top_targets.loc[top_targets.get("team", pd.Series(dtype="object")).astype(str).eq(away)].copy() if not top_targets.empty and "team" in top_targets.columns else pd.DataFrame()
     home_hitters = top_targets.loc[top_targets.get("team", pd.Series(dtype="object")).astype(str).eq(home)].copy() if not top_targets.empty and "team" in top_targets.columns else pd.DataFrame()
-    width = 2200
+    width = 1800
     away_panel_height = _hitter_panel_height(min(len(away_hitters), _MAX_HITTER_CARD_ROWS))
     home_panel_height = _hitter_panel_height(min(len(home_hitters), _MAX_HITTER_CARD_ROWS))
-    height = 490 + away_panel_height + home_panel_height
+    height = 392 + away_panel_height + home_panel_height
     image = Image.new("RGB", (width, height), _BG_TOP)
     _paint_gradient(image)
     draw = ImageDraw.Draw(image)
     _draw_header(draw, image, game)
-    y = _draw_pitcher_strip(draw, image, game, 180, width)
-    y = _draw_targets(draw, image, top_targets, y, width)
+    y = _draw_targets(draw, image, top_targets, 180, width)
     y = _draw_hitter_panel(draw, image, away_hitters, away, y + 4, 28, width - 56, away_panel_height) + 14
     _draw_hitter_panel(draw, image, home_hitters, home, y, 28, width - 56, home_panel_height)
     _text(draw, (42, height - 28), "Generated from Kasper matchup artifacts", _load_font(18, bold=True), _MUTED)
