@@ -44,7 +44,7 @@ _NEUTRAL = "#aeb7b4"
 _ASSET_DIR = Path(__file__).resolve().parent / "assets"
 _KASPER_LOGO = _ASSET_DIR / "kasperLogo.png"
 _MAX_HITTER_CARD_ROWS = 9
-_HITTER_ROW_HEIGHT = 86
+_HITTER_ROW_HEIGHT = 104
 _HITTER_PANEL_TOP_PAD = 122
 
 
@@ -302,9 +302,9 @@ def _hitter_panel_height(row_count: int) -> int:
 
 def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.DataFrame, team: str, top: int, left: int, width: int, height: int) -> int:
     title_font = _load_font(42, bold=True)
-    header_font = _load_font(25, bold=True)
-    name_font = _load_font(42, bold=True)
-    value_font = _load_font(39, bold=True)
+    header_font = _load_font(30, bold=True)
+    name_font = _load_font(54, bold=True)
+    value_font = _load_font(50, bold=True)
     _panel(draw, (left, top, left + width, top + height), fill=_PANEL_DARK, radius=26)
     _draw_logo(draw, image, team, (left + 24, top + 12), 52)
     _text(draw, (left + 90, top + 18), "Hitters", title_font, _TEXT, max_width=width - 114)
@@ -316,13 +316,13 @@ def _draw_hitter_panel(draw: ImageDraw.ImageDraw, image: Image.Image, frame: pd.
         ("Matchup", 86),
         ("Test", 76),
         ("Ceiling", 84),
-        ("Zone", 76),
+        ("Zone", 82),
         ("HR Form", 88),
         ("PulledBarrel", 116),
         ("Barrel", 82),
-        ("HH", 70),
-        ("FB%", 70),
-        ("LA", 58),
+        ("HH", 82),
+        ("FB%", 82),
+        ("LA", 68),
     ]
     available_width = width - 48
     scale = available_width / sum(col_width for _, col_width in columns)
@@ -371,7 +371,7 @@ def build_twitter_game_card(game: dict, hitters: pd.DataFrame) -> bytes:
     home = str(game.get("home_team", "") or "")
     away_hitters = top_targets.loc[top_targets.get("team", pd.Series(dtype="object")).astype(str).eq(away)].copy() if not top_targets.empty and "team" in top_targets.columns else pd.DataFrame()
     home_hitters = top_targets.loc[top_targets.get("team", pd.Series(dtype="object")).astype(str).eq(home)].copy() if not top_targets.empty and "team" in top_targets.columns else pd.DataFrame()
-    width = 2000
+    width = 2200
     away_panel_height = _hitter_panel_height(min(len(away_hitters), _MAX_HITTER_CARD_ROWS))
     home_panel_height = _hitter_panel_height(min(len(home_hitters), _MAX_HITTER_CARD_ROWS))
     height = 490 + away_panel_height + home_panel_height
