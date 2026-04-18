@@ -4,6 +4,8 @@ import os
 from datetime import date, timedelta
 from html import escape
 from time import perf_counter
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 
 import pandas as pd
 import streamlit as st
@@ -48,6 +50,7 @@ from .dashboard_views import (
 from .query_engine import load_remote_parquet, load_remote_parquet_bundle
 from .rotowire_lineups import fetch_rotowire_lineups, resolve_rotowire_lineups
 from .team_logos import add_matchup_logo_columns, team_logo_img_html
+from .twitter_exports import TWITTER_EXPORT_DIRNAME, TWITTER_EXPORT_ZIP
 from .ui_components import (
     build_pitcher_summary_table,
     render_export_hub,
@@ -728,11 +731,37 @@ def _matchup_display_columns(frame: pd.DataFrame) -> list[str]:
     return ["game"] if "game" in frame.columns else []
 
 
+@st.cache_data(show_spinner=False, ttl=300)
+def _load_remote_twitter_export_zip(base_url: str, target_date_value: str) -> bytes:
+    export_url = f"{base_url.rstrip('/')}/daily/{target_date_value}/{TWITTER_EXPORT_DIRNAME}/{TWITTER_EXPORT_ZIP}"
+    with urlopen(export_url, timeout=30) as response:
+        return response.read()
+
+
+def _render_full_slate_twitter_export_button(base_url: str, resolved_date: date) -> None:
+    st.markdown("#### Full Slate Twitter Export")
+    try:
+        zip_bytes = _load_remote_twitter_export_zip(base_url, resolved_date.isoformat())
+    except (HTTPError, URLError, TimeoutError, OSError):
+        st.info("Full-slate export artifact is not published for this slate yet. Rebuild and publish artifacts.")
+        return
+    st.download_button(
+        label="Download Full Slate Twitter Export",
+        data=zip_bytes,
+        file_name=f"kasper_full_slate_game_cards_{resolved_date.isoformat()}.zip",
+        mime="application/zip",
+        use_container_width=True,
+        key=f"full-slate-twitter-export-{resolved_date.isoformat()}",
+    )
+
+
 def _render_top_board_sections(
     top_hitters: pd.DataFrame,
     top_pitchers: pd.DataFrame,
     hitter_preset: str,
     mobile_safe: bool,
+    base_url: str,
+    resolved_date: date,
 ) -> None:
     st.header("Top Slate Hitters")
     if top_hitters.empty:
@@ -753,6 +782,7 @@ def _render_top_board_sections(
             export_options,
             None,
         )
+        _render_full_slate_twitter_export_button(base_url, resolved_date)
         top_hitter_columns, top_hitter_hidden = _hitter_table_columns(
             display_hitters,
             _matchup_display_columns(display_hitters) + [
@@ -1095,7 +1125,7 @@ def main() -> None:
     try:
         top_board_start = perf_counter()
         top_hitters, top_pitchers = _load_filtered_top_board_artifacts(base_url, resolved_date, split, recent_window, weighted_mode)
-        _render_top_board_sections(top_hitters, top_pitchers, hitter_preset, mobile_safe)
+        _render_top_board_sections(top_hitters, top_pitchers, hitter_preset, mobile_safe, base_url, resolved_date)
         _render_artifact_health(_load_artifact_manifest(base_url, resolved_date), mobile_safe)
         _record_perf(perf_events, "top boards", top_board_start)
     except Exception:

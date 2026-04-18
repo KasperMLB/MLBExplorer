@@ -34,6 +34,7 @@ from .mlb_api import fetch_schedule, fetch_team_rosters_for_schedule
 from .metrics import add_metric_flags, apply_year_weights, likely_starter_scores
 from .odds_service import PropsBoardPayload, load_live_props_board
 from .rotowire_lineups import fetch_rotowire_lineups, resolve_rotowire_lineups
+from .twitter_exports import write_full_slate_twitter_exports
 
 try:
     import duckdb
@@ -2902,6 +2903,18 @@ def run_build(
         tracking_health,
     )
     _save_top_slate_board_files(context, snapshots, pitcher_snapshots)
+    twitter_export_start = datetime.now(UTC)
+    try:
+        write_full_slate_twitter_exports(
+            context.config,
+            context.target_date,
+            schedule,
+            _build_top_slate_hitter_board(snapshots),
+        )
+    except Exception as exc:  # pragma: no cover
+        warnings.warn(f"Unable to write full-slate Twitter export artifacts for {context.target_date.isoformat()}: {exc}")
+    timings["twitter_exports"] = _elapsed_seconds(twitter_export_start)
+    print(f"[timing] twitter_exports={timings['twitter_exports']:.2f}s", flush=True)
     ev_artifact_start = datetime.now(UTC)
     try:
         ev_artifacts = build_exit_velo_artifact_frames(
