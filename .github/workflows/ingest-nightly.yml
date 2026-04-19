@@ -25,7 +25,8 @@ jobs:
           python - <<'PY'
           from datetime import datetime
           from zoneinfo import ZoneInfo
-          print("date=" + datetime.now(ZoneInfo("America/Chicago")).date().isoformat())
+          with open(__import__("os").environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("date=" + datetime.now(ZoneInfo("America/Chicago")).date().isoformat() + "\n")
           PY
         shell: bash
       - name: Nightly ingest
@@ -37,3 +38,20 @@ jobs:
       - name: Health check (strict)
         run: |
           python -m mlb_dashboard.health_check --target-date ${{ steps.target_date.outputs.date }} --lookback-days 7 --strict
+      - name: Publish artifacts to Hugging Face dataset
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO_ID: ${{ secrets.HF_REPO_ID }}
+          HF_REPO_TYPE: ${{ vars.HF_REPO_TYPE }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "HF_TOKEN GitHub Actions secret is required to publish artifacts." >&2
+            exit 1
+          fi
+          if [ -z "$HF_REPO_ID" ]; then
+            echo "HF_REPO_ID GitHub Actions secret is required and should point to the artifact dataset repo." >&2
+            exit 1
+          fi
+          HF_REPO_TYPE="${HF_REPO_TYPE:-dataset}"
+          echo "Publishing artifacts to Hugging Face ${HF_REPO_TYPE}: ${HF_REPO_ID}"
+          python -m mlb_dashboard.publish --artifacts-dir artifacts --repo-id "$HF_REPO_ID" --repo-type "$HF_REPO_TYPE"
