@@ -64,6 +64,7 @@ PERCENT_COLUMNS = {
 RATE_COLUMNS = {
     "xwoba",
     "xwoba_con",
+    "iso",
     "avg_launch_angle",
     "avg_release_speed",
     "avg_spin_rate",
@@ -78,6 +79,7 @@ RATE_COLUMNS = {
     "matchup_score",
     "test_score",
     "ceiling_score",
+    "khr_score",
     "pitcher_score",
     "strikeout_score",
     "raw_pitcher_score",
@@ -116,11 +118,13 @@ HIGHER_IS_BETTER = {
     "usage_pct",
     "xwoba",
     "xwoba_con",
+    "iso",
     "avg_release_speed",
     "avg_spin_rate",
     "matchup_score",
     "test_score",
     "ceiling_score",
+    "khr_score",
     "zone_fit_score",
     "strikeout_score",
     "raw_pitcher_score",
@@ -158,6 +162,7 @@ DISPLAY_LABELS = {
     "team": "Team",
     "pitch_count": "Pitches",
     "bip": "BIP",
+    "iso": "ISO",
     "xwoba": "xwOBA",
     "xwoba_con": "xwOBAcon",
     "swstr_pct": "SwStr%",
@@ -199,6 +204,7 @@ DISPLAY_LABELS = {
     "ceiling_score": "Ceiling",
     "zone_fit_score": "Zone Fit",
     "hr_form": "HR Form",
+    "khr_score": "kHR",
     "hr_form_pct": "HR Form%",
     "pitcher_score": "Pitch Score",
     "strikeout_score": "Strikeout Score",
@@ -343,7 +349,7 @@ def _format_value(column: str, value: object, export_mode: bool = False) -> str:
         decimals = 0 if not export_mode else 3
         return f"{float(value):.{decimals}f}"
     if column in RATE_COLUMNS:
-        decimals = 3 if export_mode else (3 if "xwoba" in column or column in {"matchup_score", "test_score", "ceiling_score", "zone_fit_score"} else 1)
+        decimals = 3 if export_mode else (3 if "xwoba" in column or column in {"matchup_score", "test_score", "ceiling_score", "zone_fit_score", "khr_score", "iso"} else 1)
         return f"{float(value):.{decimals}f}"
     if isinstance(value, float):
         decimals = 3 if export_mode else 2
@@ -1089,7 +1095,7 @@ def render_metric_grid(
         width, min_width, max_width = _column_width(column, frame[column])
         if column in PERCENT_COLUMNS:
             formatter = percent_formatter
-        elif column in {"xwoba", "xwoba_con", "matchup_score", "test_score", "ceiling_score", "pitcher_score"}:
+        elif column in {"xwoba", "xwoba_con", "iso", "matchup_score", "test_score", "ceiling_score", "khr_score", "pitcher_score"}:
             formatter = rate_formatter
         elif column in {"avg_launch_angle", "avg_release_speed", "gb_fb_ratio"}:
             formatter = one_decimal_formatter
@@ -1932,7 +1938,7 @@ def _draw_matchup_board(
     board_height = 258
     _panel(draw, (left, top, left + width, top + board_height), fill=REPORT_PANEL_ALT)
     _text(draw, (left + 18, top + 16), "Best Matchups", title_font, REPORT_TEXT)
-    work = _filter_section_columns(frame.head(3), ["hitter_name", "team", "matchup_score", "xwoba", "swstr_pct", "pulled_barrel_pct", "sweet_spot_pct", "hard_hit_pct", "avg_launch_angle"])
+    work = _filter_section_columns(frame.head(3), ["hitter_name", "team", "matchup_score", "iso", "xwoba", "swstr_pct", "pulled_barrel_pct", "sweet_spot_pct", "hard_hit_pct", "avg_launch_angle"])
     card_top = top + 56
     card_height = 58
     for idx, (_, row) in enumerate(work.iterrows(), start=1):
@@ -2110,15 +2116,15 @@ def _identity_columns_for_section(frame: pd.DataFrame, title: str) -> list[str]:
 def _metric_columns_for_section(frame: pd.DataFrame, title: str) -> list[str]:
     lowered = title.lower()
     if "best matchups" in lowered:
-        columns = ["matchup_score", "xwoba", "swstr_pct", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle"]
+        columns = ["matchup_score", "iso", "xwoba", "swstr_pct", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle"]
     elif "hitters" in lowered:
-        columns = ["matchup_score", "xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "avg_launch_angle"]
+        columns = ["matchup_score", "iso", "xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "avg_launch_angle"]
     elif "arsenal" in lowered:
         columns = ["usage_pct", "swstr_pct", "hard_hit_pct", "avg_release_speed", "avg_spin_rate", "xwoba_con"]
     elif "count usage" in lowered:
         columns = ["All counts", "Early count", "Even count", "Pitcher ahead", "Pitcher behind", "Two-strike", "Pre two-strike", "Full count"]
     elif "summary" in lowered:
-        columns = ["pitch_count", "bip", "xwoba", "swstr_pct", "pulled_barrel_pct", "barrel_bip_pct", "fb_pct", "hard_hit_pct", "avg_launch_angle"]
+        columns = ["pitch_count", "bip", "iso", "xwoba", "swstr_pct", "pulled_barrel_pct", "barrel_bip_pct", "fb_pct", "hard_hit_pct", "avg_launch_angle"]
     else:
         columns = [column for column in frame.columns if column not in _identity_columns_for_section(frame, title)]
     return [column for column in columns if column in frame.columns]
@@ -2566,7 +2572,7 @@ def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict])
     y = _draw_report_header(draw, width, title, subtitle, away_summary, home_summary, title_font, body_font)
 
     if best_section is not None:
-        best_frame = _filter_section_columns(best_section["frame"], ["hitter_name", "team", "matchup_score", "xwoba", "swstr_pct", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle"])
+        best_frame = _filter_section_columns(best_section["frame"], ["hitter_name", "team", "matchup_score", "iso", "xwoba", "swstr_pct", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle"])
         y = _draw_export_section(
             draw,
             y,
@@ -2593,7 +2599,7 @@ def _build_compact_poster_image(title: str, subtitle: str, sections: list[dict])
 
     if len(hitter_sections) >= 2:
         for section in hitter_sections[:2]:
-            frame = _filter_section_columns(section["frame"], ["hitter_name", "matchup_score", "xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "avg_launch_angle"])
+            frame = _filter_section_columns(section["frame"], ["hitter_name", "matchup_score", "iso", "xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "avg_launch_angle"])
             _text(draw, (24, y), section["title"], title_font, REPORT_BORDER)
             y += 42
             y = _draw_export_section(
@@ -2625,7 +2631,7 @@ def _build_carousel_images(title: str, subtitle: str, sections: list[dict]) -> l
         overview_sections.append(
             {
                 "title": "Best Matchups",
-                "frame": _filter_section_columns(best_section["frame"], ["hitter_name", "team", "matchup_score", "xwoba", "swstr_pct", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle"]),
+                "frame": _filter_section_columns(best_section["frame"], ["hitter_name", "team", "matchup_score", "iso", "xwoba", "swstr_pct", "pulled_barrel_pct", "hard_hit_pct", "fb_pct", "avg_launch_angle"]),
             }
         )
     overview_sections.extend([section for section in summary_sections if "summary all" in section["title"].lower()])
@@ -2644,8 +2650,8 @@ def _build_carousel_images(title: str, subtitle: str, sections: list[dict]) -> l
 
     if len(hitter_sections) >= 2:
         hitter_slide_sections = [
-            {"title": hitter_sections[0]["title"], "frame": _filter_section_columns(hitter_sections[0]["frame"], ["hitter_name", "matchup_score", "xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "avg_launch_angle"])},
-            {"title": hitter_sections[1]["title"], "frame": _filter_section_columns(hitter_sections[1]["frame"], ["hitter_name", "matchup_score", "xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "avg_launch_angle"])},
+            {"title": hitter_sections[0]["title"], "frame": _filter_section_columns(hitter_sections[0]["frame"], ["hitter_name", "matchup_score", "iso", "xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "avg_launch_angle"])},
+            {"title": hitter_sections[1]["title"], "frame": _filter_section_columns(hitter_sections[1]["frame"], ["hitter_name", "matchup_score", "iso", "xwoba", "pulled_barrel_pct", "barrel_bip_pct", "hard_hit_pct", "avg_launch_angle"])},
         ]
         slides.append(build_branded_report_image(title, f"{subtitle} | Slide 3: Hitter Matchups", hitter_slide_sections))
 

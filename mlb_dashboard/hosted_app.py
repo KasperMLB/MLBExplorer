@@ -142,6 +142,7 @@ HITTER_REQUIRED_COLUMNS = _sorted_unique(
         "likely_starter_score",
         "zone_fit_score",
         "hr_form",
+        "khr_score",
         "hr_form_pct",
     ]
 )

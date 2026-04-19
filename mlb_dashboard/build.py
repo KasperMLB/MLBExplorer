@@ -541,6 +541,23 @@ def _aggregate_hitter_metrics(frame: pd.DataFrame, weighted_mode: str, year_weig
         hr_window_weight_sum = float((((group["is_hr_window"] & group["is_tracked_bbe"]).astype(int)) * group["metric_weight"]).sum())
         productive_air_weight_sum = float((((group["is_productive_air"] & group["is_tracked_bbe"]).astype(int)) * group["metric_weight"]).sum())
         tracked_bbe_index = group.index[group["is_tracked_bbe"]]
+        event_text = group.get("events", pd.Series(index=group.index, dtype="object")).fillna("").astype(str).str.lower()
+        at_bat_mask = event_text.ne("") & ~event_text.isin(
+            {
+                "walk",
+                "intent_walk",
+                "intentional_walk",
+                "hit_by_pitch",
+                "sac_bunt",
+                "sac_fly",
+                "sac_fly_double_play",
+                "catcher_interf",
+                "catcher_interference",
+            }
+        )
+        extra_base_values = event_text.map({"double": 1, "triple": 2, "home_run": 3}).fillna(0.0)
+        at_bat_weight_sum = float((at_bat_mask.astype(int) * group["metric_weight"]).sum())
+        iso = float((extra_base_values * group["metric_weight"]).sum()) / at_bat_weight_sum if at_bat_weight_sum > 0 else float("nan")
         rows.append(
             {
                 "team": latest_team,
@@ -549,6 +566,7 @@ def _aggregate_hitter_metrics(frame: pd.DataFrame, weighted_mode: str, year_weig
                 "stand": hitter_side,
                 "pitch_count": pitch_count,
                 "bip": bip,
+                "iso": iso,
                 "xwoba": _weighted_sum(group, "xwoba_value", group.index) / max(_weighted_denominator(group, "xwoba_value", group.index), 1e-9),
                 "xwoba_con": _weighted_sum(group.loc[group["is_batted_ball"]], "xwoba_value", group.loc[group["is_batted_ball"]].index) / max(float(group.loc[group["is_batted_ball"], "metric_weight"].sum()), 1e-9),
                 "swstr_pct": float((group["is_swinging_strike"].astype(int) * group["metric_weight"]).sum()) / max(pitch_weight_sum, 1e-9),
@@ -1724,9 +1742,11 @@ def _build_top_slate_hitter_board(snapshots: pd.DataFrame) -> pd.DataFrame:
         "ceiling_score",
         "zone_fit_score",
         "hr_form",
+        "khr_score",
         "hr_form_pct",
         "pitch_count",
         "bip",
+        "iso",
         "xwoba",
         "xwoba_con",
         "swstr_pct",
@@ -2116,8 +2136,10 @@ def _build_hitter_tracking_snapshots(
                                     "ceiling_score",
                                     "zone_fit_score",
                                     "hr_form",
+                                    "khr_score",
                                     "hr_form_pct",
                                     "likely_starter_score",
+                                    "iso",
                                     "xwoba",
                                     "xwoba_con",
                                     "swstr_pct",

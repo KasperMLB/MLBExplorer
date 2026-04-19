@@ -31,6 +31,8 @@ HITTER_PRESETS = {
         "ceiling_score",
         "zone_fit_score",
         "hr_form",
+        "khr_score",
+        "iso",
         "xwoba",
         "xwoba_con",
         "pulled_barrel_pct",
@@ -47,7 +49,9 @@ HITTER_PRESETS = {
         "ceiling_score",
         "zone_fit_score",
         "hr_form",
+        "khr_score",
         "swstr_pct",
+        "iso",
         "xwoba",
         "xwoba_con",
         "pitch_count",
@@ -62,11 +66,13 @@ HITTER_PRESETS = {
         "ceiling_score",
         "zone_fit_score",
         "hr_form",
+        "khr_score",
         "pulled_barrel_pct",
         "barrel_bip_pct",
         "sweet_spot_pct",
         "hard_hit_pct",
         "avg_launch_angle",
+        "iso",
         "xwoba",
     ],
     "All stats": [
@@ -77,8 +83,10 @@ HITTER_PRESETS = {
         "ceiling_score",
         "zone_fit_score",
         "hr_form",
+        "khr_score",
         "pitch_count",
         "bip",
+        "iso",
         "xwoba",
         "xwoba_con",
         "swstr_pct",
@@ -100,6 +108,8 @@ BEST_MATCHUP_COLUMNS = [
     "ceiling_score",
     "zone_fit_score",
     "hr_form",
+    "khr_score",
+    "iso",
     "xwoba",
     "swstr_pct",
     "pulled_barrel_pct",
@@ -620,6 +630,10 @@ def add_hitter_matchup_score(
     pulled_barrel_scale = normalize_series(enriched["pulled_barrel_pct"])
     pulled_barrel_bonus = ((pulled_barrel_scale - 0.5).clip(lower=0.0) / 0.5) * 0.08
     enriched["matchup_score"] = (base_score * (1.0 + pulled_barrel_bonus)).clip(lower=0.0, upper=100.0)
+    matchup_component = pd.to_numeric(enriched["matchup_score"], errors="coerce")
+    form_component = pd.to_numeric(enriched.get("hr_form_pct", pd.Series(pd.NA, index=enriched.index)), errors="coerce").mul(100.0).fillna(50.0)
+    enriched["khr_score"] = ((matchup_component * 0.60) + (form_component * 0.40)).clip(lower=0.0, upper=100.0)
+    enriched.loc[matchup_component.isna(), "khr_score"] = pd.NA
     test_base_score = ((swstr_score * 0.325) + (barrel_score * 0.30) + (enriched["test_shape_score"] * 0.20) + (enriched["zone_fit_score"] * 0.175)) * 100.0
     enriched["test_score"] = (test_base_score * (1.0 + pulled_barrel_bonus)).clip(lower=0.0, upper=100.0)
     matchup_norm = normalize_series(enriched["matchup_score"])

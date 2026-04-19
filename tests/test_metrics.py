@@ -1,7 +1,7 @@
 import pandas as pd
 
 from mlb_dashboard.config import AppConfig, DEFAULT_RECENT_WINDOWS, DEFAULT_SPLITS
-from mlb_dashboard.build import BuildContext, _build_hitter_hr_form, _save_per_game_files, _save_top_slate_board_files
+from mlb_dashboard.build import BuildContext, _aggregate_hitter_metrics, _build_hitter_hr_form, _save_per_game_files, _save_top_slate_board_files
 from mlb_dashboard.dashboard_views import BEST_MATCHUP_COLUMNS, HITTER_PRESETS, add_hitter_matchup_score, build_slate_summary_best_matchups, build_slate_summary_matchup_overview, filter_excluded_pitchers_from_hitter_pool, normalize_series
 from mlb_dashboard.local_store import (
     compute_hitter_rolling,
@@ -179,12 +179,78 @@ def test_hr_form_does_not_change_hitter_scores():
     pd.testing.assert_series_equal(scored_base["test_score"], scored_with_form["test_score"], check_names=False)
 
 
+def test_khr_score_blends_matchup_and_hr_form_as_composite_score():
+    hitters = pd.DataFrame(
+        [
+            {
+                "batter": 1,
+                "hitter_name": "Hot Form",
+                "swstr_pct": 0.10,
+                "barrel_bbe_pct": 0.15,
+                "pulled_barrel_pct": 0.10,
+                "sweet_spot_pct": 0.35,
+                "avg_launch_angle": 22.0,
+                "barrel_bip_pct": 0.12,
+                "hard_hit_pct": 0.45,
+                "xwoba": 0.400,
+                "hr_form_pct": 0.80,
+            },
+            {
+                "batter": 2,
+                "hitter_name": "Missing Form",
+                "swstr_pct": 0.16,
+                "barrel_bbe_pct": 0.08,
+                "pulled_barrel_pct": 0.04,
+                "sweet_spot_pct": 0.25,
+                "avg_launch_angle": 10.0,
+                "barrel_bip_pct": 0.05,
+                "hard_hit_pct": 0.32,
+                "xwoba": 0.330,
+                "hr_form_pct": pd.NA,
+            },
+        ]
+    )
+
+    scored = add_hitter_matchup_score(hitters).sort_values("batter").reset_index(drop=True)
+    expected_form = pd.to_numeric(scored["hr_form_pct"], errors="coerce").mul(100.0).fillna(50.0)
+    expected = ((scored["matchup_score"] * 0.60) + (expected_form * 0.40)).clip(lower=0.0, upper=100.0)
+
+    pd.testing.assert_series_equal(scored["khr_score"], expected, check_names=False)
+    assert scored["khr_score"].between(0, 100).all()
+
+
+def test_hitter_iso_is_aggregated_from_extra_bases_per_at_bat():
+    frame = pd.DataFrame(
+        [
+            {"game_year": 2026, "batter": 1, "stand": "R", "team": "AAA", "events": "single", "bb_type": "line_drive", "estimated_woba_using_speedangle": 0.9, "description": "hit_into_play", "launch_speed": 100.0, "launch_angle": 20.0, "hc_x": 90.0},
+            {"game_year": 2026, "batter": 1, "stand": "R", "team": "AAA", "events": "double", "bb_type": "line_drive", "estimated_woba_using_speedangle": 1.2, "description": "hit_into_play", "launch_speed": 101.0, "launch_angle": 21.0, "hc_x": 90.0},
+            {"game_year": 2026, "batter": 1, "stand": "R", "team": "AAA", "events": "home_run", "bb_type": "fly_ball", "estimated_woba_using_speedangle": 2.0, "description": "hit_into_play", "launch_speed": 105.0, "launch_angle": 28.0, "hc_x": 90.0},
+            {"game_year": 2026, "batter": 1, "stand": "R", "team": "AAA", "events": "field_out", "bb_type": "ground_ball", "estimated_woba_using_speedangle": 0.0, "description": "hit_into_play", "launch_speed": 80.0, "launch_angle": -5.0, "hc_x": 90.0},
+            {"game_year": 2026, "batter": 1, "stand": "R", "team": "AAA", "events": "walk", "bb_type": None, "estimated_woba_using_speedangle": pd.NA, "description": "ball", "launch_speed": pd.NA, "launch_angle": pd.NA, "hc_x": pd.NA},
+        ]
+    )
+    frame["release_speed"] = 95.0
+    frame["release_spin_rate"] = 2300.0
+    frame["balls"] = 0
+    frame["strikes"] = 0
+    metrics = _aggregate_hitter_metrics(add_metric_flags(frame), "unweighted", {2026: 1.0})
+
+    assert metrics.loc[0, "iso"] == 1.0
+
+
 def test_hr_form_columns_follow_zone_fit_in_hitter_tables():
     for preset_columns in HITTER_PRESETS.values():
         assert "zone_fit_score" in preset_columns
         assert "hr_form" in preset_columns
+        assert "khr_score" in preset_columns
+        if "xwoba" in preset_columns:
+            assert "iso" in preset_columns
+            assert preset_columns.index("iso") == preset_columns.index("xwoba") - 1
         assert preset_columns.index("hr_form") == preset_columns.index("zone_fit_score") + 1
+        assert preset_columns.index("khr_score") == preset_columns.index("hr_form") + 1
     assert BEST_MATCHUP_COLUMNS.index("hr_form") == BEST_MATCHUP_COLUMNS.index("zone_fit_score") + 1
+    assert BEST_MATCHUP_COLUMNS.index("khr_score") == BEST_MATCHUP_COLUMNS.index("hr_form") + 1
+    assert BEST_MATCHUP_COLUMNS.index("iso") == BEST_MATCHUP_COLUMNS.index("xwoba") - 1
 
 
 def test_slate_summary_best_matchups_keeps_top_three_per_game():
@@ -548,7 +614,9 @@ def test_top_slate_board_artifacts_include_all_filter_combinations(tmp_path):
                             "ceiling_score": 65.0,
                             "zone_fit_score": 0.62,
                             "hr_form": "72% ↑",
+                            "khr_score": 70.8,
                             "hr_form_pct": 0.72,
+                            "iso": 0.21,
                             "xwoba": 0.4,
                             "pitch_count": 100,
                             "bip": 40,
@@ -594,5 +662,5 @@ def test_top_slate_board_artifacts_include_all_filter_combinations(tmp_path):
     assert {"split_key", "recent_window", "weighted_mode", "Game", "Top 1"}.issubset(slate_summary.columns)
     assert top_hitters["game_pk"].nunique() == 2
     assert top_pitchers["game_pk"].nunique() == 2
-    assert {"game", "hitter_name", "matchup_score", "test_score", "ceiling_score", "hr_form", "hr_form_pct"}.issubset(top_hitters.columns)
+    assert {"game", "hitter_name", "matchup_score", "test_score", "ceiling_score", "hr_form", "khr_score", "hr_form_pct", "iso"}.issubset(top_hitters.columns)
     assert {"game", "pitcher_name", "pitcher_score", "strikeout_score"}.issubset(top_pitchers.columns)
